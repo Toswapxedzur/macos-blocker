@@ -86,6 +86,18 @@ Wissen speichert auf diesem Mac kurze Beschreibungen für das lokale Tag-Modell.
 
 Fügen Sie eine Quelle oder einen Begriff und deren Beschreibung hinzu oder lassen Sie die Beschreibung leer, um bei aktivierter Recherche eine Recherche anzufordern. Erstellervorschläge helfen beim Finden einer bereits von der Klassifizierung erfassten Quelle. Listen mit sechs oder mehr Einträgen haben direkt darüber eine Suche: Begriffe und die Inhaltsquellen jeder Plattform haben getrennte Suchen nach Name, Kennung oder Beschreibung. Das Bearbeiten einer Beschreibung beeinflusst künftige Tag-Zuweisungen; das Löschen von Quellenwissen verhindert nicht, dass spätere Recherche es erneut erstellt.
 
+### Offizielle und persönliche Wörterbücher
+
+Öffne **Einstellungen → Klassifizierung → Offizielle Wörterbücher**, um offizielle Wörterbücher einzurichten. **Wissen** zeigt installierte Versionen und eine Verknüpfung zu diesen Einstellungen. Vault sucht beim Start nach Updates; installiere sie mit **Nach Updates suchen** und den Download-Schaltflächen. Ein eigener KI-API-Schlüssel ist dafür nicht nötig.
+
+- **Begriffe** werden zur lokalen Suche heruntergeladen.
+- **Cache + Online-Abfrage** speichert standardmäßig bis zu 10.000 Creator-Einträge; das Limit kannst du ändern. Fehlt ein Creator im Cache, wird seine öffentliche, plattformspezifische ID an den Wörterbuchdienst gesendet.
+- **Vollständiger Download · Offline-Abfrage** sucht nach dem Download lokal nach Creatorn. Wähle diesen Modus und lade das Wörterbuch herunter.
+
+Deine persönlichen Beschreibungen, auch die deines Research-Anbieters, haben Vorrang vor offiziellen. Unter **Eigenes Wörterbuch importieren / exportieren** kannst du persönliche Einträge exportieren oder eine JSON-Datei importieren; offizielle Einträge sind nicht im persönlichen Export enthalten.
+
+**Das Creator-Wörterbuch verbessern** ist standardmäßig eingeschaltet und wird vor dem ersten Beitrag erklärt. Schalte es hier aus, um künftige Beiträge zu stoppen und offene Anfragen abzubrechen. Bei Aktivierung sendet Vault nur stichprobenartig fehlende öffentliche Creator-IDs und verfügbare öffentliche Follower-/Abonnentenzahlen, keine Titel, keinen Browserverlauf und keine persönlichen Beschreibungen. Die Offenlegung nennt Sendegrenzen und Speicherdauer. Web-Recherche hat eigene Einwilligungs- und Anbietereinstellungen.
+
 ### Rechercheanbieter konfigurieren
 
 1. Öffnen Sie **Einstellungen → API-Schlüssel und Anbieter**.

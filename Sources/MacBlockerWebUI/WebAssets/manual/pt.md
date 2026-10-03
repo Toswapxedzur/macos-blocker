@@ -86,6 +86,18 @@ Knowledge armazena descrições curtas neste Mac para o modelo local de marcaç�
 
 Adicione uma fonte ou termo com descrição, ou deixe a descrição vazia para solicitar pesquisa quando habilitada. Sugestões de criadores ajudam a encontrar uma fonte já coletada pelo Classifier. Listas com seis ou mais entradas têm busca logo acima: Terms e Content sources de cada plataforma têm buscas separadas por nome, identificador ou descrição. Editar uma descrição afeta futuras marcações; excluir o conhecimento da fonte não impede que a pesquisa o recrie depois.
 
+### Dicionários oficiais e pessoais
+
+Abra **Configurações → Classificador → Dicionários oficiais** para configurar os dicionários oficiais. **Conhecimento** mostra as versões instaladas e um atalho para esses controles. O Vault verifica atualizações ao iniciar; use **Verificar atualizações** e os botões de download para instalá-las. Não é necessária sua própria chave de API de IA.
+
+- **Termos** é baixado para consultas locais.
+- **Cache + pesquisa online** mantém até 10.000 entradas de criadores por padrão; você pode alterar o limite. Se um criador não estiver no cache, o ID público associado à plataforma é enviado ao serviço de dicionários.
+- **Download completo · pesquisa offline** consulta criadores localmente após o download. Selecione esse modo e baixe o dicionário.
+
+Suas descrições pessoais, inclusive as criadas pelo provedor de pesquisa, têm prioridade sobre as oficiais. Em **Importar / exportar seu dicionário**, exporte suas entradas pessoais ou importe um arquivo JSON; as entradas oficiais não entram na exportação pessoal.
+
+**Ajude a melhorar o dicionário de criadores** fica ativado por padrão e é explicado antes da primeira contribuição. Desative-o aqui para interromper contribuições futuras e cancelar solicitações pendentes. Quando ativado, o Vault envia somente uma amostra de IDs públicos de criadores ausentes e contagens públicas disponíveis de seguidores/inscritos; não envia títulos, histórico de navegação nem descrições pessoais. Consulte a divulgação para limites e retenção. A pesquisa na Web tem consentimento e configurações de provedor separados.
+
 ### Configurar provedor de pesquisa
 
 1. Abra **Configurações do Classifier → API keys & providers**.

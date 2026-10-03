@@ -86,6 +86,18 @@ Knowledge lưu mô tả ngắn trên Mac này cho mô hình gắn thẻ cục b�
 
 Thêm nguồn hoặc thuật ngữ cùng mô tả, hoặc để trống mô tả để yêu cầu nghiên cứu khi bật tính năng. Gợi ý nhà sáng tạo giúp tìm nguồn mà bộ phân loại đã thu thập. Danh sách có ít nhất sáu mục có ô tìm kiếm ngay phía trên: Terms và Content sources của từng nền tảng có ô riêng để tìm theo tên, mã định danh hoặc mô tả. Sửa mô tả ảnh hưởng đến lần gắn thẻ sau; xóa kiến thức nguồn không ngăn nghiên cứu tạo lại sau này.
 
+### Từ điển chính thức và từ điển cá nhân
+
+Mở **Cài đặt → Bộ phân loại → Từ điển chính thức** để cấu hình từ điển chính thức. **Kiến thức** hiển thị phiên bản đã cài đặt và lối tắt đến các mục này. Vault kiểm tra cập nhật khi khởi động; dùng **Kiểm tra cập nhật** và các nút tải xuống để cài đặt. Không cần khóa API AI riêng của bạn.
+
+- **Thuật ngữ** được tải xuống để tra cứu cục bộ.
+- **Bộ nhớ đệm + tra cứu trực tuyến** lưu tối đa 10.000 mục nhà sáng tạo theo mặc định; bạn có thể đổi giới hạn. Nếu không có nhà sáng tạo trong bộ nhớ đệm, ID công khai gắn với nền tảng của họ sẽ được gửi đến dịch vụ từ điển.
+- **Tải đầy đủ · tra cứu ngoại tuyến** tra cứu nhà sáng tạo cục bộ sau khi tải xuống. Chọn chế độ này rồi tải từ điển.
+
+Mô tả cá nhân của bạn, kể cả mô tả do nhà cung cấp nghiên cứu tạo, được ưu tiên hơn mô tả chính thức. Trong **Nhập / xuất từ điển của bạn**, bạn có thể xuất mục cá nhân hoặc nhập tệp JSON; mục chính thức không có trong bản xuất cá nhân.
+
+**Giúp cải thiện từ điển nhà sáng tạo** được bật theo mặc định và được giải thích trước lần đóng góp đầu tiên. Tắt tại đây để dừng đóng góp sau này và hủy yêu cầu đang chờ. Khi bật, Vault chỉ gửi mẫu ID công khai còn thiếu của nhà sáng tạo và số người theo dõi/người đăng ký công khai hiện có; không gửi tiêu đề, lịch sử duyệt web hoặc mô tả cá nhân. Xem thông báo về giới hạn gửi và thời gian lưu giữ. Nghiên cứu web có sự đồng ý và cài đặt nhà cung cấp riêng.
+
 ### Cấu hình nhà cung cấp nghiên cứu
 
 1. Mở **Cài đặt → API keys & providers**.

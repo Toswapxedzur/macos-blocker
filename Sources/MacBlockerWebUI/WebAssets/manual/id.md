@@ -86,6 +86,18 @@ Pengetahuan menyimpan deskripsi singkat di Mac untuk model tagging lokal. **Sumb
 
 Tambahkan sumber atau istilah beserta deskripsinya, atau kosongkan deskripsi untuk meminta riset jika diaktifkan. Saran kreator membantu menemukan sumber yang sudah dikumpulkan Klasifikasi. Daftar dengan enam entri atau lebih memiliki pencarian tepat di atasnya: Istilah dan Sumber konten tiap platform memiliki pencarian terpisah untuk nama, ID, atau deskripsi. Mengedit deskripsi memengaruhi tagging berikutnya; menghapus pengetahuan sumber tidak mencegah riset membuatnya kembali nanti.
 
+### Kamus resmi dan pribadi
+
+Buka **Pengaturan → pengklasifikasi → Kamus resmi** untuk mengatur kamus resmi. **Pengetahuan** menampilkan versi terpasang dan pintasan ke kontrol ini. Vault memeriksa pembaruan saat dimulai; gunakan **Periksa pembaruan** dan tombol unduh untuk memasangnya. Anda tidak memerlukan kunci API AI sendiri.
+
+- **Istilah** diunduh untuk pencarian lokal.
+- **Cache + pencarian online** menyimpan hingga 10.000 entri kreator secara default; batasnya dapat diubah. Jika kreator tidak ada dalam cache, ID publik yang terkait dengan platformnya dikirim ke layanan kamus.
+- **Unduhan penuh · pencarian offline** mencari kreator secara lokal setelah diunduh. Pilih mode ini lalu unduh kamusnya.
+
+Deskripsi pribadi Anda, termasuk yang dibuat penyedia riset, diprioritaskan daripada deskripsi resmi. Di **Impor / ekspor kamus Anda**, ekspor entri pribadi atau impor file JSON; entri resmi tidak disertakan dalam ekspor pribadi.
+
+**Bantu menyempurnakan kamus kreator** aktif secara default dan dijelaskan sebelum kontribusi pertama. Nonaktifkan di sini untuk menghentikan kontribusi berikutnya dan membatalkan permintaan tertunda. Saat aktif, Vault hanya mengirim sampel ID kreator publik yang belum tersedia dan jumlah pengikut/pelanggan publik yang tersedia; judul, riwayat penelusuran, dan deskripsi pribadi tidak dikirim. Baca pengungkapan untuk batas dan masa penyimpanan. Riset web memiliki persetujuan dan pengaturan penyedia tersendiri.
+
 ### Atur penyedia riset
 
 1. Buka **Setelan Klasifikasi → Kunci API & penyedia**.

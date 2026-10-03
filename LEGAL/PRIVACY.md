@@ -1,6 +1,6 @@
 # Adamancia Vault Privacy Policy
 
-Last updated: October 3, 2026
+Last updated: October 4, 2026
 
 Adamancia Vault is a focus and blocking app. This policy describes the macOS app release.
 
@@ -24,21 +24,23 @@ Known local paths are documented in `RELEASE.md` and in the uninstaller script.
 
 Vault checks for official term and creator dictionary updates at startup. You choose when to download updates. Creator lookup defaults to a 10,000-entry cache with adjustable capacity; a cache miss sends the public, platform-scoped creator ID to our server. Full-download creator lookup is local. Dictionary downloads and lookups do not require your own AI API key. User-written and user AI-generated definitions remain local and take priority over official definitions. Optional web/AI research uses its separate provider settings.
 
-Help improve the creator dictionary is ON by default. On first launch, a screen explains the feature and lets you disable it before any contribution is sent. You can turn it off at any time in Classifier → Settings. When enabled, the app samples missing public creator IDs and their displayed public subscriber/follower counts (which may be rounded); missing counts are sent as unknown. It sends no term names, titles, browsing history, personal definitions, API keys or persistent user/device identifiers. Submissions are deduplicated locally, sampled one in four IDs per day, and capped at 50 per day. Turning it off cancels pending contribution requests and stops future submissions; it does not recall requests already received.
+Help improve the creator dictionary is ON by default. On first launch, a screen explains the feature and lets you disable it before any contribution is sent. You can turn it off at any time in Settings → Classifier. When enabled, the app samples missing public creator IDs and their displayed public subscriber/follower counts (which may be rounded); missing counts are sent as unknown. It sends no term names, titles, browsing history, personal definitions, API keys or persistent user/device identifiers. Submissions are deduplicated locally, sampled one in four IDs per day, and capped at 50 per day. Turning it off cancels pending contribution requests and stops future submissions; it does not recall requests already received.
 
 The server retains candidate creator IDs, public counts and last-seen timestamps for seven days after the latest submission. An in-memory, temporary address hash limits abuse and expires hourly; the contribution database stores no IP addresses. Hosting and network providers necessarily process requests. These candidate submissions help prioritize the project-maintained public dictionary; they are distinct from routine cache-miss lookup. Official descriptions are maintained separately and may remain published in future versions.
 
 ## Network Use
 
-The app may open a local network listener for its web-app bridge so browser extensions can connect to the Mac app. The app may also make network requests if a bundled feature needs to communicate with Adamancia services, for example optional account or sync-related features.
+Browser extensions connect to Mac Vault through an authenticated device-local bridge. Blocking settings and local tagging do not require a cloud account or cross-device sync.
+
+Official dictionary updates, downloads, cache-miss creator lookup and enabled creator contributions contact the dictionary service as described above. Consented web research sends sanitized public subjects to the research provider you configure; connection tests and model-list requests also contact that provider. Local model downloads contact their configured hosting source when you request a download. Provider API keys are stored locally and used to authenticate provider requests, not uploaded to Vault's service.
+
+## AI connections
+
+The app starts its authenticated local MCP endpoint and automatically configures supported AI clients detected on the device. Manage these connections in the app's AI connections window. Connected clients can read configuration, Activity and Classifier data and perform supported actions subject to the same policy and freeze gates. Secrets such as PINs and provider API keys cannot be read back through MCP. There is no separate approval prompt for every tool call. Data received by an AI client is governed by that client's privacy policy and may be sent to its remote provider.
 
 ## Analytics and Ads
 
-The macOS app does not include third-party advertising SDKs. It should not send analytics unless a feature explicitly says it is using an online service.
-
-## Optional Accounts and Sync
-
-If account or sync features are enabled in a release, those features may send the minimum data needed to provide that feature, such as account identity and sync payloads. Downloads and local blocking must not require an account.
+The app includes no analytics tracker, advertising SDK or crash reporter. Network and hosting providers process requests for features you use. Vault accounts and cross-device cloud sync are not part of this product.
 
 ## Permissions
 

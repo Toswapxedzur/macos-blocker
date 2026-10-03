@@ -86,6 +86,18 @@ Knowledge, yerel etiketleme modeli için bu Mac üzerinde kısa açıklamalar sa
 
 Açıklamasıyla bir kaynak veya terim ekleyin ya da etkinleştirildiğinde araştırma isteği için açıklamayı boş bırakın. İçerik üreticisi önerileri Classifier'ın topladığı bir kaynağı bulmaya yardımcı olur. Altı veya daha fazla öğeli listelerin hemen üstünde arama bulunur: Terms ve her platformun Content sources listeleri ad, tanımlayıcı veya açıklama için ayrı aramalara sahiptir. Açıklama düzenlemek gelecekteki etiketlemeyi etkiler; kaynak bilgisini silmek araştırmanın daha sonra yeniden oluşturmasını engellemez.
 
+### Resmî ve kişisel sözlükler
+
+Resmî sözlükleri yapılandırmak için **Ayarlar → Sınıflandırıcı → Resmî sözlükler** bölümünü açın. **Bilgi** yüklü sürümleri ve bu denetimlere giden kısayolu gösterir. Vault başlangıçta güncellemeleri denetler; yüklemek için **Güncellemeleri denetle** ve indirme düğmelerini kullanın. Kendi AI API anahtarınız gerekmez.
+
+- **Terimler** yerel arama için indirilir.
+- **Önbellek + çevrimiçi arama** varsayılan olarak en fazla 10.000 içerik üreticisi kaydı tutar; sınırı değiştirebilirsiniz. Önbellekte bulunmayan içerik üreticisinin platformuyla ilişkili herkese açık kimliği sözlük hizmetine gönderilir.
+- **Tam indirme · çevrimdışı arama** indirme sonrasında içerik üreticilerini yerel olarak arar. Bu modu seçip sözlüğü indirin.
+
+Araştırma sağlayıcınızın oluşturdukları dâhil kişisel açıklamalarınız resmî açıklamalardan önceliklidir. **Sözlüğünüzü içe / dışa aktarın** bölümünden kişisel kayıtları dışa aktarabilir veya JSON dosyası içe aktarabilirsiniz; resmî kayıtlar kişisel dışa aktarıma katılmaz.
+
+**İçerik üreticisi sözlüğünü geliştirmeye yardım edin** varsayılan olarak açıktır ve ilk katkıdan önce açıklanır. Gelecekteki katkıları durdurup bekleyen istekleri iptal etmek için burada kapatın. Açıkken Vault yalnızca eksik herkese açık içerik üreticisi kimliklerinden bir örneklem ile mevcut herkese açık takipçi/abone sayılarını gönderir; başlıkları, gezinme geçmişini veya kişisel açıklamaları göndermez. Sınırlar ve saklama süresi için bilgilendirmeyi okuyun. Web araştırmasının ayrı izni ve sağlayıcı ayarları vardır.
+
 ### Araştırma sağlayıcısını yapılandırma
 
 1. **Classifier ayarları → API keys & providers** bölümünü açın.

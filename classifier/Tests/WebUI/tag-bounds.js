@@ -12,7 +12,7 @@ window.runTagBoundsTests=async()=>{
   await poll(()=>q('[data-action="selectType"]'));q('[data-action="selectType"]').click();
   const more='[data-expand="type-more:group-1"]';
   expect(!q(more).open && q(form+' [data-field="houseRules"]').checkVisibility()
-    && q(form+' .dial-card-grid').checkVisibility() && q('[data-group-research-choice]').checkVisibility(),'core model, rules and research settings stay visible outside More');
+    && q(form+' .dial-card-grid').checkVisibility() && q('[data-group-research-choice]').nextElementSibling?.checkVisibility(),'core model, rules and research settings stay visible outside More');
   q(more+' summary').click();
   expect(q(minimum).value==='' && q(maximum).value==='' && q(minimum).placeholder==='0' && q(maximum).placeholder==='3','empty bounds display the selected dial defaults');
   input(minimum,'1');await poll(()=>model().minimumTagsOverride===1);

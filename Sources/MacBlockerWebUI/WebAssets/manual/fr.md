@@ -86,6 +86,18 @@ Les Connaissances stockent de courtes descriptions sur ce Mac pour le modèle lo
 
 Ajoutez une source ou un terme avec sa description, ou laissez la description vide pour demander une recherche lorsque celle-ci est activée. Les suggestions de créateurs aident à trouver une source collectée par le Classificateur. Les listes d’au moins six entrées ont une recherche juste au-dessus : les Termes et les Sources de contenu de chaque plateforme ont des recherches séparées par nom, identifiant ou description. Modifier une description affecte le tagging futur ; supprimer les connaissances d’une source n’empêche pas une recherche ultérieure de les recréer.
 
+### Dictionnaires officiels et personnels
+
+Ouvrez **Paramètres → Classificateur → Dictionnaires officiels** pour configurer les dictionnaires officiels. **Connaissances** affiche les versions installées et un raccourci vers ces commandes. Vault recherche les mises à jour au démarrage ; utilisez **Rechercher des mises à jour** et les boutons de téléchargement pour les installer. Aucune clé API d’IA personnelle n’est requise.
+
+- Les **Termes** sont téléchargés pour la recherche locale.
+- **Cache + recherche en ligne** conserve jusqu’à 10 000 entrées de créateurs par défaut ; vous pouvez modifier cette limite. Si un créateur manque dans le cache, son identifiant public associé à sa plateforme est envoyé au service de dictionnaires.
+- **Téléchargement complet · recherche hors ligne** permet la recherche locale des créateurs après téléchargement. Sélectionnez ce mode puis téléchargez le dictionnaire.
+
+Vos descriptions personnelles, y compris celles de votre fournisseur de recherche, priment sur les descriptions officielles. Dans **Importer / exporter votre dictionnaire**, exportez vos entrées personnelles ou importez un fichier JSON ; les entrées officielles ne figurent pas dans l’export personnel.
+
+**Aidez à améliorer le dictionnaire des créateurs** est activé par défaut et expliqué avant la première contribution. Désactivez-le ici pour arrêter les contributions futures et annuler les demandes en attente. Lorsqu’il est activé, Vault n’envoie qu’un échantillon d’identifiants publics de créateurs manquants et les nombres publics d’abonnés disponibles, jamais les titres, l’historique de navigation ni les descriptions personnelles. Consultez la déclaration pour les limites d’envoi et la durée de conservation. La recherche sur le Web a un consentement et des réglages de fournisseur distincts.
+
 ### Configurer un fournisseur de recherche
 
 1. Ouvrez **Paramètres du Classificateur → Clés API et fournisseurs**.
