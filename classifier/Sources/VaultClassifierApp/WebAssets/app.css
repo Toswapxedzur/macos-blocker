@@ -1196,9 +1196,9 @@ textarea:focus {
 /* Research setup lives beside the API keys it uses. */
 .utility-api-keys { min-width: 0; }
 .research-setup-needed { background: var(--gold-50); padding: 10px; border-radius: 12px; }
-.knowledge-research-connection { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 18px; border-radius: 16px; background: var(--cyan-50); }
-.knowledge-research-connection > div { display: grid; gap: 8px; min-width: 0; overflow-wrap: anywhere; }
-@media (max-width: 600px) { .knowledge-research-connection { align-items: flex-start; flex-direction: column; } }
+.knowledge-research-connection, .knowledge-dictionary-connection { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 18px; border-radius: 16px; background: var(--cyan-50); }
+.knowledge-research-connection > div, .knowledge-dictionary-connection > div { display: grid; gap: 8px; min-width: 0; overflow-wrap: anywhere; }
+@media (max-width: 600px) { .knowledge-research-connection, .knowledge-dictionary-connection { align-items: flex-start; flex-direction: column; } }
 
 /* Provider models are selected from a fetched, searchable and bounded list. */
 .research-model-field, .research-model-picker { min-width: 0; }
@@ -1233,3 +1233,7 @@ textarea:focus {
 .dictionary-personal { margin-top:16px; }
 .dictionary-personal summary { cursor:pointer; font-weight:600; margin-bottom:12px; }
 .dictionary-export { width:100%; box-sizing:border-box; margin-block:12px; font-family:monospace; }
+
+.utility-dictionary-section .dictionary-contribution { gap: 8px; }
+.utility-dictionary-section .dictionary-contribution .toggle-row { justify-content: flex-start; }
+@media (max-width: 600px) { .dictionary-pack { align-items: flex-start; flex-direction: column; } }

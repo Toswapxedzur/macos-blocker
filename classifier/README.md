@@ -95,3 +95,5 @@ swift build
 
 No provider credential, raw provider request/response body, or production
 signing private key belongs in the repository.
+
+Official dictionary downloads, creator cache/full-download mode, contribution choice and personal JSON import/export live in Classifier Settings. Knowledge shows the dictionary status and a Configure dictionaries link, alongside the Research provider panel. Personal term and creator editing remains in Knowledge.
