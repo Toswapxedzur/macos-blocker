@@ -116,9 +116,7 @@ Usage में चुने apps और websites साथ दिखाने �
 
 Platform feeds समर्थित platform pages पर दिखी सामग्री एकत्र करते हैं, चाहे page खोला हो या नहीं। **टैगिंग समर्थित** feed recording चालू होने पर वर्गीकारक को सामग्री दे सकता है। इसका retention एकत्र सामग्री को app/website उपयोग से अलग नियंत्रित करता है। रुका वर्गीकारक group अपने आप recording बंद नहीं करता।
 
-## वर्गीकारक सेटिंग
-
-**टैग-पैकेज अपडेट** चुनता है कि सत्यापित tag-package updates कब लागू हों: **स्वचालित**, **पहले पूछें**, या **मैन्युअल**। यह group में चुने स्थानीय model डाउनलोड से अलग है। **डाउनलोड** चुनने पर Hugging Face से model files आते हैं; डाउनलोड के दौरान group का progress/status और **रद्द करें** उपयोग करें।
+## सेटिंग्स
 
 Settings में interface language चुनें। चुनी interface language में छोटे Info बटनों से field explanations मिलते हैं।
 

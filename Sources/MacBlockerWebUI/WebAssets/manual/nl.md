@@ -116,9 +116,7 @@ Schakel in **Registratie** registratie in of uit per categorie of afzonderlijke 
 
 Platformfeeds verzamelen inhoud die op ondersteunde platformpagina's wordt getoond, of deze nu geopend is of niet. Een feed met **Tagging ondersteund** kan Classifier voorzien van gegevens zolang registratie aanstaat. Bewaren van de feed beheert verzamelde inhoud apart van app- en websitegebruik. Een gepauzeerde Classifier-groep schakelt registratie niet zelf uit.
 
-## Classifier-instellingen
-
-**Tagpakketupdates** bepaalt wanneer geverifieerde tagpakketupdates ingaan: **Automatisch**, **Eerst vragen** of **Handmatig**. Dit staat los van het downloaden van het lokale model dat in een groep is gekozen. Modelbestanden worden van Hugging Face gedownload wanneer je **Downloaden** kiest; gebruik tijdens het downloaden de voortgang/status van de groep en **Annuleren**.
+## Instellingen
 
 Kies de interfacetaal in Settings. Veldtoelichting is beschikbaar via de kleine Info-knoppen in de gekozen interfacetaal.
 

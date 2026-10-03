@@ -40,33 +40,14 @@ extension VaultClassifierViewModel {
         } catch { issue = error.localizedDescription }
     }
 
-    func savePackageSettings() {
-        do {
-            guard let coordinator else { return }
-            let settings = ClassifierSettings(
-                packageUpdateMode: packageUpdateMode,
-                research: localState?.settings.research ?? ResearchSettings(),
-                classificationEnabled: localState?.settings.classificationEnabled ?? true
-            )
-            try coordinator.updateSettings(settings)
-            refreshLocalState()
-            issue = nil
-        } catch {
-            issue = error.localizedDescription
-        }
-    }
-
     func saveResearchSettings(_ updated: ResearchSettings) {
         guard let coordinator else { return }
         do {
             guard let catalog = localState?.workspaceCatalog else { return }
             try Self.validateResearchSettingsForEnable(updated, catalog: catalog)
-            let current = localState?.settings ?? .init()
-            try coordinator.updateSettings(.init(
-                packageUpdateMode: current.packageUpdateMode,
-                research: updated,
-                classificationEnabled: current.classificationEnabled
-            ))
+            var current = coordinator.snapshot().settings
+            current.research = updated
+            try coordinator.updateSettings(current)
             refreshLocalState()
             issue = nil
         } catch {
@@ -192,10 +173,6 @@ extension VaultClassifierViewModel {
         case "off": return .init(typeID: typeID, researchEnabled: false)
         default: throw WebBridgeInputError.invalidChoice("researchMode")
         }
-    }
-
-    func loadResourceSettings(from settings: ClassifierSettings) {
-        packageUpdateMode = settings.packageUpdateMode
     }
 
     func positiveInteger(_ raw: String, label: String) throws -> Int {

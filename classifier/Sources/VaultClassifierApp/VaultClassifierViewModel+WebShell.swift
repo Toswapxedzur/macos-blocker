@@ -107,7 +107,6 @@ extension VaultClassifierViewModel {
         let settingsPayload: [String: Any] = [
             "classificationEnabled": state?.settings.classificationEnabled ?? true,
             "dictionaries": dictionaryPayload(state?.settings.dictionaries ?? .init()),
-            "packageUpdateMode": packageUpdateMode.rawValue,
             "localModels": [
                     "systemRAMGB": HardwareProfile.physicalRAMGB(),
                     "modelLibrary": Self.modelLibraryPayload(
@@ -510,13 +509,6 @@ extension VaultClassifierViewModel {
                 saveClassificationSettings(enabled: try webBool(data, key: "classificationEnabled"))
             case "setClassifierTypePaused":
                 setClassifierTypePaused(typeID: try webString(data, key: "typeID", limit: 256), paused: try webBool(data, key: "paused"))
-            case "savePackageSettings":
-                let rawMode = try webString(data, key: "packageUpdateMode", limit: 32)
-                guard let updateMode = PackageUpdateMode(rawValue: rawMode) else {
-                    throw WebBridgeInputError.invalidChoice("package update mode")
-                }
-                packageUpdateMode = updateMode
-                savePackageSettings()
             case "downloadModel":
                 downloadModel(id: try webString(data, key: "id", limit: 128))
             case "cancelModelDownload":

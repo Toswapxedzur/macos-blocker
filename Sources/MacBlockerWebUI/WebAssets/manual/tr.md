@@ -116,9 +116,7 @@ Seçilen uygulamaları ve web sitelerini Usage içinde birlikte göstermek için
 
 Platform akışları, açık olup olmadıklarına bakmadan desteklenen platform sayfalarında gösterilen içeriği toplar. **Etiketleme destekleniyor** yazan akış, kayıt açıkken Classifier'a içerik sağlayabilir. Akış saklaması, toplanan içeriği uygulama ve web sitesi kullanımından ayrı denetler. Duraklatılmış Classifier grubu kaydı kendiliğinden kapatmaz.
 
-## Classifier ayarları
-
-**Etiket paketi güncellemeleri**, doğrulanmış güncellemelerin ne zaman uygulanacağını seçer: **Otomatik**, **Önce sor** veya **Elle**. Bu, bir grupta seçilen yerel modelin indirilmesinden ayrıdır. **İndir** seçildiğinde model dosyaları Hugging Face'ten indirilir; indirme sırasında grubun ilerleme/durumunu ve **İptal** kontrolünü kullanın.
+## Ayarlar
 
 Settings bölümünden arayüz dilini seçin. Alan açıklamaları, seçilen arayüz dilindeki küçük Info düğmelerinden edinilebilir.
 

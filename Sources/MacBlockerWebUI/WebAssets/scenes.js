@@ -37,6 +37,38 @@
     scopes[name] = scope;
   }
 
+  // All pages edit the same app Settings. Classifier content keeps its own
+  // stylesheet scope, but lives inside the shared dialog and focus lifecycle.
+  const settingsModal = document.getElementById("settingsModal");
+  const settingsHost = document.createElement("div");
+  settingsHost.className = "native-settings-host";
+  settingsHost.dataset.scene = "classifier";
+  settingsModal.querySelector(".settings-body").appendChild(settingsHost);
+  const settingsScope = settingsHost.attachShadow({ mode: "open" });
+  settingsScope.innerHTML = ["vault-ui.css", "vault-info.css", "classifier/app.css"]
+    .map(href => `<link rel="stylesheet" href="${href}">`).join("")
+    + '<div id="native-settings" class="utility-settings-body"></div>';
+  const settingsRoot = settingsScope.getElementById("native-settings");
+  let settingsVisible = false;
+  function notifyScene(scene) {
+    try { window.webkit.messageHandlers.cbBridge.postMessage({ kind: "scene-shown", scene }); } catch (_) {}
+  }
+  function settingsChanged() {
+    const visible = !settingsModal.classList.contains("hidden");
+    if (visible === settingsVisible) return;
+    settingsVisible = visible;
+    notifyScene(visible ? "settings" : document.body.dataset.scene || "vault");
+    window.dispatchEvent(new CustomEvent("vault-settings-changed", { detail: { open: visible } }));
+  }
+  new MutationObserver(settingsChanged).observe(settingsModal, { attributes: true, attributeFilter: ["class"] });
+  window.VaultSettings = Object.freeze({
+    scope: settingsScope, root: settingsRoot,
+    isOpen: () => !settingsModal.classList.contains("hidden"),
+    open() { openSettings(); settingsChanged(); },
+    close() { closeSettings(); settingsChanged(); }
+  });
+  window.VaultUI.observe(settingsScope);
+
   // A scene's script finds its shadow root here.
   window.VaultScenes = Object.freeze({ scope: (name) => scopes[name] || null });
 

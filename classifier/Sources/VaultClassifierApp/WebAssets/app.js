@@ -9,28 +9,16 @@
   const navigationWidthStorageKey = "vaultClassifier.navigationPanelWidth";
   const navigationWidthRange = { minimum: 236, maximum: 460, fallback: 300 };
   const strings = window.VaultClassifierStrings || {};
-  const languageChoices = [
-    ["en", "language.name.en"],
-    ["ar", "language.name.ar"],
-    ["bn", "language.name.bn"],
-    ["de", "language.name.de"],
-    ["es", "language.name.es"],
-    ["fr", "language.name.fr"],
-    ["hi", "language.name.hi"],
-    ["id", "language.name.id"],
-    ["it", "language.name.it"],
-    ["ja", "language.name.ja"],
-    ["ko", "language.name.ko"],
-    ["nl", "language.name.nl"],
-    ["pa", "language.name.pa"],
-    ["pl", "language.name.pl"],
-    ["pt", "language.name.pt"],
-    ["ru", "language.name.ru"],
-    ["th", "language.name.th"],
-    ["tr", "language.name.tr"],
-    ["vi", "language.name.vi"],
-    ["zh", "language.name.zh"],
-  ];
+  const settingsScope = window.VaultSettings.scope;
+  const settingsRoot = window.VaultSettings.root;
+  const uiScopes = [...new Set([scope, settingsScope])];
+  const uiRoots = [root, settingsRoot];
+  const uiQuery = selector => uiRoots.map(node => node.querySelector(selector)).find(Boolean) || null;
+  const uiQueryAll = selector => uiRoots.flatMap(node => [...node.querySelectorAll(selector)]);
+  const activeControl = () => uiScopes.map(node => node.activeElement).find(Boolean) || null;
+  function listen(type, listener, options) { for (const node of uiScopes) node.addEventListener(type, listener, options); }
+  const captureSearch = () => uiScopes.map(node => [node, window.VaultUI.captureSearch(node)]);
+  function restoreSearch(saved) { for (const [node, focus] of saved) window.VaultUI.restoreSearch(node, focus); }
   let state = null;
   let renderedPresentationRevision = 0;
   let activeTagPanel = null;
@@ -72,7 +60,7 @@
   // Set to the pre-create set of type ids when "New type" is clicked, so the
   // next snapshot can open the freshly created type.
   let pendingSelectNewType = null;
-  let selectedLanguage = "en";
+  let selectedLanguage = document.documentElement.lang || "en";
   let languageMessages = {};
   let languageRevision = 0;
   let navigationPanelWidth = navigationWidthRange.fallback;
@@ -81,10 +69,6 @@
   let lastRenderedMarkup = null;
   const listViewportPositions = new Map();
 
-  try {
-    const storedLanguage = window.localStorage.getItem("vaultClassifier.language");
-    if (languageChoices.some(([identifier]) => identifier === storedLanguage)) selectedLanguage = storedLanguage;
-  } catch (_) {}
   try {
     const storedWidth = Number(window.localStorage.getItem(navigationWidthStorageKey));
     if (Number.isFinite(storedWidth)) {
@@ -96,7 +80,7 @@
 
   function applyNavigationPanelWidth() {
     root.style.setProperty("--navigation-panel-width", `${navigationPanelWidth}px`);
-    root.querySelector("[data-navigation-resizer]")?.setAttribute("aria-valuenow", String(navigationPanelWidth));
+    uiQuery("[data-navigation-resizer]")?.setAttribute("aria-valuenow", String(navigationPanelWidth));
   }
 
   const esc = (value) => String(value ?? "")
@@ -149,7 +133,7 @@
 
   async function loadSelectedLanguage() {
     const revision = ++languageRevision;
-    const language = selectedLanguage;
+    const language = selectedLanguage = document.documentElement.lang || "en";
     let messages = {};
     try {
       if (window.VaultLoadMessages) messages = await window.VaultLoadMessages(language);
@@ -160,10 +144,9 @@
     } catch (_) {}
     if (revision !== languageRevision) return;
     languageMessages = messages;
-    root.lang = language;
-    root.dir = language === "ar" ? "rtl" : "ltr";
+    for (const node of uiRoots) { node.lang = language; node.dir = language === "ar" ? "rtl" : "ltr"; }
     render();
-    window.VaultInfo.refresh(scope);
+    for (const node of uiScopes) window.VaultInfo.refresh(node);
   }
 
   window.VaultClassifierTranslate = (key, values = {}) => {
@@ -190,7 +173,7 @@
   }
 
   function collect(formID) {
-    const form = root.querySelector(`[data-form-id="${formID}"]`);
+    const form = uiQuery(`[data-form-id="${formID}"]`);
     const values = {};
     if (!form) return values;
     form.querySelectorAll("[data-field]").forEach((control) => {
@@ -281,7 +264,6 @@
       case "saveResearchSettings": return { ...state.settings?.research,
         llmProviderProfileID: state.settings?.research?.llmProviderProfileID || "",
         llmModelIdentifier: state.settings?.research?.llmModelIdentifier || "" };
-      case "savePackageSettings": return state.settings;
       case "saveClassificationSettings": return state.settings;
       case "saveBackup": return state.backup;
       case "editKnowledgeEntry": if (assets.knowledge?.paged) return knowledgeRows.get(edit.identity.id) || {};
@@ -339,7 +321,7 @@
     edit.timer = null;
     if (edit.sent || composingEdit) return;
     if (edit.action === "saveClassifierTypeLocalModel") {
-      const form = root.querySelector(`[data-form-id="${CSS.escape(edit.formID)}"]`);
+      const form = uiQuery(`[data-form-id="${CSS.escape(edit.formID)}"]`);
       if (form && !validateTagBounds(form, edit.values)) return;
     }
     const saved = savedLiveEdit(edit);
@@ -366,7 +348,7 @@
   }
 
   function captureLiveEditFocus() {
-    const control = scope.activeElement;
+    const control = activeControl();
     const form = control?.closest?.("[data-autosave-action]");
     return form && control.matches("[data-field]") ? { key: liveEditKey(form),
       field: control.dataset.field, value: control.value, start: control.selectionStart,
@@ -374,7 +356,7 @@
   }
 
   function restoreLiveEdits(focused) {
-    root.querySelectorAll("[data-autosave-action]").forEach((form) => {
+    uiQueryAll("[data-autosave-action]").forEach((form) => {
       const key = liveEditKey(form), edit = liveEdits.get(key);
       form.querySelectorAll("[data-field]").forEach((control) => {
         if (control.closest("[data-autosave-action]") !== form) return;
@@ -394,16 +376,16 @@
     });
   }
 
-  scope.addEventListener("focusout", (event) => {
+  listen("focusout", (event) => {
     if (!replacingControls && !composingEdit) queueLiveEdit(event.target, true);
   });
-  scope.addEventListener("compositionstart", (event) => {
+  listen("compositionstart", (event) => {
     if (event.target.closest?.("[data-autosave-action]")) {
       flushLiveEdits();
       composingEdit = true;
     }
   });
-  scope.addEventListener("compositionend", (event) => {
+  listen("compositionend", (event) => {
     composingEdit = false;
     queueLiveEdit(event.target);
     if (event.target.matches("[data-model-search]")) render();
@@ -438,7 +420,6 @@
     "knowledge.platform": "The platform that owns this content source. This determines how its name or link is interpreted.",
     "knowledge.description": "Describe what this term or content source means so the Classifier can use that knowledge. Saved descriptions are editable.",
     "knowledge.search": "Find saved knowledge by name, identifier, or description.",
-    "language.label": "Choose the app’s interface language. Stored groups, tags, and knowledge remain unchanged.",
     "tree.nodeName": "The name of this tag in the taxonomy and on tagged content.",
     "tree.tagName": "The name of the tag to add to this Classifier group’s taxonomy."
   });
@@ -464,7 +445,7 @@
 
   let deferredChoices = new Map();
   function mountChoices() {
-    root.querySelectorAll("[data-choice-key]").forEach(select => { const choice = deferredChoices.get(select.dataset.choiceKey); if (choice) window.VaultUI.setSelectOptions(select, choice.options, choice.value); });
+    uiQueryAll("[data-choice-key]").forEach(select => { const choice = deferredChoices.get(select.dataset.choiceKey); if (choice) window.VaultUI.setSelectOptions(select, choice.options, choice.value); });
   }
   function valueSelectField(labelKey, hintKey, key, value, options, extra = "") {
     let choiceKey = "", visible = options;
@@ -538,13 +519,7 @@
   }
 
 
-  function languageSelection() {
-    return `<label class="header-language" ${infoAttrs("language.label")}><span class="visually-hidden">${tx("language.label")}</span><select class="select-control" data-language-selection aria-label="${tx("language.label")}">${languageChoices.map(([identifier, nameKey]) => `<option value="${esc(identifier)}"${selected(selectedLanguage, identifier)}>${tx(nameKey)}</option>`).join("")}</select></label>`;
-  }
 
-  // The two dials of the local model (2026-09-23): Speed ↔ Quality picks a
-  // model tier, Strict ↔ Broad picks a tag-count position. Everything else
-  // is a constant on the Swift side.
   const SPEED_TIERS = ["fast", "balanced", "best"];
   const STRICTNESS_POSITIONS = [1, 2, 3, 4, 5];
 
@@ -597,6 +572,7 @@
 
   function openResearchSetup() {
     utilityPanel = "settings";
+    window.VaultSettings.open();
     dictionarySetupFocusPending = false;
     researchSetupRequested = true;
     researchSetupFocusPending = true;
@@ -606,6 +582,7 @@
 
   function openDictionarySetup() {
     utilityPanel = "settings";
+    window.VaultSettings.open();
     researchSetupRequested = false;
     researchSetupFocusPending = false;
     dictionarySetupFocusPending = true;
@@ -615,7 +592,7 @@
 
   function placeDictionarySetup() {
     if (!dictionarySetupFocusPending || utilityPanel !== "settings") return;
-    const target = root.querySelector(".utility-dictionary-section h3");
+    const target = uiQuery(".utility-dictionary-section h3");
     if (!target) return;
     dictionarySetupFocusPending = false;
     target.tabIndex = -1;
@@ -628,20 +605,20 @@
     const availability = researchAvailability();
     const missing = [];
     if (!availability.providerReady) {
-      missing.push(root.querySelector((state.assets?.providerProfiles || []).some((profile) => {
+      missing.push(uiQuery((state.assets?.providerProfiles || []).some((profile) => {
         const protocol = state.assets?.providerProtocols?.[profile.type];
         return protocol?.supportsGenerateText && protocol?.supportsNativeWebSearch;
       }) ? '[data-form-id="utility-research-form"] [data-field="llmProviderProfileID"]' : '[data-form-id="new-provider-profile-form"] [data-field="type"]'));
     } else if (!availability.keyReady) {
-      missing.push(root.querySelector(`[data-form-id="${CSS.escape(`provider-profile-${availability.profile.id}`)}"] [data-field="credential"]`));
+      missing.push(uiQuery(`[data-form-id="${CSS.escape(`provider-profile-${availability.profile.id}`)}"] [data-field="credential"]`));
     }
-    if (!availability.modelReady) missing.push(root.querySelector("[data-model-selector], [data-model-fetch]"));
-    if (availability.configured && !availability.ready) missing.push(root.querySelector('[data-form-id="utility-research-form"] [data-field="enabled"]'));
-    root.querySelectorAll(".research-setup-needed").forEach((field) => field.classList.remove("research-setup-needed"));
+    if (!availability.modelReady) missing.push(uiQuery("[data-model-selector], [data-model-fetch]"));
+    if (availability.configured && !availability.ready) missing.push(uiQuery('[data-form-id="utility-research-form"] [data-field="enabled"]'));
+    uiQueryAll(".research-setup-needed").forEach((field) => field.classList.remove("research-setup-needed"));
     missing.filter(Boolean).forEach((control) => control.closest(".field, label")?.classList.add("research-setup-needed"));
     if (!researchSetupFocusPending) return;
     researchSetupFocusPending = false;
-    const target = missing.find(Boolean) || root.querySelector(".utility-research-section h3");
+    const target = missing.find(Boolean) || uiQuery(".utility-research-section h3");
     if (target) {
       if (target.tagName === "H3") target.tabIndex = -1;
       const focusTarget = target.matches("select") ? target.nextElementSibling?.querySelector(".vui-select-button") || target : target;
@@ -681,15 +658,15 @@
 
   function filterResearchModels() {
     const query = researchModelQuery.trim().toLowerCase();
-    const options = [...root.querySelectorAll("[data-model-pick]")];
+    const options = [...uiQueryAll("[data-model-pick]")];
     options.forEach((option) => { option.hidden = !option.dataset.modelPick.toLowerCase().includes(query); });
-    const noMatches = root.querySelector("[data-model-no-matches]");
+    const noMatches = uiQuery("[data-model-no-matches]");
     if (noMatches) noMatches.hidden = !options.length || options.some((option) => !option.hidden);
     placeResearchModelMenu();
   }
 
   function closeResearchModelMenu(restoreFocus = false) {
-    const picker = root.querySelector(".research-model-picker[open]");
+    const picker = uiQuery(".research-model-picker[open]");
     if (!picker) return false;
     window.VaultUI.hideMenuLayer(picker.querySelector(".research-model-menu"));
     picker.open = false;
@@ -701,7 +678,7 @@
   // Keep the menu inside the Settings dialog for its focus trap, but out of
   // layout flow. It uses the same white floating card as the shared selects.
   function placeResearchModelMenu() {
-    const picker = root.querySelector(".research-model-picker[open]");
+    const picker = uiQuery(".research-model-picker[open]");
     if (!picker) return;
     placeClassifierMenu(picker.querySelector("summary"), picker.querySelector(".research-model-menu"));
   }
@@ -724,20 +701,21 @@
   }
 
   document.addEventListener("pointerdown", (event) => {
-    const picker = root.querySelector(".research-model-picker[open]");
+    const picker = uiQuery(".research-model-picker[open]");
     if (picker && !event.composedPath().includes(picker)) closeResearchModelMenu();
-    const suggestions = root.querySelector("[data-knowledge-suggestions]");
-    const creator = root.querySelector("[data-knowledge-creator]");
+    const suggestions = uiQuery("[data-knowledge-suggestions]");
+    const creator = uiQuery("[data-knowledge-creator]");
     if (suggestions && !event.composedPath().includes(suggestions) && !event.composedPath().includes(creator)) closeKnowledgeSuggestions();
   }, true);
-  scope.addEventListener("scroll", (event) => {
+  listen("scroll", (event) => {
     if (!event.target.closest?.(".research-model-menu")) placeResearchModelMenu();
     placeKnowledgeSuggestions();
   }, true);
+  document.addEventListener("scroll", () => { placeResearchModelMenu(); placeKnowledgeSuggestions(); }, true);
   window.addEventListener("resize", () => { placeResearchModelMenu(); placeKnowledgeSuggestions(); });
 
-  function utilityPanelContent() {
-    if (!utilityPanel) return "";
+  function nativeSettingsContent() {
+    if (!utilityPanel || !state) return "";
     let content = "";
     if (utilityPanel === "settings") {
       const settings = state.settings;
@@ -757,11 +735,9 @@
       }${
         researchModelPicker()
       }</div><p class="small-copy" data-info="research.constantsNote" data-info-target=".utility-research-section h3">${tx("research.constantsNote")}</p><p class="small-copy">${tx("research.usageToday", { used: research.tokensUsedToday ?? 0, limit: research.dailyTokenLimit ?? 10000 })}</p>${researchStatusBlock(research.status)}</section>`;
-      const packageSection = `<section class="utility-settings-section utility-resource-section" data-form-id="utility-package-form" data-autosave-action="savePackageSettings"><h3 class="utility-settings-section-title">${tx("settings.packageUpdates")}</h3><div class="utility-settings-fields">${selectField("settings.packageUpdates", "settings.packageUpdatesCopy", "packageUpdateMode", settings.packageUpdateMode, [["automatic", "enum.update.automatic"], ["downloadThenAsk", "enum.update.downloadThenAsk"], ["manual", "enum.update.manual"]])}</div></section>`;
-      content = `<section class="utility-panel utility-settings-modal"><div class="utility-panel-head"><div><h2>${tx("utility.settings.title")}</h2><p class="section-copy" data-info>${tx("utility.settings.copy")}</p></div><button class="secondary utility-close" data-action="closeUtilityPanel">${tx("utility.close")}</button></div><div class="utility-settings-body">${notice(state.issue, "red")}${classificationSection}${apiKeySettings()}${researchSection}${dictionaryControls()}${packageSection}<section class="utility-settings-section"><h3 class="utility-settings-section-title">${tx("language.label")}</h3>${languageSelection()}</section></div></section>`;
+      content = `${notice(state.issue, "red")}${classificationSection}${apiKeySettings()}${researchSection}${dictionaryControls()}`;
     }
-    if (!content) return "";
-    return `<div class="utility-popover-layer" role="presentation"><button class="utility-popover-dismiss" data-action="closeUtilityPanel" aria-label="${tx("utility.close")}"></button><div class="utility-popover" data-list-key="settings" role="dialog" aria-modal="true" aria-label="${esc(tx("utility.settings.title"))}">${content}</div></div>`;
+    return content;
   }
 
   function navButton(workspace, symbol, titleKey, metaKey) {
@@ -803,7 +779,7 @@
     return `<div class="popup">
       <header class="vui-topbar">
         <nav class="vui-tabs" aria-label="${sx("activity.scene", "Scene")}"><button type="button" class="vui-tab" data-scene="vault">${sx("scene.vault", "Vault")}</button><button type="button" class="vui-tab is-active" data-scene="classifier">${sx("scene.classifier", "Classifier")}</button><button type="button" class="vui-tab" data-scene="activity">${sx("scene.activity", "Activity")}</button></nav>
-        <div class="vui-topbar-links"><button type="button" class="secondary" data-action="openManual">${sx("manual.title", "User manual")}</button><span class="settings-popover-anchor"><button type="button" class="secondary" data-action="openUtilityPanel" data-utility-panel="settings" aria-haspopup="dialog" aria-expanded="${utilityPanel ? "true" : "false"}">${tx("utility.settings.button")}</button>${utilityPanelContent()}</span></div>
+        <div class="vui-topbar-links"><button type="button" class="secondary" data-action="openManual">${sx("manual.title", "User manual")}</button><span class="settings-popover-anchor"><button type="button" class="secondary" data-action="openUtilityPanel" data-utility-panel="settings" aria-haspopup="dialog" aria-expanded="${utilityPanel ? "true" : "false"}">${tx("utility.settings.button")}</button></span></div>
       </header>
       <div class="layout">
         <aside class="navigation-panel" aria-label="${tx("navigation.aria")}">
@@ -823,19 +799,19 @@
   }
 
   function syncDialogFocus(previousControl) {
-    const kind = pendingCreateType ? "create" : utilityPanel;
+    const kind = pendingCreateType ? "create" : null;
     releaseDialogFocus?.(false);
     releaseDialogFocus = null;
     if (!kind) {
-      if (dialogFocusKind) root.querySelector(dialogFocusKind === "create"
+      if (dialogFocusKind) uiQuery(dialogFocusKind === "create"
         ? '[data-action="newType"]' : '[data-action="openUtilityPanel"]')?.focus({ preventScroll: true });
       dialogFocusKind = null;
       return;
     }
     dialogFocusKind = kind;
-    const card = root.querySelector(kind === "create" ? "[data-create-type-dialog]" : '.utility-popover[role="dialog"]');
+    const card = uiQuery(kind === "create" ? "[data-create-type-dialog]" : '.utility-popover[role="dialog"]');
     if (!card) return;
-    const active = scope.activeElement;
+    const active = activeControl();
     const initial = card.contains(active) ? active : previousControl
       ? Array.from(card.querySelectorAll("button, input, select, textarea")).find((control) =>
         control.dataset.action === previousControl.action && control.dataset.field === previousControl.field
@@ -843,7 +819,7 @@
         && (!previousControl.platform || control.value === previousControl.platform)) : null;
     releaseDialogFocus = window.VaultUI.focusDialog(card, {
       initialFocus: initial || card.querySelector(kind === "create" ? "[data-create-type-name]" : '[data-action="closeUtilityPanel"]'),
-      returnFocus: () => root.querySelector(kind === "create" ? '[data-action="newType"]' : '[data-action="openUtilityPanel"]'),
+      returnFocus: () => uiQuery(kind === "create" ? '[data-action="newType"]' : '[data-action="openUtilityPanel"]'),
       onEscape: dismissClassifierDialog
     });
     if (previousControl?.start != null && initial?.setSelectionRange) {
@@ -871,7 +847,7 @@
   // trackpad to pan a tree wider than the panel.
   const graphModels = new Map();
   function mountLargeGraphs() {
-    for (const map of root.querySelectorAll("[data-tree-map]")) {
+    for (const map of uiQueryAll("[data-tree-map]")) {
       const model = graphModels.get(map.dataset.treeId);
       if (!model || model.nodes.length <= 200) continue;
       window.VaultUI.bindFind(map, { items: model.nodes, id: node => node.id,
@@ -907,7 +883,7 @@
         if (point.x + 126 >= left && point.x <= right && point.y + 22 >= top && point.y <= bottom) visible.add(node.id);
       }
     }
-    const active = scope.activeElement?.closest?.(".tree-map-node");
+    const active = activeControl()?.closest?.(".tree-map-node");
     if (active?.dataset.treeId === map.dataset.treeId) visible.add(active.dataset.nodeId);
     const existing = new Map([...layer.children].map(row => [row.dataset.nodeId, row]));
     for (const [id, row] of existing) if (!visible.has(id)) row.remove();
@@ -917,7 +893,7 @@
       if (!row || row.__graphMarkup !== markup) {
         const template = document.createElement("template"); template.innerHTML = markup;
         const next = template.content.firstElementChild; next.__graphMarkup = markup;
-        const focused = row === scope.activeElement;
+        const focused = row === activeControl();
         if (row) row.replaceWith(next); else layer.append(next);
         row = next; if (focused) row.focus({ preventScroll: true });
       }
@@ -1005,7 +981,7 @@
   // part of the canvas has no room on the right, and moved up so all of it
   // shows.
   function placeTreePopovers() {
-    root.querySelectorAll("[data-tree-map]").forEach((map) => {
+    uiQueryAll("[data-tree-map]").forEach((map) => {
       const popover = map.querySelector("[data-tree-popover]");
       if (!popover) return;
       const x = Number(popover.dataset.anchorX) || 0;
@@ -1085,12 +1061,12 @@
   }
   function mountLists() {
     for (const options of pendingLists) {
-      const list = [...root.querySelectorAll("[data-vui-search]")].find(list => list.dataset.vuiSearch === options.key);
+      const list = [...uiQueryAll("[data-vui-search]")].find(list => list.dataset.vuiSearch === options.key);
       if (!list) continue;
       let focused = null;
       window.VaultUI.renderList(list, { ...options, scope, beforePaint() { focused = captureLiveEditFocus(); }, afterPaint() {
         restoreLiveEdits(focused);
-        root.querySelectorAll(".knowledge-card").forEach(updateKnowledgeSearchText);
+        uiQueryAll(".knowledge-card").forEach(updateKnowledgeSearchText);
         window.VaultUI.enhance(list);
       } });
     }
@@ -1275,15 +1251,15 @@
       ${notice(d.notice, "navy")}
       <details class="dictionary-personal" data-expand="dictionary-personal"${openExpands.has("dictionary-personal") ? " open" : ""}><summary>${tx("dictionary.importExport")}</summary><div data-form-id="dictionary-import" class="form-stack"><label class="field wide"><span class="field-label">${tx("dictionary.personalJSON")}</span><textarea data-field="json" data-personal-import rows="5" maxlength="8388608" placeholder='{"schemaVersion":1,"entries":[{"kind":"term","subject":"Example","meaning":"Description"}]}'>${esc(personalDictionaryImportDraft)}</textarea></label><label class="field">${tx("dictionary.openJSON")}<input type="file" accept=".json,application/json" data-personal-file></label><div class="action-row"><button class="secondary" data-action="importPersonalDictionary" data-form="dictionary-import">${tx("dictionary.import")}</button><button class="secondary" data-action="exportPersonalDictionary">${tx("dictionary.export")}</button></div></div>${d.personalJSON ? `<textarea class="dictionary-export" data-personal-export readonly rows="6" aria-label="${tx("dictionary.exported")}">${esc(d.personalJSON)}</textarea><button class="secondary" data-action="copyPersonalDictionary">${tx("dictionary.copy")}</button>` : ""}</details></section>`;
   }
-  scope.addEventListener("change", async event => {
+  listen("change", async event => {
     if (!event.target.matches("[data-personal-file]")) return;
     const file = event.target.files?.[0];
     if (!file || file.size > 8 * 1024 * 1024) return;
     personalDictionaryImportDraft = await file.text();
-    const input = root.querySelector("[data-personal-import]");
+    const input = uiQuery("[data-personal-import]");
     if (input) input.value = personalDictionaryImportDraft;
   });
-  scope.addEventListener("input", event => {
+  listen("input", event => {
     if (event.target.matches("[data-personal-import]")) personalDictionaryImportDraft = event.target.value;
   });
   function dictionaryOnboarding() {
@@ -1355,7 +1331,7 @@
     card.dataset.vuiSearchText = `${card.dataset.knowledgeSearchName} ${card.querySelector('[data-field="meaning"]').value}`;
   }
 
-  scope.addEventListener("vui-search-filtered", (event) => {
+  listen("vui-search-filtered", (event) => {
     if (!event.target.matches(".knowledge-list")) return;
     const count = event.target.closest("[data-knowledge-group]").querySelector("[data-knowledge-count]");
     const { query, shown, total } = event.detail;
@@ -1366,7 +1342,7 @@
   // platform whose name contains what is typed.
   let suggestionRevision = 0;
   async function showKnowledgeSuggestions(input) {
-    const box = root.querySelector("[data-knowledge-suggestions]");
+    const box = uiQuery("[data-knowledge-suggestions]");
     if (!box) return;
     const revision = ++suggestionRevision;
     const query = input.value.trim().toLowerCase();
@@ -1390,23 +1366,23 @@
 
   function closeKnowledgeSuggestions(restoreFocus = false) {
     suggestionRevision++;
-    const box = root.querySelector("[data-knowledge-suggestions]");
-    if (restoreFocus) root.querySelector("[data-knowledge-creator]")?.focus({ preventScroll: true });
+    const box = uiQuery("[data-knowledge-suggestions]");
+    if (restoreFocus) uiQuery("[data-knowledge-creator]")?.focus({ preventScroll: true });
     if (box) { window.VaultUI.hideMenuLayer(box); box.replaceChildren(); }
     knowledgeSuggestionsOpen = false;
   }
 
   function placeKnowledgeSuggestions() {
-    const box = root.querySelector("[data-knowledge-suggestions]");
-    const input = root.querySelector("[data-knowledge-creator]");
+    const box = uiQuery("[data-knowledge-suggestions]");
+    const input = uiQuery("[data-knowledge-creator]");
     if (box?.children.length && input) placeClassifierMenu(input, box);
   }
 
-  scope.addEventListener("focusin", (event) => {
+  listen("focusin", (event) => {
     if (event.target.matches?.("[data-knowledge-creator]") && !replacingControls) showKnowledgeSuggestions(event.target);
   });
-  scope.addEventListener("focusout", () => window.requestAnimationFrame(() => {
-    if (knowledgeSuggestionsOpen && !scope.activeElement?.matches?.("[data-knowledge-creator], [data-knowledge-pick]")) closeKnowledgeSuggestions();
+  listen("focusout", () => window.requestAnimationFrame(() => {
+    if (knowledgeSuggestionsOpen && !activeControl()?.matches?.("[data-knowledge-creator], [data-knowledge-pick]")) closeKnowledgeSuggestions();
   }));
 
   const DELETE_KEYS = {
@@ -1443,7 +1419,7 @@
   }
 
   function drawTreeConnections() {
-    root.querySelectorAll("[data-tree-map]").forEach((map) => {
+    uiQueryAll("[data-tree-map]").forEach((map) => {
       const content = map.querySelector(".tree-map-content");
       const links = map.querySelector(".tree-links");
       if (!content || !links) return;
@@ -1489,7 +1465,7 @@
   }
 
   function updateRenderedTagName(treeID, nodeID, name) {
-    root.querySelectorAll(".tree-map-node").forEach((node) => {
+    uiQueryAll(".tree-map-node").forEach((node) => {
       if (node.dataset.treeId === treeID && node.dataset.nodeId === nodeID) {
         node.querySelector("strong").textContent = name;
       }
@@ -1497,7 +1473,7 @@
   }
 
   function openTagEditor(treeID, nodeID) {
-    const node = [...root.querySelectorAll(".tree-map-node")].find((candidate) => candidate.dataset.treeId === treeID && candidate.dataset.nodeId === nodeID);
+    const node = [...uiQueryAll(".tree-map-node")].find((candidate) => candidate.dataset.treeId === treeID && candidate.dataset.nodeId === nodeID);
     if (!node) return;
     selectedTagNode = { treeID, nodeID };
     const nodeX = Number(node.dataset.positionX) || 0;
@@ -1506,7 +1482,7 @@
     render();
   }
 
-  scope.addEventListener("input", (event) => {
+  listen("input", (event) => {
     if (!event.isComposing) queueLiveEdit(event.target);
     const knowledgeCard = event.target.closest(".knowledge-card");
     if (knowledgeCard && event.target.matches('[data-field="meaning"]')) {
@@ -1533,13 +1509,13 @@
   });
 
   function rememberTreeViewportPositions() {
-    root.querySelectorAll("[data-tree-map]").forEach((map) => {
+    uiQueryAll("[data-tree-map]").forEach((map) => {
       treeViewportPositions.set(map.dataset.treeId, { x: map.scrollLeft, y: map.scrollTop });
     });
   }
 
   function restoreTreeViewportPositions() {
-    root.querySelectorAll("[data-tree-map]").forEach((map) => {
+    uiQueryAll("[data-tree-map]").forEach((map) => {
       const position = treeViewportPositions.get(map.dataset.treeId);
       if (!position) return;
       map.scrollLeft = position.x;
@@ -1548,14 +1524,14 @@
   }
 
   function rememberEditorViewportPosition() {
-    const editor = root.querySelector("[data-editor-panel]");
+    const editor = uiQuery("[data-editor-panel]");
     const workspace = editor?.dataset.workspace;
     if (!editor || !workspace) return;
     editorViewportPositions.set(workspace, { x: editor.scrollLeft, y: editor.scrollTop });
   }
 
   function restoreEditorViewportPosition() {
-    const editor = root.querySelector("[data-editor-panel]");
+    const editor = uiQuery("[data-editor-panel]");
     const workspace = editor?.dataset.workspace;
     const position = workspace ? editorViewportPositions.get(workspace) : null;
     if (!editor || !position) return;
@@ -1580,24 +1556,34 @@
     if (composingEdit) return;
     pendingLists = []; deferredChoices = new Map();
     const markup = shell(workspace()) + createTypeModal() + dictionaryOnboarding();
+    const settingsMarkup = nativeSettingsContent();
     // Nothing changed on the page: keep the DOM (and its scroll) as it is.
-    if (markup === lastRenderedMarkup && root.firstChild) { const searchFocus = window.VaultUI.captureSearch(scope); mountChoices(); mountLists(); mountLargeGraphs(); window.VaultUI.restoreSearch(scope, searchFocus); return; }
-    renderFull(markup);
+    if (markup === lastRenderedMarkup && settingsMarkup === settingsRoot.__markup && root.firstChild) {
+      const searchFocus = captureSearch(), focused = captureLiveEditFocus();
+      replacingControls = true;
+      mountChoices(); mountLists(); mountLargeGraphs();
+      restoreLiveEdits(focused);
+      replacingControls = false;
+      restoreSearch(searchFocus);
+      return;
+    }
+    renderFull(markup, settingsMarkup);
   }
 
-  function renderFull(markup) {
+  function renderFull(markup, settingsMarkup) {
     rememberTreeViewportPositions();
     rememberEditorViewportPosition();
-    root.querySelectorAll("[data-list-key]").forEach((list) => {
+    uiQueryAll("[data-list-key]").forEach((list) => {
       listViewportPositions.set(list.dataset.listKey, { x: list.scrollLeft, y: list.scrollTop });
     });
-    const listSearchFocus = window.VaultUI.captureSearch(scope);
+    const listSearchFocus = captureSearch();
     const focused = captureLiveEditFocus();
-    const creatorInput = scope.activeElement?.matches("[data-knowledge-creator]") ? scope.activeElement : null;
+    const creatorInput = activeControl()?.matches("[data-knowledge-creator]") ? activeControl() : null;
     const creatorSelection = creatorInput ? { start: creatorInput.selectionStart, end: creatorInput.selectionEnd } : null;
-    const modelSearch = scope.activeElement?.matches("[data-model-search]") ? scope.activeElement : null;
+    const modelSearch = activeControl()?.matches("[data-model-search]") ? activeControl() : null;
     const searchSelection = modelSearch ? { start: modelSearch.selectionStart, end: modelSearch.selectionEnd } : null;
-    const active = scope.activeElement;
+    const active = activeControl();
+    const toolbarAction = active?.closest?.('.vui-topbar-links') ? active.dataset.action : null;
     const dialogControl = active?.closest?.('[role="dialog"]') ? {
       action: active.dataset.action, field: active.dataset.field,
       createName: active.hasAttribute("data-create-type-name"),
@@ -1606,38 +1592,41 @@
     } : null;
     replacingControls = true;
     root.innerHTML = markup;
+    settingsRoot.innerHTML = settingsMarkup;
+    settingsRoot.__markup = settingsMarkup;
     mountChoices(); mountLists();
     restoreLiveEdits(focused);
     replacingControls = false;
     lastRenderedMarkup = markup;
     bindTreeMapWheel();
     mountLargeGraphs();
-    root.querySelectorAll(".knowledge-card").forEach(updateKnowledgeSearchText);
+    uiQueryAll(".knowledge-card").forEach(updateKnowledgeSearchText);
     if (knowledgeSuggestionsOpen) {
-      const creator = root.querySelector("[data-knowledge-creator]");
+      const creator = uiQuery("[data-knowledge-creator]");
       if (creator) showKnowledgeSuggestions(creator);
     }
     if (creatorSelection) {
-      const creator = root.querySelector("[data-knowledge-creator]");
+      const creator = uiQuery("[data-knowledge-creator]");
       creator?.focus({ preventScroll: true });
       creator?.setSelectionRange(creatorSelection.start, creatorSelection.end);
     }
     filterResearchModels();
     if (searchSelection) {
-      const search = root.querySelector("[data-model-search]");
+      const search = uiQuery("[data-model-search]");
       if (search) { search.focus({ preventScroll: true }); search.setSelectionRange(searchSelection.start, searchSelection.end); }
     }
     syncDialogFocus(dialogControl);
-    window.VaultUI.restoreSearch(scope, listSearchFocus);
+    if (toolbarAction) uiQuery(`.vui-topbar-links [data-action="${toolbarAction}"]`)?.focus({ preventScroll: true });
+    restoreSearch(listSearchFocus);
     window.requestAnimationFrame(() => {
       applyNavigationPanelWidth();
       restoreEditorViewportPosition();
       restoreTreeViewportPositions();
-      root.querySelectorAll("[data-list-key]").forEach((list) => {
+      uiQueryAll("[data-list-key]").forEach((list) => {
         const position = listViewportPositions.get(list.dataset.listKey);
         if (position) { list.scrollLeft = position.x; list.scrollTop = position.y; }
       });
-      for (const map of root.querySelectorAll("[data-tree-map]")) if ((graphModels.get(map.dataset.treeId)?.nodes.length || 0) > 200) paintLargeGraph(map);
+      for (const map of uiQueryAll("[data-tree-map]")) if ((graphModels.get(map.dataset.treeId)?.nodes.length || 0) > 200) paintLargeGraph(map);
       drawTreeConnections();
       placeTreePopovers();
       placeResearchSetup();
@@ -1650,25 +1639,25 @@
   // Attach the non-passive tree-map wheel handler only to the tree canvases in
   // the freshly rendered DOM, leaving every other scroll container passive.
   function bindTreeMapWheel() {
-    root.querySelectorAll("[data-tree-map]").forEach((map) => {
+    uiQueryAll("[data-tree-map]").forEach((map) => {
       map.addEventListener("wheel", handleTreeMapWheel, { passive: false });
     });
   }
 
-  scope.addEventListener("click", (event) => {
+  listen("click", (event) => {
     const button = event.target.closest("button[data-action]");
     const modelPick = event.target.closest("button[data-model-pick]");
     if (modelPick) {
       closeResearchModelMenu();
-      const modelValue = root.querySelector('[data-form-id="utility-research-form"] [data-field="llmModelIdentifier"]');
+      const modelValue = uiQuery('[data-form-id="utility-research-form"] [data-field="llmModelIdentifier"]');
       if (modelValue) { modelValue.value = modelPick.dataset.modelPick; queueLiveEdit(modelValue, true); }
       render();
-      window.requestAnimationFrame(() => root.querySelector("[data-model-selector]")?.focus({ preventScroll: true }));
+      window.requestAnimationFrame(() => uiQuery("[data-model-selector]")?.focus({ preventScroll: true }));
       return;
     }
     const pick = event.target.closest("button[data-knowledge-pick]");
     if (pick) {
-      const creatorInput = root.querySelector("input[data-knowledge-creator]");
+      const creatorInput = uiQuery("input[data-knowledge-creator]");
       knowledgeCreatorDraft = pick.dataset.knowledgePick;
       if (creatorInput) creatorInput.value = knowledgeCreatorDraft;
       closeKnowledgeSuggestions(true);
@@ -1689,11 +1678,11 @@
     flushLiveEdits();
     const action = button.dataset.action;
     if (action === "saveDictionaryFirstChoice" || action === "declineDictionaryContribution") {
-      send("completeDictionaryOnboarding", { enabled: action === "saveDictionaryFirstChoice" && root.querySelector("[data-contribution-first]")?.checked === true });
+      send("completeDictionaryOnboarding", { enabled: action === "saveDictionaryFirstChoice" && uiQuery("[data-contribution-first]")?.checked === true });
       return;
     }
     if (action === "copyPersonalDictionary") {
-      const text = root.querySelector("[data-personal-export]");
+      const text = uiQuery("[data-personal-export]");
       text?.focus(); text?.select(); document.execCommand("copy"); return;
     }
     if (DELETE_KEYS[action] && !confirmDelete(DELETE_KEYS[action](button.dataset))) return;
@@ -1736,9 +1725,9 @@
     }
     if (action === "confirmCreateType") {
       if (!pendingCreateType) return;
-      const nameInput = root.querySelector("[data-create-type-name]");
+      const nameInput = uiQuery("[data-create-type-name]");
       const name = ((nameInput?.value) || t("createType.defaultName")).trim() || t("createType.defaultName");
-      const platformIDs = checkedPlatforms(root.querySelector("[data-create-type-dialog]"));
+      const platformIDs = checkedPlatforms(uiQuery("[data-create-type-dialog]"));
       if (!platformIDs.length) {
         pendingCreateType.name = name;
         pendingCreateType.issue = true;
@@ -1785,12 +1774,11 @@
       researchSetupRequested = false;
       researchSetupFocusPending = false;
       dictionarySetupFocusPending = false;
-      const nextPanel = data.utilityPanel === "settings" ? "settings" : null;
-      utilityPanel = utilityPanel === nextPanel ? null : nextPanel;
-      render();
+      window.VaultSettings.open();
       return;
     }
     if (action === "closeUtilityPanel") {
+      window.VaultSettings.close();
       utilityPanel = null;
       researchSetupRequested = false;
       researchSetupFocusPending = false;
@@ -1811,7 +1799,7 @@
         send("connectTag", { treeID: source.treeID, nodeID: source.nodeID, parentID: button.dataset.nodeId });
         return;
       }
-      flushTagNameInput(root.querySelector("[data-tree-popover] input[data-live-tag-name]"));
+      flushTagNameInput(uiQuery("[data-tree-popover] input[data-live-tag-name]"));
       openTagEditor(button.dataset.treeId, button.dataset.nodeId);
       return;
     }
@@ -1877,13 +1865,13 @@
     render();
   }
 
-  scope.addEventListener("keydown", (event) => {
+  listen("keydown", (event) => {
     const menu = event.target.closest?.(".research-model-menu, [data-knowledge-suggestions]")
-      || (event.target.matches?.("[data-knowledge-creator]") ? root.querySelector("[data-knowledge-suggestions]") : null);
+      || (event.target.matches?.("[data-knowledge-creator]") ? uiQuery("[data-knowledge-suggestions]") : null);
     if (menu && ["ArrowDown", "ArrowUp"].includes(event.key) && !event.isComposing) {
       const options = [...menu.querySelectorAll("[data-model-pick], [data-knowledge-pick]")].filter((option) => !option.hidden);
       if (options.length) {
-        const index = options.indexOf(scope.activeElement);
+        const index = options.indexOf(activeControl());
         const next = index < 0 ? (event.key === "ArrowDown" ? 0 : options.length - 1)
           : (index + (event.key === "ArrowDown" ? 1 : -1) + options.length) % options.length;
         event.preventDefault();
@@ -1892,17 +1880,18 @@
       }
       return;
     }
+    if (event.key === "Escape" && closeResearchModelMenu(true)) { event.preventDefault(); event.stopPropagation(); return; }
     if (event.key === "Escape" && knowledgeSuggestionsOpen) {
       event.preventDefault();
       closeKnowledgeSuggestions(true);
       return;
     }
-    if (event.key !== "Escape" || (!utilityPanel && !pendingCreateType)) return;
+    if (event.key !== "Escape" || !pendingCreateType) return;
     event.preventDefault();
     dismissClassifierDialog();
   });
 
-  scope.addEventListener("toggle", (event) => {
+  listen("toggle", (event) => {
     if (!event.target.isConnected) return;
     const key = event.target.matches?.("details[data-expand]") ? event.target.dataset.expand : null;
     if (key) event.target.open ? openExpands.add(key) : openExpands.delete(key);
@@ -1912,13 +1901,13 @@
       placeResearchModelMenu();
       // A snapshot restores the current focus; only a newly opened menu
       // moves focus from its selector into search.
-      if (scope.activeElement === event.target.querySelector("summary")) {
+      if (activeControl() === event.target.querySelector("summary")) {
         event.target.querySelector("[data-model-search]")?.focus({ preventScroll: true });
       }
     }
   }, true);
 
-  scope.addEventListener("change", (event) => {
+  listen("change", (event) => {
     if (event.target.matches('[data-form-id="utility-research-form"] [data-field="llmProviderProfileID"]')) {
       queueLiveEdit(event.target, true);
       render();
@@ -1928,17 +1917,8 @@
     const knowledgePlatform = event.target.closest("[data-knowledge-platform]");
     if (knowledgePlatform) {
       knowledgeAddPlatform = knowledgePlatform.value;
-      const creatorInput = root.querySelector("input[data-knowledge-creator]");
+      const creatorInput = uiQuery("input[data-knowledge-creator]");
       if (creatorInput) showKnowledgeSuggestions(creatorInput);
-      return;
-    }
-    const languageControl = event.target.closest("[data-language-selection]");
-    if (languageControl) {
-      if (!languageChoices.some(([identifier]) => identifier === languageControl.value)) return;
-      selectedLanguage = languageControl.value;
-      root.lang = selectedLanguage;
-      try { window.localStorage.setItem("vaultClassifier.language", selectedLanguage); } catch (_) {}
-      void loadSelectedLanguage();
       return;
     }
     // Preserve creation choices across page re-renders.
@@ -1947,7 +1927,7 @@
       const dialog = choice.closest("[data-create-type-dialog]");
       if (dialog && pendingCreateType) {
         pendingCreateType.platformIDs = checkedPlatforms(dialog);
-        pendingCreateType.name = root.querySelector("[data-create-type-name]")?.value;
+        pendingCreateType.name = uiQuery("[data-create-type-name]")?.value;
         const hadIssue = pendingCreateType.issue;
         pendingCreateType.issue = false;
         if (hadIssue) render();
@@ -1956,13 +1936,13 @@
     }
   });
 
-  scope.addEventListener("input", (event) => {
+  listen("input", (event) => {
     if (pendingCreateType && event.target.matches("[data-create-type-name]")) {
       pendingCreateType.name = event.target.value;
     }
   });
 
-  scope.addEventListener("pointerdown", (event) => {
+  listen("pointerdown", (event) => {
     const resizer = event.target.closest("[data-navigation-resizer]");
     if (!resizer || event.button !== 0) return;
     navigationResize = { pointerID: event.pointerId };
@@ -1970,9 +1950,9 @@
     event.preventDefault();
   });
 
-  scope.addEventListener("pointermove", (event) => {
+  listen("pointermove", (event) => {
     if (!navigationResize || event.pointerId !== navigationResize.pointerID) return;
-    const layout = root.querySelector(".layout");
+    const layout = uiQuery(".layout");
     if (!layout) return;
     const bounds = layout.getBoundingClientRect();
     const width = Math.round(root.dir === "rtl" ? bounds.right - event.clientX : event.clientX - bounds.left);
@@ -1987,15 +1967,15 @@
     try { window.localStorage.setItem(navigationWidthStorageKey, String(navigationPanelWidth)); } catch (_) {}
   }
 
-  scope.addEventListener("pointerup", finishNavigationResize);
-  scope.addEventListener("pointercancel", finishNavigationResize);
+  listen("pointerup", finishNavigationResize);
+  listen("pointercancel", finishNavigationResize);
 
   // Drag-reorder the classifier-type list. Ported from the extension's group
   // reorder (customBlocker/popup.js): the whole row is the drag target (no
   // handle), a movement threshold keeps a short press a select, the dragged row
   // is clamped so it cannot leave the top of the list ("ceiling"), the others
   // glide aside, and on release the dragged row snaps to its slot.
-  function typeNavElement() { return root.querySelector("[data-classifier-type-nav]"); }
+  function typeNavElement() { return uiQuery("[data-classifier-type-nav]"); }
   function getTypeDragCards() {
     const nav = typeNavElement();
     return nav ? Array.from(nav.querySelectorAll(".classifier-type-row[data-type-id]")) : [];
@@ -2150,13 +2130,13 @@
     window.addEventListener("mouseup", handleUp);
   }
 
-  scope.addEventListener("mousedown", (event) => {
+  listen("mousedown", (event) => {
     const row = event.target.closest?.(".classifier-type-row[data-type-id]");
     if (!row) return;
     startTypeReorder(event, row.dataset.typeId);
   });
 
-  scope.addEventListener("keydown", (event) => {
+  listen("keydown", (event) => {
     const resizer = event.target.closest?.("[data-navigation-resizer]");
     if (!resizer) return;
     let nextWidth = navigationPanelWidth;
@@ -2189,7 +2169,7 @@
     event.stopPropagation();
   }
 
-  scope.addEventListener("contextmenu", (event) => {
+  listen("contextmenu", (event) => {
     const map = event.target.closest("[data-tree-map]");
     if (!map || event.target.closest("[data-tree-popover]")) return;
     event.preventDefault();
@@ -2228,10 +2208,10 @@
     treePan.map.classList.remove("panning");
     treePan = null;
   }
-  scope.addEventListener("pointerdown", beginTreePan);
-  scope.addEventListener("pointermove", moveTreePan);
-  scope.addEventListener("pointerup", finishTreePan);
-  scope.addEventListener("pointercancel", finishTreePan);
+  listen("pointerdown", beginTreePan);
+  listen("pointermove", moveTreePan);
+  listen("pointerup", finishTreePan);
+  listen("pointercancel", finishTreePan);
 
   function beginTagDrag(event) {
     const node = event.target.closest(".tree-map-node");
@@ -2294,7 +2274,7 @@
     if (!tagDrag.moved && Math.max(Math.abs(rawDeltaX), Math.abs(rawDeltaY)) < 3) return;
     tagDrag.moved = true;
     activeTagPanel = null;
-    root.querySelector("[data-tree-popover]")?.remove();
+    uiQuery("[data-tree-popover]")?.remove();
     const minStartX = tagDrag.nodes.reduce((value, entry) => Math.min(value, entry.startX), Infinity);
     const minStartY = tagDrag.nodes.reduce((value, entry) => Math.min(value, entry.startY), Infinity);
     const maxStartX = tagDrag.nodes.reduce((value, entry) => Math.max(value, entry.startX), -Infinity);
@@ -2329,13 +2309,13 @@
     });
   }
 
-  scope.addEventListener("pointerdown", beginTagDrag);
-  scope.addEventListener("mousedown", beginTagDrag);
-  scope.addEventListener("pointermove", moveTagDrag);
-  scope.addEventListener("mousemove", moveTagDrag);
-  scope.addEventListener("pointerup", finishTagDrag);
-  scope.addEventListener("pointercancel", finishTagDrag);
-  scope.addEventListener("mouseup", finishTagDrag);
+  listen("pointerdown", beginTagDrag);
+  listen("mousedown", beginTagDrag);
+  listen("pointermove", moveTagDrag);
+  listen("mousemove", moveTagDrag);
+  listen("pointerup", finishTagDrag);
+  listen("pointercancel", finishTagDrag);
+  listen("mouseup", finishTagDrag);
 
   window.VaultClassifier = {
     receiveKnowledgeRow(row) {
@@ -2381,11 +2361,22 @@
 
   window.addEventListener("resize", () => window.requestAnimationFrame(drawTreeConnections));
   window.VaultUI.observe(scope);
-  window.VaultInfo.watch(scope, { enabled: () => true, translate: (key, values = {}) => {
+  for (const infoScope of uiScopes) window.VaultInfo.watch(infoScope, { enabled: () => true, translate: (key, values = {}) => {
     const template = languageMessages[key];
     if (!template) return null;
     return template.replace(/\{([a-zA-Z0-9_]+)\}/g, (_, name) => String(values[name] ?? ""));
   } });
+  window.addEventListener("vault-language-changed", () => { void loadSelectedLanguage(); });
+  window.addEventListener("vault-settings-changed", event => {
+    utilityPanel = event.detail.open ? "settings" : null;
+    if (!event.detail.open) {
+      closeResearchModelMenu();
+      researchSetupRequested = false; researchSetupFocusPending = false; dictionarySetupFocusPending = false;
+      flushLiveEdits();
+    }
+    render();
+    if (event.detail.open) send("state", {});
+  });
   render();
   void loadSelectedLanguage();
   send("state", {});
