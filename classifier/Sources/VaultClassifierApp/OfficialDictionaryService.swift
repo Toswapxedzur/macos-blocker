@@ -45,6 +45,7 @@ actor OfficialDictionaryService: DictionaryEvidenceProviding {
     private var available: [KnowledgeEntryKind: DictionaryManifest] = [:]
     private var inFlight: [String: Task<Void, Never>] = [:]
     private var contributionSends: [UUID: Task<Void, Never>] = [:]
+    private var lookupUnavailableUntil = Date.distantPast
     private var failureUntil: [String: Date] = [:]
     private struct SubmissionLedger: Codable { var day: String = ""; var sent: [String] = [] }
     private var ledger: SubmissionLedger
@@ -97,7 +98,7 @@ actor OfficialDictionaryService: DictionaryEvidenceProviding {
         let settings = disk.settings()
         if settings.creatorMode == .cache && !disk.hasCachedCreator(creatorID) {
             if let existing = inFlight[creatorID] { await existing.value }
-            else if failureUntil[creatorID].map({ $0 > Date() }) != true {
+            else if lookupUnavailableUntil <= Date() && failureUntil[creatorID].map({ $0 > Date() }) != true {
                 let task = Task { await self.lookupCreator(creatorID) }
                 inFlight[creatorID] = task; await task.value; inFlight[creatorID] = nil
             }
@@ -127,6 +128,7 @@ actor OfficialDictionaryService: DictionaryEvidenceProviding {
             guard !Task.isCancelled, disk.settings().creatorMode == .cache else { return }
             try disk.cacheCreator(id, entry: reply.entry, version: reply.version)
         } catch {
+            if !Task.isCancelled { lookupUnavailableUntil = Date().addingTimeInterval(60) }
             failureUntil[id] = Date().addingTimeInterval(60)
             if failureUntil.count > 1000 {
                 failureUntil = Dictionary(uniqueKeysWithValues: failureUntil.sorted { $0.value > $1.value }.prefix(1000).map { ($0.key, $0.value) })
