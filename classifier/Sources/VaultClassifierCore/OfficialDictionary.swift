@@ -108,7 +108,9 @@ public struct DictionaryEvidence: Sendable {
     public func overlay(on catalog: WorkspaceCatalog, title: String, creatorID: String) -> WorkspaceCatalog {
         var result = catalog
         for entry in terms {
-            if let personal = catalog.knowledgeEntries.first(where: { $0.id == entry.id }) {
+            let matchedID = KnowledgeEntry.key(kind: .term, subject: entry.subject)
+            if let personal = catalog.knowledgeEntries.first(where: { $0.id == matchedID })
+                ?? catalog.knowledgeEntries.first(where: { $0.id == entry.id }) {
                 // An alias may match where the personal canonical subject doesn't.
                 var alias = personal; alias.subject = entry.subject
                 result.knowledgeEntries.removeAll { $0.id == personal.id }; result.knowledgeEntries.append(alias)
