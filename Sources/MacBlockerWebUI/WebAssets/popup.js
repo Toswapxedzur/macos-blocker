@@ -103,7 +103,7 @@ const cbDialog = (function () {
         if (opts.kind === "prompt") {
           inputRow.dataset.infoKey = "dialog-value";
           inputRow.dataset.infoLabel = opts.title || "Value";
-          inputRow.dataset.infoCopy = opts.message || "Enter the value requested by this dialog, then confirm to apply it.";
+          inputRow.dataset.infoCopy = opts.message || t("info.prompt");
         }
         inputRow.appendChild(input); card.appendChild(inputRow);
       }
@@ -483,6 +483,8 @@ async function ensureLanguageMessages(languageCode) {
   return loadPromise;
 }
 
+window.VaultLoadMessages = ensureLanguageMessages;
+
 function t(key, vars = {}) {
   const selected = state.translationMessages[state.language] ?? {};
   const fallback = state.translationMessages[getDefaultLanguageCode()] ?? {};
@@ -491,6 +493,11 @@ function t(key, vars = {}) {
     (result, [name, value]) => result.replaceAll(`{${name}}`, String(value)),
     template
   );
+}
+
+// Other catalogs use their localized time units without an English plural suffix.
+function timeUnitSuffix(amount) {
+  return state.language === "en" && amount !== 1 ? "s" : "";
 }
 
 function loadLanguage() {
@@ -543,7 +550,17 @@ async function loadManualContent() {
     }
     manualContent.innerHTML = html;
     document.getElementById("manualDialogTitle").textContent = t(kind === "code" ? "manual.codeTitle" : "manual.title");
-    const heading = Array.from(manualContent.querySelectorAll("h2, h3")).find((node) => node.textContent === section);
+    const headings = Array.from(manualContent.querySelectorAll("h2, h3"));
+    let heading = headings.find((node) => node.textContent === section);
+    if (!heading && section) {
+      // Scene links use stable English section names. Localized headings keep
+      // the source guide's heading order, so translated titles can still scroll.
+      const source = await fetchManualMarkdown("en", kind);
+      if (revision !== state.manualLoadRevision || !state.isManualOpen) return;
+      const names = [...source.matchAll(/^#{2,3}\s+(.+)$/gm)].map(match => match[1].trim());
+      const index = names.indexOf(section);
+      if (index >= 0) heading = headings[index];
+    }
     if (heading) heading.scrollIntoView({ block: "start" });
     else manualContent.scrollTop = 0;
   } catch (error) {
@@ -592,7 +609,8 @@ manualContent.addEventListener("click", (event) => {
   const link = event.target.closest("a");
   if (!link) return;
   const href = link.getAttribute("href");
-  if (href === "../code-manual/en.md" || href === "../manual/en.md") {
+  const companion = href?.match(/^\.\.\/(code-manual|manual)\/([a-z]{2})\.md$/);
+  if (companion && Object.hasOwn(getAvailableLanguages(), companion[2])) {
     event.preventDefault();
     openManual(href.startsWith("../code-") ? "code" : "user");
   }
@@ -614,7 +632,7 @@ function openLocalFolderDb() {
       }
     };
     request.onsuccess = () => resolve(request.result);
-    request.onerror = () => reject(request.error || new Error("Could not open local folder storage."));
+    request.onerror = () => reject(request.error || new Error(t("settings.localFolderStorageOpenError")));
   });
 }
 
@@ -624,11 +642,11 @@ async function localFolderDbGet(key) {
     const tx = db.transaction(LOCAL_FOLDER_STORE, "readonly");
     const request = tx.objectStore(LOCAL_FOLDER_STORE).get(key);
     request.onsuccess = () => resolve(request.result);
-    request.onerror = () => reject(request.error || new Error("Could not read local folder storage."));
+    request.onerror = () => reject(request.error || new Error(t("settings.localFolderStorageReadError")));
     tx.oncomplete = () => db.close();
     tx.onerror = () => {
       try { db.close(); } catch (_) {}
-      reject(tx.error || new Error("Could not read local folder storage."));
+      reject(tx.error || new Error(t("settings.localFolderStorageReadError")));
     };
   });
 }
@@ -644,7 +662,7 @@ async function localFolderDbSet(key, value) {
     };
     tx.onerror = () => {
       try { db.close(); } catch (_) {}
-      reject(tx.error || new Error("Could not write local folder storage."));
+      reject(tx.error || new Error(t("settings.localFolderStorageWriteError")));
     };
   });
 }
@@ -660,7 +678,7 @@ async function localFolderDbDelete(key) {
     };
     tx.onerror = () => {
       try { db.close(); } catch (_) {}
-      reject(tx.error || new Error("Could not delete local folder storage."));
+      reject(tx.error || new Error(t("settings.localFolderStorageDeleteError")));
     };
   });
 }
@@ -695,6 +713,14 @@ async function safariLocalFolderRequest(type) {
   window.__cbLocalFolderStatus(response);
 }
 
+function localFolderErrorText(error) {
+  const message = String(error?.message ?? error);
+  if (LOCAL_PROGRAM_ID === "safari" && /^[a-z0-9]+(?:-[a-z0-9]+)+$/.test(message)) {
+    return t("settings.localFolderNativeError") + " (" + message + ")";
+  }
+  return message;
+}
+
 async function renderLocalFolderStatus() {
   if (!localFolderStatus) return;
   // Desktop: the folder grant is native (the web view has no directory picker);
@@ -705,7 +731,7 @@ async function renderLocalFolderStatus() {
   }
   if (LOCAL_PROGRAM_ID === "safari") {
     try { await safariLocalFolderRequest("local-folder-status"); }
-    catch (error) { localFolderStatus.textContent = String(error?.message || error); }
+    catch (error) { localFolderStatus.textContent = localFolderErrorText(error); }
     return;
   }
   if (!("showDirectoryPicker" in window)) {
@@ -741,7 +767,7 @@ async function renderLocalFolderStatus() {
     }
   } catch (error) {
     localFolderHandle = null;
-    localFolderStatus.textContent = String(error?.message ?? error);
+    localFolderStatus.textContent = localFolderErrorText(error);
     if (localFolderRevokeButton) localFolderRevokeButton.disabled = true;
   }
 }
@@ -787,7 +813,7 @@ async function chooseLocalFolder() {
     if (localFolderStatus) {
       localFolderStatus.textContent = error?.name === "AbortError"
         ? t("settings.localFolderStatusNone")
-        : String(error?.message ?? error);
+        : localFolderErrorText(error);
     }
   }
 }
@@ -1035,7 +1061,7 @@ function openSettings() {
   settingsModal.classList.remove("hidden");
   focusVaultModal(settingsModal, settingsCloseButton, closeSettings);
   renderLocalFolderStatus().catch((error) => {
-    if (localFolderStatus) localFolderStatus.textContent = String(error?.message ?? error);
+    if (localFolderStatus) localFolderStatus.textContent = localFolderErrorText(error);
   });
 }
 
@@ -1094,6 +1120,9 @@ function resetSettingsToDefaults() {
 
 function applyStaticTranslations() {
   document.documentElement.lang = state.language;
+  document.documentElement.dir = state.language === "ar" ? "rtl" : "ltr";
+  window.VaultTranslate = t;
+  chrome.storage?.local?.set?.({ vaultUiLanguage: state.language })?.catch?.(() => {});
   document.title = t("app.title");
 
   for (const element of document.querySelectorAll("[data-i18n]")) {
@@ -1116,6 +1145,14 @@ function applyStaticTranslations() {
     element.dataset.hint = t(element.dataset.i18nTitle);
   }
 
+  for (const element of document.querySelectorAll("[data-i18n-info]")) {
+    element.dataset.infoCopy = t(element.dataset.i18nInfo);
+  }
+  for (const element of document.querySelectorAll("[data-i18n-info-label]")) {
+    element.dataset.infoLabel = t(element.dataset.i18nInfoLabel);
+  }
+  window.VaultInfo?.refresh(document);
+  window.dispatchEvent(new CustomEvent("vault-language-changed"));
   languageSelect.setAttribute("aria-label", t("language.label"));
   groupList.setAttribute("aria-label", t("groups.listAria"));
   layoutResizer.setAttribute("aria-label", t("layout.resizeAria"));
@@ -2134,8 +2171,7 @@ function renderSurfaceHides(group, draft, editable) {
     const text = document.createElement("span");
     text.textContent = t(entry.labelKey);
     text.dataset.infoKey = "surface-hide:" + entry.id;
-    text.dataset.infoCopy = "Hide " + t(entry.labelKey).toLowerCase() +
-      (surfaceHideEntryScope(entry) === "entry" ? " on pages matching this group’s creator filter." : " on this platform’s supported pages.");
+    text.dataset.infoCopy = t(surfaceHideEntryScope(entry) === "entry" ? "info.hideEntry" : "info.hidePlatform", { control: t(entry.labelKey) });
 
     // Entry-scoped hides (e.g. YouTube comments) only apply on pages matching
     // the group's author scope — flag that inline so it isn't mistaken for a
@@ -3421,7 +3457,7 @@ function updateUsageSummary(group, draft, now = Date.now()) {
   const rolling = displayGroup.rollingLimit === true;
   const vars = {
     hours: formatHours(displayGroup.resetIntervalHours),
-    suffix: displayGroup.resetIntervalHours === 1 ? "" : "s"
+    suffix: timeUnitSuffix(displayGroup.resetIntervalHours)
   };
   const remainingMs = Math.max(
     displayGroup.allowedMinutes * MS_PER_MINUTE + CBGroupActions.snoozeExtraMs(state.groupSnoozes[group.id], now) - usageState.usedMs,
@@ -5336,7 +5372,7 @@ async function applySnoozeStart(group) {
     snoozeEntry.startsAtMs > now
       ? t("status.snoozeScheduled", { name: group.name, delay: formatDurationMs(snoozeEntry.startsAtMs - now) })
       : t(snoozeEntry.kind === "budget" ? "status.snoozedBudget" : "status.snoozed",
-        { name: group.name, minutes, suffix: minutes === 1 ? "" : "s" })
+        { name: group.name, minutes, suffix: timeUnitSuffix(minutes) })
   );
   render();
   showSnoozeNotice(group, snoozeEntry, totalBeforeMs);
@@ -5385,7 +5421,7 @@ function startResizingPanels(event) {
 
   const handleMove = (moveEvent) => {
     const layoutRect = layout.getBoundingClientRect();
-    applyPanelWidth(moveEvent.clientX - layoutRect.left);
+    applyPanelWidth(document.documentElement.dir === "rtl" ? layoutRect.right - moveEvent.clientX : moveEvent.clientX - layoutRect.left);
   };
 
   const handleUp = () => {
@@ -5824,8 +5860,8 @@ function openTagChooser(container, button) {
   list.setAttribute("aria-label", t("tagFilter.available"));
   const searchRow = document.createElement("div");
   searchRow.className = "vui-info-field";
-  searchRow.dataset.infoKey = "tag-search"; searchRow.dataset.infoLabel = "Search tags";
-  searchRow.dataset.infoCopy = "Find a tag by name, then select it to add it to this group.";
+  searchRow.dataset.infoKey = "tag-search"; searchRow.dataset.infoLabel = t("contentTag.search");
+  searchRow.dataset.infoCopy = t("info.tagSearch");
   searchRow.appendChild(search); menu.append(searchRow, list);
   document.body.appendChild(menu);
   VaultUI.showMenuLayer(menu);
@@ -6118,7 +6154,7 @@ if (localFolderChooseButton) {
       return;
     }
     chooseLocalFolder().catch((error) => {
-      if (localFolderStatus) localFolderStatus.textContent = String(error?.message ?? error);
+      if (localFolderStatus) localFolderStatus.textContent = localFolderErrorText(error);
     });
   });
 }
@@ -6130,7 +6166,7 @@ if (localFolderRevokeButton) {
       return;
     }
     revokeLocalFolder().catch((error) => {
-      if (localFolderStatus) localFolderStatus.textContent = String(error?.message ?? error);
+      if (localFolderStatus) localFolderStatus.textContent = localFolderErrorText(error);
     });
   });
 }
@@ -6210,9 +6246,9 @@ endSnoozeButton.addEventListener("click", () => {
 layoutResizer.addEventListener("mousedown", startResizingPanels);
 layoutResizer.addEventListener("keydown", (event) => {
   if (event.key === "ArrowLeft") {
-    applyPanelWidth(state.panelWidth - 20);
+    applyPanelWidth(state.panelWidth + (document.documentElement.dir === "rtl" ? 20 : -20));
   } else if (event.key === "ArrowRight") {
-    applyPanelWidth(state.panelWidth + 20);
+    applyPanelWidth(state.panelWidth + (document.documentElement.dir === "rtl" ? -20 : 20));
   }
 });
 
@@ -6552,4 +6588,4 @@ initializePopupApp().catch((error) => {
   setStatus(t("status.errorLoadGroups"), true);
 });
 
-window.VaultInfo?.watch(document, { enabled: () => state.language === "en" });
+window.VaultInfo?.watch(document, { enabled: () => true });
