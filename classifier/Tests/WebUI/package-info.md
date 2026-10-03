@@ -78,3 +78,8 @@ mini1 with `UI_TEST_SCRIPT=classifier/Tests/WebUI/tag-bounds.js` and
 `native-notice-language.mjs` runs on mini1 with Node and verifies presentation-only translation of native errors, composed field labels, literal IDs, exact-template priority and verbatim unknown provider diagnostics.
 
 `official-dictionaries.js` verifies the compact Knowledge dictionary panel, Settings navigation/focus/scroll, cache/full-mode autosave, native sharing action, explicit download, and import/export drafts across snapshots. Run on mini1 with `UI_TEST_SCRIPT=classifier/Tests/WebUI/official-dictionaries.js UI_TEST_EXPRESSION='runDictionaryTests()'` through `autosave.mjs`, at wide and narrow widths.
+
+`integrated-settings.js` verifies the real desktop document: all 20 languages,
+one Settings dialog across all three pages, native drafts/autosave, nested
+keyboard controls and model-menu dismissal. It also runs against generated
+Windows assets on mini1; native Windows verification remains in the VM.

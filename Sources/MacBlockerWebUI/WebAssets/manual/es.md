@@ -7,7 +7,7 @@ Mac Vault tiene tres páginas: **Vault** bloquea aplicaciones nativas, **Clasifi
 1. En **Vault**, añada un grupo de bloqueo y un objetivo de aplicaciones; después seleccione aplicaciones con el selector +.
 2. Elija el comportamiento de bloqueo del grupo y actívelo.
 3. En **Clasificador**, cree un grupo, elija sus plataformas y añada etiquetas con descripciones.
-4. Elija un nivel de modelo local y descárguelo si es necesario. Active el etiquetado en los ajustes del Clasificador y reanude el grupo.
+4. Elija un nivel de modelo local y descárguelo si es necesario. Active el etiquetado en los Ajustes y reanude el grupo.
 5. Abra contenido compatible en el navegador conectado. Configure un filtro de etiquetas en un grupo de bloqueo del navegador si desea que las etiquetas controlen el bloqueo.
 
 ## Grupos de bloqueo
@@ -65,7 +65,7 @@ Se solicita a una aplicación bloqueada que se cierre. **Volver a pedir el cierr
 
 Un grupo del Clasificador etiqueta contenido de sus plataformas asignadas con su propio árbol de etiquetas y ajustes de modelo. Cada plataforma pertenece a un grupo. Elija las plataformas al crear el grupo; no se pueden cambiar después. Los horarios y filtros de los grupos de bloqueo no controlan el etiquetado.
 
-Active el etiquetado en los ajustes del Clasificador. Use **Pausar etiquetado / Reanudar etiquetado** de cada grupo por separado. Desactivar el registro de una fuente de plataforma en **Actividad → Registro** también detiene su etiquetado.
+Active el etiquetado en los Ajustes. Use **Pausar etiquetado / Reanudar etiquetado** de cada grupo por separado. Desactivar el registro de una fuente de plataforma en **Actividad → Registro** también detiene su etiquetado.
 
 ### Etiquetas y ajustes del modelo
 
@@ -88,11 +88,11 @@ Añada una fuente o término y su descripción, o deje la descripción vacía pa
 
 ### Configurar un proveedor de investigación
 
-1. Abra **Ajustes del Clasificador → Claves de API y proveedores**.
+1. Abra **Ajustes → Claves de API y proveedores**.
 2. Elija un tipo de proveedor y **Añadir proveedor**. Esto crea una configuración; no emite una clave de API.
 3. Obtenga las credenciales de ese proveedor e introdúzcalas. Para un punto de conexión personalizado compatible, configure también su dirección y campos de protocolo.
 4. En **Investigación web**, elija un proveedor con búsqueda web integrada. Obtenga su lista de modelos y seleccione un modelo de investigación. Use la búsqueda del selector de modelos para reducir la lista; actualícela para obtenerla de nuevo.
-5. Lea la información de consentimiento y actívelo. Elija **Activado**, **Desactivado** o **Seguir los ajustes del Clasificador** en cada grupo.
+5. Lea la información de consentimiento y actívelo. Elija **Activado**, **Desactivado** o **Seguir los Ajustes** en cada grupo.
 
 **Configurar investigación web…** le lleva a los ajustes cuando falta configuración. Un grupo no puede omitir el consentimiento de investigación. **Probar conexión** confirma que la solicitud de prueba se completó correctamente, no que todos los modelos admitan investigación. El modelo de prueba de un proveedor es independiente del modelo de investigación seleccionado.
 
@@ -116,9 +116,7 @@ En **Registro**, active o desactive el registro de cada categoría o fuente indi
 
 Las fuentes de plataformas recopilan contenido mostrado en páginas compatibles, se abra o no. Una fuente con **Etiquetado compatible** puede abastecer al Clasificador mientras el registro está activado. Su conservación controla el contenido recopilado por separado del uso de aplicaciones y sitios web. Un grupo del Clasificador pausado no desactiva por sí mismo el registro.
 
-## Ajustes del Clasificador
-
-**Actualizaciones de paquetes de etiquetas** selecciona cuándo entran en vigor las actualizaciones verificadas: **Automático**, **Preguntar primero** o **Manual**. Es independiente de descargar el modelo local elegido en un grupo. Los archivos de modelos se descargan de Hugging Face al elegir **Descargar**; use el progreso/estado del grupo y los controles **Cancelar** durante una descarga.
+## Ajustes
 
 Elija el idioma de la interfaz en Ajustes. Las explicaciones de los campos están disponibles mediante los pequeños botones de información en el idioma seleccionado.
 

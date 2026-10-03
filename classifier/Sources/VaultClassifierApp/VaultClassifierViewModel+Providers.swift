@@ -414,10 +414,9 @@ extension VaultClassifierViewModel {
                     issue = nil
                     return
                 }
-                try coordinator?.updateSettings(.init(
-                    packageUpdateMode: currentSettings.packageUpdateMode,
-                    research: research
-                ))
+                var updated = currentSettings
+                updated.research = research
+                try coordinator?.updateSettings(updated)
             }
             refreshLocalState()
             issue = nil

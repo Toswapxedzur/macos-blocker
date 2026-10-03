@@ -116,9 +116,7 @@ Dans **Enregistrement**, activez ou désactivez l’enregistrement par catégori
 
 Les fils de plateforme collectent le contenu affiché sur les pages prises en charge, qu’il soit ouvert ou non. Un fil marqué **Tagging pris en charge** peut alimenter le Classificateur tant que l’enregistrement est activé. Sa conservation contrôle le contenu collecté séparément de l’utilisation des applications et sites. Suspendre un groupe du Classificateur ne désactive pas l’enregistrement.
 
-## Paramètres du Classificateur
-
-**Mises à jour des paquets de tags** choisit quand les mises à jour vérifiées prennent effet : **Automatique**, **Demander d’abord** ou **Manuel**. Ce réglage est distinct du téléchargement du modèle local choisi dans un groupe. Les modèles sont téléchargés depuis Hugging Face lorsque vous choisissez **Télécharger** ; utilisez les commandes de progression, d’état et **Annuler** du groupe pendant le téléchargement.
+## Paramètres
 
 Choisissez la langue de l’interface dans les Paramètres. Les petits boutons Info expliquent les champs dans la langue sélectionnée.
 

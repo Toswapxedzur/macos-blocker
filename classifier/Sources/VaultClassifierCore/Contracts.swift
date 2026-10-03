@@ -403,35 +403,29 @@ public struct ResearchSettings: Codable, Equatable, Sendable {
 }
 
 public struct ClassifierSettings: Codable, Equatable, Sendable {
-    /// This is only a persisted local preference. A separately configured
-    /// transport must still make every manifest request and activation.
-    public var packageUpdateMode: PackageUpdateMode
     public var research: ResearchSettings
     public var classificationEnabled: Bool
     public var dictionaries: DictionarySettings
 
     public init(
-        packageUpdateMode: PackageUpdateMode = .automatic,
         research: ResearchSettings = ResearchSettings(),
         classificationEnabled: Bool = true,
         dictionaries: DictionarySettings = .init()
     ) {
-        self.packageUpdateMode = packageUpdateMode
         self.research = research
         self.classificationEnabled = classificationEnabled
         self.dictionaries = dictionaries
     }
 
     private enum CodingKeys: String, CodingKey {
-        case packageUpdateMode, research, classificationEnabled, dictionaries
+        case research, classificationEnabled, dictionaries
     }
 
 
-    /// Local state predating package preferences must remain usable offline.
+    /// Retired package-update keys are ignored, including malformed values.
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         self.init(
-            packageUpdateMode: try container.decodeIfPresent(PackageUpdateMode.self, forKey: .packageUpdateMode) ?? .automatic,
             research: try container.decodeIfPresent(ResearchSettings.self, forKey: .research) ?? ResearchSettings(),
             classificationEnabled: (try? container.decodeIfPresent(Bool.self, forKey: .classificationEnabled)) ?? true,
             dictionaries: (try? container.decodeIfPresent(DictionarySettings.self, forKey: .dictionaries)) ?? .init()

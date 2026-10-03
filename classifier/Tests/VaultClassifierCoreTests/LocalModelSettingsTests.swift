@@ -97,6 +97,16 @@ final class LocalModelSettingsTests: XCTestCase {
         XCTAssertEqual(mixed.strictness, .broad)
     }
 
+    func testRetiredPackageUpdatePolicyIsIgnoredWithoutLosingActiveSettings() throws {
+        let old = Data(#"{"packageUpdateMode":{"invalid":true},"classificationEnabled":false,"research":{"enabled":true},"dictionaries":{"creatorMode":"full","creatorCacheSize":27}}"#.utf8)
+        let settings = try JSONDecoder().decode(ClassifierSettings.self, from: old)
+        XCTAssertFalse(settings.classificationEnabled)
+        XCTAssertTrue(settings.research.enabled)
+        XCTAssertEqual(settings.dictionaries.creatorMode, .full)
+        XCTAssertEqual(settings.dictionaries.creatorCacheSize, 27)
+        XCTAssertFalse(String(decoding: try JSONEncoder().encode(settings), as: UTF8.self).contains("packageUpdateMode"))
+    }
+
     // MARK: - ResearchSettings
 
     func testClassifierSettingsResearchDefaultsOffAndPersists() throws {

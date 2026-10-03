@@ -190,7 +190,7 @@ final class WebShellLiveWorkspaceTests: XCTestCase {
             XCTAssertTrue(script.contains(mode)); XCTAssertTrue(strings.contains("\"\(mode)\""))
         }
         XCTAssertFalse(script.contains("classifierType.researchOverrides"), "the per-type research profile payload is gone")
-        XCTAssertTrue(strings.contains("Research consent in Classifier settings applies to every group"))
+        XCTAssertTrue(strings.contains("Research consent in Settings applies to every group"))
     }
 
     func testSettingsModelLibraryExposesUserInitiatedDownloadControls() throws {

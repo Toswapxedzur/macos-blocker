@@ -35,7 +35,7 @@ public struct BlockerMainView: View {
             }
             .onReceive(NotificationCenter.default.publisher(for: .vaultSceneShown)) { note in
                 let scene = note.userInfo?["scene"] as? String
-                VaultClassifierPage.shared.setPageVisible(scene == "classifier")
+                VaultClassifierPage.shared.setPageVisible(scene == "classifier" || scene == "settings")
                 if scene == "activity" { ActivityPage.shared.sceneShown() }
             }
         #else

@@ -61,7 +61,6 @@ final class ViewModelCharacterizationTests: XCTestCase {
         XCTAssertNil(vm.issue)
         _ = vm.performWebAction("saveClassificationSettings", data: ["classificationEnabled": false])
         XCTAssertNil(vm.issue)
-        _ = vm.performWebAction("savePackageSettings", data: ["packageUpdateMode": "manual"])
         _ = vm.performWebAction("saveResearchSettings", data: ["enabled": false])
         let reloaded = try makeViewModel()
         XCTAssertEqual(reloaded.localState?.settings.classificationEnabled, false)
@@ -70,7 +69,32 @@ final class ViewModelCharacterizationTests: XCTestCase {
         XCTAssertTrue(reloaded.coordinator?.enabledClassificationPlatformIDs().isEmpty == true)
         _ = reloaded.performWebAction("saveClassificationSettings", data: ["classificationEnabled": true])
         XCTAssertEqual(reloaded.coordinator?.enabledClassificationPlatformIDs(), ["youtube"])
-        XCTAssertEqual(reloaded.localState?.settings.packageUpdateMode, .manual)
+    }
+
+    func testSharedSettingsWritesPreserveOtherFeaturesAndRejectRetiredPolicy() throws {
+        let vm = try makeViewModel()
+        try vm.saveDictionarySettings(mode: "full", cacheSize: 27, contributionEnabled: false, choiceMade: true)
+        vm.saveClassificationSettings(enabled: false)
+        let dictionaries = try XCTUnwrap(vm.localState?.settings.dictionaries)
+        vm.saveResearchSettings(.init(enabled: false))
+        XCTAssertNil(vm.issue)
+        XCTAssertEqual(vm.localState?.settings.dictionaries, dictionaries)
+        XCTAssertEqual(vm.localState?.settings.classificationEnabled, false)
+        vm.createProviderProfile(typeRaw: "openAI")
+        let profile = try XCTUnwrap(vm.localState?.workspaceCatalog.providerProfiles.first)
+        vm.saveResearchSettings(.init(enabled: false, llmProviderProfileID: profile.id))
+        vm.deleteProviderProfile(profileID: profile.id)
+        XCTAssertNil(vm.issue)
+        XCTAssertEqual(vm.localState?.settings.dictionaries, dictionaries)
+        XCTAssertEqual(vm.localState?.settings.classificationEnabled, false)
+        XCTAssertNil(ClassifierWebActionCatalog.descriptor(named: "savePackageSettings"))
+        let before = vm.localState
+        _ = vm.performWebAction("savePackageSettings", data: ["packageUpdateMode": "automatic"])
+        XCTAssertNotNil(vm.issue)
+        XCTAssertEqual(vm.localState, before)
+        let reopened = try makeViewModel()
+        XCTAssertEqual(reopened.localState?.settings.dictionaries, dictionaries)
+        XCTAssertEqual(reopened.localState?.settings.classificationEnabled, false)
     }
 
     func testHeadlessViewModelStartsCleanOnTheStubEngine() throws {
@@ -164,11 +188,11 @@ final class ViewModelCharacterizationTests: XCTestCase {
             "confirmDeleteClassifierType", "createProviderProfile", "testProviderProfile", "updateProviderConnection",
             "probeProviderModelCatalog", "confirmDeleteProviderProfile", "rearrangeTree",
             "addTag", "moveTag", "renameTag", "updateTag", "connectTag", "disconnectTag", "deleteTag",
-            "savePackageSettings", "downloadModel", "cancelModelDownload", "deleteModelFile",
+            "downloadModel", "cancelModelDownload", "deleteModelFile",
             "deleteKnowledgeEntry", "addKnowledgeCreator", "editKnowledgeEntry", "retryFailedResearch", "saveResearchSettings", "saveClassifierTypeLocalModel", "saveClassifierTypeResearch", "setBackupOwnerCode", "unlockBackup",
             "saveBackup", "backupNow",
         ]
-        XCTAssertEqual(actions.count, 37)
+        XCTAssertEqual(actions.count, 36)
         let unsupported = WebBridgeInputError.invalidChoice("action").localizedDescription
         for action in actions {
             let vm = try makeViewModel()
