@@ -75,9 +75,14 @@ final class OfficialDictionaryServiceTests: XCTestCase {
         }
         let output = Pipe(); process.standardOutput = output; process.standardError = FileHandle.nullDevice
         process.arguments = ["-u","-c", """
+        import time
         from http.server import BaseHTTPRequestHandler, HTTPServer
         class H(BaseHTTPRequestHandler):
             def do_GET(self):
+                if self.path == '/oversize':
+                    self.send_response(200); self.send_header('Content-Length', '8388609'); self.end_headers(); self.wfile.write(b'x'*1024); self.wfile.flush(); time.sleep(1); return
+                if self.path == '/redirect':
+                    self.send_response(302); self.send_header('Location', 'http://localhost:9/private'); self.end_headers(); return
                 self.send_response(200); self.end_headers(); self.wfile.write(b'{"fixture":true}')
             def log_message(self,*args): pass
         s=HTTPServer(('127.0.0.1',0),H); print(s.server_port,flush=True); s.serve_forever()
@@ -88,6 +93,10 @@ final class OfficialDictionaryServiceTests: XCTestCase {
         let client = DictionaryHTTPClient(baseURL: URL(string: "http://127.0.0.1:\(port)/")!)
         let data = try await client.request(path: "fixture", method: "GET", body: nil)
         XCTAssertEqual(String(decoding: data, as: UTF8.self), #"{"fixture":true}"#)
+        for path in ["oversize", "redirect"] {
+            do { _ = try await client.request(path: path, method: "GET", body: nil); XCTFail("Accepted prohibited transfer: \(path)") }
+            catch { XCTAssertTrue(error is DictionaryError, "\(path): \(error)") }
+        }
     }
 }
 
