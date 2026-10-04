@@ -213,6 +213,18 @@ elif '--entitlements' in args: shutil.copyfile(args[args.index('--entitlements')
         entitlements = plistlib.loads(self.entitlements.read_bytes())
         self.assertEqual(entitlements['com.apple.security.application-groups'], ['group.com.adamancia.vault'])
 
+    def test_release_without_production_profile_refuses_before_signing(self):
+        app = self.repo / 'release/build/AdamanciaVault.app'
+        (app / 'Contents').mkdir(parents=True)
+        (app / 'Contents/Info.plist').write_bytes(plistlib.dumps({'CFBundleIdentifier': 'com.adamancia.vault.mac'}))
+        self.env.pop('MAC_VAULT_APP_PROVISIONING_PROFILE', None)
+        result = subprocess.run(['bash', str(self.repo / 'scripts/release/sign_app.sh')], env=self.env,
+                                text=True, capture_output=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('production Mac App Group provisioning profile', result.stderr)
+        self.assertFalse(self.code_log.exists())
+        self.assertFalse((app / 'Contents/embedded.provisionprofile').exists())
+
 
 if __name__ == '__main__':
     unittest.main()

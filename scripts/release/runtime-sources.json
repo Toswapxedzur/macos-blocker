@@ -1,0 +1,19 @@
+{
+  "minimumOS": "13.3",
+  "llamaRevision": "5266f24da75dc449bd56cbed7addb9c8e4a6a73e",
+  "openmpVersion": "19.1.7",
+  "archives": {
+    "llama": {
+      "url": "https://codeload.github.com/ggml-org/llama.cpp/tar.gz/5266f24da75dc449bd56cbed7addb9c8e4a6a73e",
+      "sha256": "2de0d87eda4696e9f6bbd771d4c623267f4e95856cce6f99793f91522f993e43"
+    },
+    "openmp": {
+      "url": "https://github.com/llvm/llvm-project/releases/download/llvmorg-19.1.7/openmp-19.1.7.src.tar.xz",
+      "sha256": "bd7e6901ab086fd268750363017935fd4a717c153dad3c2aab86cb0140d9e3fe"
+    },
+    "cmake": {
+      "url": "https://github.com/llvm/llvm-project/releases/download/llvmorg-19.1.7/cmake-19.1.7.src.tar.xz",
+      "sha256": "11c5a28f90053b0c43d0dec3d0ad579347fc277199c005206b963c19aae514e3"
+    }
+  }
+}

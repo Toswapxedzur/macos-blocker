@@ -24,6 +24,12 @@ if [[ ! -d "$APP_PATH" ]]; then
   exit 1
 fi
 
+APP_PROFILE="${MAC_VAULT_APP_PROVISIONING_PROFILE:?Select the production Mac App Group provisioning profile before signing}"
+ENTITLEMENTS="$BUILD_DIR/MacVaultProduction.entitlements"
+python3 "$ROOT/scripts/signing/vault-app-group.py" prepare \
+  --environment production --profile "$APP_PROFILE" --app "$APP_PATH" \
+  --entitlements "$ENTITLEMENTS" >/dev/null
+
 if ! security find-identity -v -p codesigning | grep -F "$SIGNING_IDENTITY" >/dev/null; then
   echo "[sign_app] codesign identity not found: $SIGNING_IDENTITY" >&2
   echo "[sign_app] installed identities:" >&2
@@ -32,21 +38,11 @@ if ! security find-identity -v -p codesigning | grep -F "$SIGNING_IDENTITY" >/de
 fi
 
 echo "[sign_app] signing $APP_PATH"
-APP_PROFILE="${MAC_VAULT_APP_PROVISIONING_PROFILE:-}"
-SIGN_FLAGS=(--force --deep --timestamp --options runtime --sign "$SIGNING_IDENTITY")
-if [[ -n "$APP_PROFILE" ]]; then
-  ENTITLEMENTS="$BUILD_DIR/MacVaultProduction.entitlements"
-  python3 "$ROOT/scripts/signing/vault-app-group.py" prepare \
-    --environment production --profile "$APP_PROFILE" --app "$APP_PATH" \
-    --entitlements "$ENTITLEMENTS" >/dev/null
-  # Preserve existing leaf signing, then sign only the outer app with its
-  # restricted group. The native host and dylibs must not inherit this profile.
-  codesign "${SIGN_FLAGS[@]}" "$APP_PATH"
-  SIGN_FLAGS=(--force --timestamp --options runtime --sign "$SIGNING_IDENTITY" --entitlements "$ENTITLEMENTS")
-else
-  echo "[sign_app] Safari pairing unavailable: no production Mac App Group provisioning profile was selected." >&2
-fi
-codesign "${SIGN_FLAGS[@]}" "$APP_PATH"
+# Nested code receives hardened runtime signing without the outer app's group.
+# The outer signature alone carries its validated production entitlement.
+codesign --force --deep --timestamp --options runtime --sign "$SIGNING_IDENTITY" "$APP_PATH"
+codesign --force --timestamp --options runtime --sign "$SIGNING_IDENTITY" \
+  --entitlements "$ENTITLEMENTS" "$APP_PATH"
 
 codesign --verify --deep --strict --verbose=2 "$APP_PATH"
 if [[ -n "$APP_PROFILE" ]]; then

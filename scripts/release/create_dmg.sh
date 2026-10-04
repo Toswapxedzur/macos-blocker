@@ -173,8 +173,12 @@ if [[ "\$remove_data" =~ ^[Yy]$ ]]; then
   remove_system_dir_if_empty "\$SYSTEM_POLICY_DIR"
   remove_file "\$PREF_PRIMARY"
   remove_file "\$PREF_LEGACY"
-  remove_dir "\$GROUP_CONTAINER"
-  remove_dir "\$GROUP_CONTAINER_LEGACY"
+  # The App Group also holds Safari's independent rule journals and bookmarks.
+  remove_dir "\$GROUP_CONTAINER/macosBlocker"
+  remove_file "\$GROUP_CONTAINER/safari-local-hub-secret-v4"
+  remove_dir_if_empty "\$GROUP_CONTAINER"
+  remove_dir "\$GROUP_CONTAINER_LEGACY/macosBlocker"
+  remove_dir_if_empty "\$GROUP_CONTAINER_LEGACY"
   # The Vault Classifier component: its state, knowledge and downloaded models.
   remove_dir "\$HOME/Library/Application Support/VaultClassifier"
   remove_file "\$LAUNCH_AGENT"

@@ -13,20 +13,32 @@ NOTARY_PROFILE="${NOTARY_PROFILE:-notary-profile}"
 VERSION="${VERSION:-1.0.0}"
 BUILD_NUMBER="${BUILD_NUMBER:-3}"
 SWIFTPM_PRODUCT="${SWIFTPM_PRODUCT:-MacBlockerPanel}"
-MACOS_MIN_VERSION="${MACOS_MIN_VERSION:-13.0}"
+MACOS_MIN_VERSION="13.3"
+VAULT_BUILD_ARCH="${VAULT_BUILD_ARCH:-$(uname -m)}"
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 WORKSPACE="$(cd "$ROOT/.." && pwd)"
 BUILD_DIR="${BUILD_DIR:-$ROOT/release/build}"
 APP_PATH="${APP_PATH:-$BUILD_DIR/$APP_NAME.app}"
-RELEASE_BINARY="$ROOT/.build/arm64-apple-macosx/release/$SWIFTPM_PRODUCT"
+case "$VAULT_BUILD_ARCH" in arm64|x86_64) ;; *) echo "Unsupported architecture: $VAULT_BUILD_ARCH" >&2; exit 1 ;; esac
+runtime_work="${VAULT_RUNTIME_WORK:-$ROOT/release/runtime-$VAULT_BUILD_ARCH}"
+if [[ -z "${VAULT_LLAMA_PREFIX:-}" ]]; then
+  python3 "$SCRIPT_DIR/build-macos-runtime.py" --architecture "$VAULT_BUILD_ARCH" --work "$runtime_work"
+  export VAULT_LLAMA_PREFIX="$runtime_work/install"
+fi
+python3 "$SCRIPT_DIR/verify-macos-runtime.py" --prefix "$VAULT_LLAMA_PREFIX" --architecture "$VAULT_BUILD_ARCH"
+export PKG_CONFIG_PATH="$VAULT_LLAMA_PREFIX/lib/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
+export MACOSX_DEPLOYMENT_TARGET="$MACOS_MIN_VERSION"
+BUILD_FLAGS=(-c release --arch "$VAULT_BUILD_ARCH")
+binary_dir="$(swift build "${BUILD_FLAGS[@]}" --show-bin-path --package-path "$ROOT")"
+RELEASE_BINARY="$binary_dir/$SWIFTPM_PRODUCT"
 ICON_SOURCE="${ICON_SOURCE:-$ROOT/Assets/Branding/mac-vault-master.png}"
 
 echo "[build_app] root=$ROOT"
 echo "[build_app] version=$VERSION build=$BUILD_NUMBER bundle=$BUNDLE_ID"
 
-swift build -c release --product "$SWIFTPM_PRODUCT" --package-path "$ROOT"
+swift build "${BUILD_FLAGS[@]}" --product "$SWIFTPM_PRODUCT" --package-path "$ROOT"
 
 rm -rf "$APP_PATH"
 mkdir -p "$APP_PATH/Contents/MacOS" "$APP_PATH/Contents/Resources"
@@ -36,7 +48,7 @@ chmod 755 "$APP_PATH/Contents/MacOS/$APP_NAME"
 
 # Every SwiftPM resource bundle: Mac Vault's own (Core, WebUI) and the Vault
 # Classifier component's (its page assets and seed resources).
-for bundle in "$ROOT/.build/arm64-apple-macosx/release"/*.bundle; do
+for bundle in "$binary_dir"/*.bundle; do
   cp -R "$bundle" "$APP_PATH/Contents/Resources/"
 done
 
@@ -48,8 +60,9 @@ done
 # extension the local-hub secret. The app registers it with each installed
 # browser on launch (NativeMessagingHostRegistration), so there is no installer
 # step and the registration follows the app if it is moved.
-swift build -c release --product VaultLocalHubNativeHost --package-path "$ROOT/classifier"
-cp "$ROOT/classifier/.build/arm64-apple-macosx/release/VaultLocalHubNativeHost" "$APP_PATH/Contents/MacOS/"
+swift build "${BUILD_FLAGS[@]}" --product VaultLocalHubNativeHost --package-path "$ROOT/classifier"
+native_dir="$(swift build "${BUILD_FLAGS[@]}" --show-bin-path --package-path "$ROOT/classifier")"
+cp "$native_dir/VaultLocalHubNativeHost" "$APP_PATH/Contents/MacOS/"
 
 if [[ -f "$ICON_SOURCE" ]]; then
   ICONSET="$BUILD_DIR/$APP_NAME.iconset"
@@ -115,4 +128,5 @@ PLIST
 echo "APPL????" > "$APP_PATH/Contents/PkgInfo"
 plutil -lint "$APP_PATH/Contents/Info.plist" >/dev/null
 
+python3 "$SCRIPT_DIR/verify-macos-runtime.py" --app "$APP_PATH" --architecture "$VAULT_BUILD_ARCH"
 echo "[build_app] wrote $APP_PATH"

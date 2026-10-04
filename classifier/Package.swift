@@ -15,8 +15,8 @@ let brewPrefix: String = {
     return "/opt/homebrew"
 }()
 
-// The Windows package links a pinned llama.cpp build installed by the worker
-// bundler; macOS continues to use the existing Homebrew integration.
+// Windows and Mac release builds select pinned llama.cpp prefixes. Ordinary
+// Mac development retains Homebrew as its default when no prefix is selected.
 #if os(Windows)
 let nativePrefix = ProcessInfo.processInfo.environment["VAULT_LLAMA_PREFIX"] ?? "C:/vault-porting-classifier/llama-runtime"
 let portableDependencies: [Package.Dependency] = [.package(url: "https://github.com/apple/swift-crypto.git", exact: "4.3.1")]
@@ -30,7 +30,7 @@ let windowsTargets: [Target] = [.target(name: "CVaultWindows", linkerSettings: [
     .linkedLibrary("ole32"), .linkedLibrary("windowscodecs"), .linkedLibrary("shlwapi"), .linkedLibrary("uuid"),
 ])]
 #else
-let nativePrefix = brewPrefix
+let nativePrefix = ProcessInfo.processInfo.environment["VAULT_LLAMA_PREFIX"] ?? brewPrefix
 let portableDependencies: [Package.Dependency] = []
 let cryptoDependencies: [Target.Dependency] = []
 let appExcludes: [String] = []
@@ -154,7 +154,7 @@ let classifierTargets: [Target] = windowsTargets + nativeHostTargets + [
 
 let package = Package(
     name: "VaultClassifier",
-    platforms: [.macOS(.v13)],
+    platforms: [.macOS("13.3")],
     products: classifierProducts,
     dependencies: portableDependencies,
     targets: classifierTargets
