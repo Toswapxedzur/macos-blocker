@@ -33,6 +33,38 @@ final class BoundedOverlayTests: XCTestCase {
         }
     }
 
+    func testTimerRosterRotatesWithoutGrowingPastScreen() async throws {
+        let controller = await MainActor.run { TimerOverlayPanelController() }
+        let first = await MainActor.run { () -> NSPanel? in
+            _ = NSApplication.shared
+            let before = Set(NSApp.windows.map(\.windowNumber))
+            controller.update(rows: (0..<10000).map { TimerOverlayRow(id: String($0), name: "Timer " + String($0), remainingSeconds: 600) })
+            return NSApp.windows.first { !before.contains($0.windowNumber) && $0 is NSPanel } as? NSPanel
+        }
+        let panel = try XCTUnwrap(first)
+        await MainActor.run {
+            let work = NSScreen.main!.visibleFrame
+            XCTAssertTrue(work.contains(panel.frame))
+            XCTAssertTrue(panel.ignoresMouseEvents)
+            XCTAssertTrue(panel.styleMask.contains(.nonactivatingPanel))
+            let hosting = panel.contentView as! NSHostingView<TimerOverlayView>
+            XCTAssertEqual(hosting.rootView.model.rows.first?.id, "0")
+            XCTAssertLessThan(hosting.rootView.model.rows.count, 100)
+        }
+        try await Task.sleep(nanoseconds: 5_300_000_000)
+        await MainActor.run {
+            let hosting = panel.contentView as! NSHostingView<TimerOverlayView>
+            XCTAssertNotEqual(hosting.rootView.model.rows.first?.id, "0")
+            controller.update(rows: [TimerOverlayRow(id: "long", name: String(repeating: "W", count: 500), remainingSeconds: 600)])
+            XCTAssertTrue(NSScreen.main!.visibleFrame.contains(panel.frame))
+            XCTAssertEqual(hosting.rootView.model.rows.first?.formattedRemaining, "00:10:00")
+            controller.update(rows: [])
+            XCTAssertFalse(panel.isVisible)
+            XCTAssertTrue(hosting.rootView.model.rows.isEmpty)
+            controller.teardown()
+        }
+    }
+
     func testProductionLazyPanelStackKeepsEveryPanelInBoundedViewport() async throws {
         let panels = try (0..<30).map { index in
             try JSONDecoder().decode(PanelSnapshot.self, from: Data("{\"id\":\"panel-\(index)\",\"title\":\"Panel \(index)\",\"controls\":[{\"id\":\"text\",\"type\":\"text\",\"text\":\"Row text\"}]}".utf8))
