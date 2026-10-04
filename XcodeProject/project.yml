@@ -9,7 +9,7 @@ name: macosBlocker
 options:
   bundleIdPrefix: com.adamancia.vault
   deploymentTarget:
-    macOS: "13.0"
+    macOS: "13.3"
   createIntermediateGroups: true
 
 settings:
@@ -33,7 +33,7 @@ targets:
   AdamanciaVaultMac:
     type: application
     platform: macOS
-    deploymentTarget: "13.0"
+    deploymentTarget: "13.3"
     sources:
       - path: ../Sources/MacBlockerPanel
     info:
@@ -41,7 +41,7 @@ targets:
       properties:
         CFBundleDisplayName: Adamancia Vault
         LSApplicationCategoryType: public.app-category.productivity
-        LSMinimumSystemVersion: "13.0"
+        LSMinimumSystemVersion: "13.3"
         NSHighResolutionCapable: true
         NSSupportsAutomaticTermination: false
     entitlements:

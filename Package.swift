@@ -3,11 +3,13 @@
 import PackageDescription
 import Foundation
 
-// The classifier component links Homebrew's llama.cpp. llama.h includes
-// "ggml.h" from the separate ggml keg, so every target that (transitively)
-// imports the engine needs the shared Homebrew include root — the same rule,
-// and the same prefix resolution, as classifier/Package.swift.
+// Every transitive engine import uses the same headers as classifier/Package.swift.
+// Release builds select the pinned source runtime; ordinary development may
+// continue to use the shared Homebrew include root.
 let brewPrefix: String = {
+    if let runtime = ProcessInfo.processInfo.environment["VAULT_LLAMA_PREFIX"], !runtime.isEmpty {
+        return runtime
+    }
     if let override = ProcessInfo.processInfo.environment["HOMEBREW_PREFIX"], !override.isEmpty {
         return override
     }
@@ -23,7 +25,7 @@ let cllamaIncludeFlags: [SwiftSetting] = [.unsafeFlags(["-Xcc", "-I\(brewPrefix)
 let package = Package(
     name: "macosBlocker",
     platforms: [
-        .macOS(.v13)
+        .macOS("13.3")
     ],
     products: [
         .library(name: "MacBlockerCore", targets: ["MacBlockerCore"]),

@@ -57,7 +57,7 @@ def development_info():
             'CFBundleExecutable': 'MacBlockerPanel', 'CFBundleName': 'Mac Vault Development',
             'CFBundleDisplayName': 'Mac Vault Development', 'CFBundlePackageType': 'APPL',
             'CFBundleInfoDictionaryVersion': '6.0', 'CFBundleShortVersionString': '1.0',
-            'CFBundleVersion': '1', 'LSMinimumSystemVersion': '13.0',
+            'CFBundleVersion': '1', 'LSMinimumSystemVersion': '13.3',
             'NSHighResolutionCapable': True, 'NSSupportsAutomaticTermination': False,
             'VaultEnvironment': 'development'}
 
