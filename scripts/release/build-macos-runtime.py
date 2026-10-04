@@ -84,6 +84,7 @@ def main():
     run('cmake', '-S', llama, '-B', work / 'llama-build', *common,
         '-DBUILD_SHARED_LIBS=ON', '-DLLAMA_USE_SYSTEM_GGML=OFF', '-DLLAMA_BUILD_COMMON=OFF',
         '-DLLAMA_BUILD_TESTS=OFF', '-DLLAMA_BUILD_EXAMPLES=OFF', '-DLLAMA_BUILD_TOOLS=OFF',
+        '-DLLAMA_BUILD_APP=OFF', '-DLLAMA_BUILD_SERVER=OFF',
         '-DLLAMA_CURL=OFF', '-DLLAMA_OPENSSL=OFF', '-DGGML_NATIVE=OFF', '-DGGML_BACKEND_DL=ON',
         f'-DGGML_BACKEND_DIR={prefix / "lib"}', '-DGGML_BLAS=ON', '-DGGML_BLAS_VENDOR=Apple',
         '-DGGML_CPU_ALL_VARIANTS=OFF', '-DGGML_OPENMP=ON', '-DGGML_CCACHE=OFF',
@@ -98,7 +99,8 @@ def main():
     notices = prefix / 'share/vault-notices'
     notices.mkdir(parents=True, exist_ok=True)
     shutil.copy2(llama / 'LICENSE', notices / 'llama-LICENSE.txt')
-    shutil.copy2(llama / 'ggml/LICENSE', notices / 'ggml-LICENSE.txt')
+    # The pinned monorepo licenses llama and embedded ggml under its root MIT license.
+    shutil.copy2(llama / 'LICENSE', notices / 'ggml-LICENSE.txt')
     shutil.copy2(openmp / 'LICENSE.TXT', notices / 'OpenMP-LICENSE.txt')
     (notices / 'sources.json').write_text(json.dumps(CONFIG, indent=2) + '\n')
     files = {str(path.relative_to(prefix)): verifier.digest(path) for path in sorted(prefix.rglob('*')) if path.is_file()}
