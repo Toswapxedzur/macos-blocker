@@ -6,3 +6,5 @@
 - `notarize_dmg.sh`: submits/staples the disk image through Apple's notarization service.
 - `verify_release.sh`: verifies release signatures and installer metadata.
 - `full_release_dmg.sh`: runs the complete release pipeline.
+
+- `version.py`: reads the one canonical native version/build in `XcodeProject/project.yml`; every package script derives its defaults from it. Explicit historical VERSION/BUILD_NUMBER overrides remain supported.
