@@ -2,6 +2,8 @@
 
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+
 # ---- Configurable release values ------------------------------------------
 APP_NAME="${APP_NAME:-AdamanciaVault}"
 DISPLAY_NAME="${DISPLAY_NAME:-Adamancia Vault}"
@@ -10,10 +12,9 @@ TEAM_ID="${TEAM_ID:-9KCD8QL2LN}"
 SIGNING_IDENTITY="${SIGNING_IDENTITY:-Developer ID Application: Wenyi Cui (9KCD8QL2LN)}"
 DMG_NAME="${DMG_NAME:-AdamanciaInstaller.dmg}"
 NOTARY_PROFILE="${NOTARY_PROFILE:-notary-profile}"
-VERSION="${VERSION:-1.0.1}"
-BUILD_NUMBER="${BUILD_NUMBER:-4}"
+VERSION="${VERSION:-$(python3 "$SCRIPT_DIR/version.py" version)}"
+BUILD_NUMBER="${BUILD_NUMBER:-$(python3 "$SCRIPT_DIR/version.py" build)}"
 
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 BUILD_DIR="${BUILD_DIR:-$ROOT/release/build}"
 APP_PATH="${APP_PATH:-$BUILD_DIR/$APP_NAME.app}"

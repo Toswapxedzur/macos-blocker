@@ -37,3 +37,5 @@
 - **Native manual fallback (2026-10-02):** translated native references containing the retired helper/shield API are removed. The release batch replaces them with current platform-specific user/code guides for the fixed app locales. UI catalogs remain canonical in customBlocker and synchronized through sync-webui.sh.
 
 - Native click-through timer: one screen-sized page with a reserved countdown, five-second rotation, and only visible rows formatted. `BoundedOverlayTests` verifies native window containment and rotation.
+
+- `VERSIONS.md`: owner-approved 2026-10-04 capability split; current source version **2.2.0 alpha**. Historical tags/packages remain immutable.
