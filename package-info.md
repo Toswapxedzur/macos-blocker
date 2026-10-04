@@ -35,3 +35,5 @@
 - **Portable Activity core (2026-10-02):** canonical Activity models/store/wire/dashboard/groups/accumulator live in `classifier/Sources/VaultActivityCore/` and are re-exported by MacBlockerCore. Mac support-directory selection stays in `Sources/MacBlockerCore/MacActivityStore.swift`; the Windows worker uses its isolated Windows data root.
 
 - **Native manual fallback (2026-10-02):** translated native references containing the retired helper/shield API are removed. The release batch replaces them with current platform-specific user/code guides for the fixed app locales. UI catalogs remain canonical in customBlocker and synchronized through sync-webui.sh.
+
+- Native click-through timer: one screen-sized page with a reserved countdown, five-second rotation, and only visible rows formatted. `BoundedOverlayTests` verifies native window containment and rotation.

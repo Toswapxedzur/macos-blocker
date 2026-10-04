@@ -57,7 +57,7 @@ public struct TimerOverlayRow: Identifiable, Equatable, Sendable {
 @MainActor
 final class TimerOverlayModel: ObservableObject {
     @Published var rows: [TimerOverlayRow] = []
-    @Published var text: String = ""
+    @Published var width: CGFloat = 120
 }
 
 /// Frequently visible HUD: dark translucent surface, matching the browser timer.
@@ -65,84 +65,91 @@ struct TimerOverlayView: View {
     @ObservedObject var model: TimerOverlayModel
 
     var body: some View {
-        Text(model.text)
-            .font(.custom("Arial", size: 13)).monospacedDigit()
-            .lineSpacing(2)
-            .foregroundColor(Color(red: 0.973, green: 0.980, blue: 0.988))
-        .padding(.horizontal, 10)
-        .padding(.vertical, 8)
-        .background(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .fill(Color(red: 0.059, green: 0.090, blue: 0.165).opacity(0.86))
-        )
+        VStack(alignment: .leading, spacing: 0) {
+            ForEach(model.rows) { row in
+                HStack(spacing: 0) {
+                    Text(row.name + ": ").lineLimit(1).truncationMode(.tail)
+                    Spacer(minLength: 0)
+                    Text(row.formattedRemaining).fixedSize()
+                }.frame(height: 18)
+            }
+        }
+        .font(.custom("Arial", size: 13)).monospacedDigit()
+        .foregroundColor(Color(red: 0.973, green: 0.980, blue: 0.988))
+        .frame(width: model.width, alignment: .leading)
+        .padding(.horizontal, 10).padding(.vertical, 8)
+        .background(RoundedRectangle(cornerRadius: 10, style: .continuous)
+            .fill(Color(red: 0.059, green: 0.090, blue: 0.165).opacity(0.86)))
         .fixedSize()
     }
 }
 
-/// Owns a borderless, non-activating, always-on-top `NSPanel` that renders the
-/// timer HUD above every Space — including other applications running in
-/// full-screen — without ever stealing focus. This is the macOS equivalent of
-/// the Chrome extension's in-page overlay: the pixels float *over* whatever app
-/// is frontmost; nothing is injected into the other process.
+/// A click-through HUD. Only one screen-sized page is formatted/rendered;
+/// the complete roster remains available through five-second automatic rotation.
 @MainActor
 public final class TimerOverlayPanelController {
     private let model = TimerOverlayModel()
-    private var presentationRevision: UInt64 = 0
+    private var rows: [TimerOverlayRow] = []
+    private var page = 0
+    private var rotation: Timer?
     private var panel: NSPanel?
     private let screenInset: CGFloat = 16
 
     public init() {}
 
-    /// Replaces the visible rows. An empty array hides the HUD.
     public func update(rows: [TimerOverlayRow]) {
-        guard !rows.isEmpty else {
-            hide()
-            return
-        }
-        guard model.rows != rows || panel?.isVisible != true else { return }
-        model.rows = rows
-        presentationRevision &+= 1
-        let revision = presentationRevision
-        if rows.count <= 40 {
-            present(text: rows.map { "\($0.name): \($0.formattedRemaining)" }.joined(separator: "\n"))
-        } else {
-            Task { @MainActor [weak self] in
-                let text = await Task.detached(priority: .userInitiated) {
-                    rows.map { "\($0.name): \($0.formattedRemaining)" }.joined(separator: "\n")
-                }.value
-                guard let self, self.presentationRevision == revision else { return }
-                self.present(text: text)
-            }
-        }
+        guard !rows.isEmpty else { hide(); return }
+        self.rows = rows
+        presentPage()
     }
 
-    private func present(text: String) {
-        model.text = text
+    private func presentPage() {
+        guard !rows.isEmpty else { return }
+        let frame = NSScreen.main?.visibleFrame ?? NSRect(x: 0, y: 0, width: 800, height: 600)
+        let capacity = max(1, Int((frame.height - 2 * screenInset - 16) / 18))
+        let pages = max(1, (rows.count + capacity - 1) / capacity)
+        page %= pages
+        let start = page * capacity
+        let visible = Array(rows[start..<min(rows.count, start + capacity)])
+        let font = NSFont(name: "Arial", size: 13) ?? NSFont.systemFont(ofSize: 13)
+        let naturalWidth = visible.map { ($0.name + ": " + $0.formattedRemaining as NSString)
+            .size(withAttributes: [.font: font]).width }.max() ?? 100
+        // Extra space accounts for tabular digits. Only group names may truncate.
+        model.width = min(max(100, naturalWidth + 8), max(1, frame.width - 2 * screenInset - 20))
+        model.rows = visible
         let panel = ensurePanel()
-        resizeAndPosition(panel)
+        panel.contentView?.layoutSubtreeIfNeeded()
+        let height = min(frame.height - 2 * screenInset, CGFloat(visible.count) * 18 + 16)
+        panel.setFrame(NSRect(x: frame.minX + screenInset,
+                              y: frame.maxY - height - screenInset,
+                              width: model.width + 20, height: height), display: true)
         if !panel.isVisible { panel.orderFrontRegardless() }
+        if pages > 1 && rotation == nil {
+            rotation = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in
+                Task { @MainActor [weak self] in
+                    guard let self else { return }
+                    self.page += 1
+                    self.presentPage()
+                }
+            }
+        } else if pages == 1 {
+            rotation?.invalidate(); rotation = nil
+        }
     }
 
     public func hide() {
-        presentationRevision &+= 1
+        rotation?.invalidate(); rotation = nil
+        rows = []; model.rows = []; page = 0
         panel?.orderOut(nil)
     }
 
-    public func teardown() {
-        hide()
-        panel = nil
-    }
+    public func teardown() { hide(); panel = nil }
 
     private func ensurePanel() -> NSPanel {
         if let panel { return panel }
-
         let hosting = NSHostingView(rootView: TimerOverlayView(model: model))
-        let panel = NSPanel(
-            contentRect: NSRect(x: 0, y: 0, width: 120, height: 40),
-            styleMask: [.borderless, .nonactivatingPanel],
-            backing: .buffered,
-            defer: false
-        )
+        let panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 120, height: 40),
+                            styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
         panel.isFloatingPanel = true
         panel.becomesKeyOnlyIfNeeded = true
         panel.hidesOnDeactivate = false
@@ -151,35 +158,12 @@ public final class TimerOverlayPanelController {
         panel.isOpaque = false
         panel.backgroundColor = .clear
         panel.hasShadow = true
-        // High enough to clear other apps' full-screen windows, and present on
-        // every Space so it follows the user across full-screen apps.
         panel.level = .screenSaver
-        panel.collectionBehavior = [
-            .canJoinAllSpaces,
-            .fullScreenAuxiliary,
-            .stationary,
-            .ignoresCycle
-        ]
+        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle]
         hosting.translatesAutoresizingMaskIntoConstraints = true
         panel.contentView = hosting
         self.panel = panel
         return panel
-    }
-
-    private func resizeAndPosition(_ panel: NSPanel) {
-        guard let hosting = panel.contentView else { return }
-        hosting.layoutSubtreeIfNeeded()
-        let size = hosting.fittingSize
-        guard let screen = NSScreen.main else {
-            panel.setContentSize(size)
-            return
-        }
-        let frame = screen.frame
-        let origin = NSPoint(
-            x: frame.minX + screenInset,
-            y: frame.maxY - size.height - screenInset
-        )
-        panel.setFrame(NSRect(origin: origin, size: size), display: true)
     }
 }
 
