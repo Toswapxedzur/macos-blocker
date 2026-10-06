@@ -127,6 +127,39 @@ final class ActivityStoreTests: XCTestCase {
         XCTAssertEqual(agg.last?.seconds, 150)
     }
 
+    func testSessionsCrossingMidnightAreClippedWithoutChangingStoredRecords() throws {
+        let midnight = day("2026-10-07T00:00:00Z")
+        let s = store(now: midnight.addingTimeInterval(600))
+        for category in ActivityCategory.allCases {
+            s.record(record(category.rawValue, category, at: midnight.addingTimeInterval(-300), seconds: 900), settings: allEnabled())
+            let today = s.records(category: category, from: midnight, to: midnight.addingTimeInterval(600))
+            XCTAssertEqual(today.count, 1)
+            XCTAssertEqual(today.first?.startedAt, midnight)
+            XCTAssertEqual(today.first?.seconds, 600)
+            let yesterday = s.aggregate(category: category, from: midnight.addingTimeInterval(-3600), to: midnight)
+            XCTAssertEqual(yesterday.first?.seconds, 300)
+            let whole = s.records(category: category, from: midnight.addingTimeInterval(-3600), to: midnight.addingTimeInterval(3600))
+            XCTAssertEqual(whole.first?.seconds, 900)
+        }
+        let dashboard = s.dashboardSnapshot(from: midnight, to: midnight.addingTimeInterval(600))
+        XCTAssertEqual(dashboard.app.totalSeconds, 600)
+        XCTAssertEqual(dashboard.app.bars.first?.seconds, 600)
+        XCTAssertEqual(dashboard.app.timeline.first?.seconds, 600)
+        XCTAssertEqual(dashboard.web.totalSeconds, 600)
+        XCTAssertEqual(dashboard.watched.first?.seconds, 600)
+    }
+
+    func testMultiDaySessionAndPartialRangeCountOnlyTheirOverlap() throws {
+        let midnight = day("2026-10-07T00:00:00Z")
+        let s = store(now: midnight.addingTimeInterval(600))
+        s.record(record("long", .appUsage, at: midnight.addingTimeInterval(-172800), seconds: 173400), settings: allEnabled())
+        let partial = s.records(category: .appUsage, from: midnight.addingTimeInterval(100), to: midnight.addingTimeInterval(200))
+        XCTAssertEqual(partial.first?.seconds, 100)
+        XCTAssertEqual(partial.first?.startedAt, midnight.addingTimeInterval(100))
+        XCTAssertTrue(s.records(category: .appUsage, from: midnight.addingTimeInterval(600), to: midnight.addingTimeInterval(1200)).isEmpty)
+        XCTAssertTrue(s.records(category: .appUsage, from: midnight, to: midnight).isEmpty)
+    }
+
     func testAggregateRespectsRangeBoundaries() throws {
         let s = store(now: day("2026-09-20T12:00:00Z"))
         let settings = allEnabled()

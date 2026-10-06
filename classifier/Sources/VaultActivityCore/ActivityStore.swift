@@ -278,18 +278,30 @@ public final class ActivityStore: @unchecked Sendable {
             .sorted { $0.seconds > $1.seconds }
     }
 
-    /// Raw records for a category over a range, oldest-first.
+    /// Sessions overlapping a range, clipped to that range, oldest-first.
     public func records(
         category: ActivityCategory,
         from start: Date,
         to end: Date
     ) -> [ActivityRecord] {
-        var all: [ActivityRecord] = []
-        for day in dayStrings(from: start, to: end) {
-            all.append(contentsOf: readRecords(at: dayFileURL(category: category, day: day)))
-        }
-        return all
-            .filter { $0.startedAt >= start && $0.startedAt <= end }
+        guard start < end else { return [] }
+        // A foreground session can begin on an earlier day and span midnight
+        // (or several days). Its file is keyed by its original start date.
+        return dayFiles(for: category)
+            .filter { url in
+                guard let day = dayDate(fromFileName: url.deletingPathExtension().lastPathComponent) else { return false }
+                return day <= end
+            }
+            .flatMap { readRecords(at: $0) }
+            .compactMap { record -> ActivityRecord? in
+                let overlapStart = max(start, record.startedAt)
+                let overlapEnd = min(end, record.startedAt.addingTimeInterval(record.seconds))
+                guard overlapEnd > overlapStart else { return nil }
+                var clipped = record
+                clipped.startedAt = overlapStart
+                clipped.seconds = overlapEnd.timeIntervalSince(overlapStart)
+                return clipped
+            }
             .sorted { $0.startedAt < $1.startedAt }
     }
 
