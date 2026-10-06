@@ -47,7 +47,7 @@ class DeliveryTests(unittest.TestCase):
 
     def test_unverified_delivery_is_refused_before_process_changes(self):
         with patch.object(delivery, "app_processes") as processes:
-            with self.assertRaisesRegex(RuntimeError, "mini1 verification"):
+            with self.assertRaisesRegex(RuntimeError, "remote verification"):
                 delivery.launch(self.common, False)
             processes.assert_not_called()
 
@@ -67,7 +67,7 @@ class DeliveryTests(unittest.TestCase):
         self.run_git(source, "commit", "-m", "completed task")
         delivery.integrate(self.common, source)
         self.assertEqual((self.repo / "feature").read_text(), "completed")
-        with self.assertRaisesRegex(RuntimeError, "mini1 verification"):
+        with self.assertRaisesRegex(RuntimeError, "remote verification"):
             delivery.check_launch(self.common)
         self.verified()
         with self.assertRaisesRegex(RuntimeError, "Push"):
@@ -85,6 +85,26 @@ class DeliveryTests(unittest.TestCase):
         delivery.write_state(self.common, {"verified": {"commit": sha}, "delivered": {"commit": self.first}})
         with self.assertRaisesRegex(RuntimeError, "discard previously delivered"):
             delivery.check_launch(self.common)
+
+    def test_selected_host_runs_every_check_and_records_exact_commit(self):
+        prefix = "/Users/test/pinned runtime/install"
+        original_run = subprocess.run
+        remote = []
+        def run(command, **kwargs):
+            if command[0] == "ssh":
+                remote.append(command)
+                return subprocess.CompletedProcess(command, 0)
+            return original_run(command, **kwargs)
+        with patch.object(delivery.subprocess, "run", side_effect=run):
+            delivery.verify(self.common, "mini2", prefix)
+        self.assertEqual(len(remote), 6)
+        for command in remote:
+            self.assertEqual(command[:2], ["ssh", "mini2"])
+        self.assertIn("'VAULT_LLAMA_PREFIX=" + prefix + "'", remote[1][2])
+        verified = delivery.read_state(self.common)["verified"]
+        self.assertEqual(verified["host"], "mini2")
+        self.assertEqual(verified["commit"], self.first)
+        self.assertEqual(verified["runtimePrefix"], prefix)
 
     def test_check_only_never_closes_or_launches_apps(self):
         self.verified()

@@ -28,6 +28,12 @@ matching upstream and inclusion of the previously delivered commit. A new
 merge invalidates the old verification automatically. Do not edit the receipt
 to bypass these gates.
 
+When the owner explicitly selects mini2 for a run, use `verify --host mini2`.
+If that host uses a pinned source runtime instead of Homebrew, also pass
+`--runtime-prefix /absolute/remote/runtime/install`. All checks still run on
+the selected host, and the receipt records that host, prefix and exact commit.
+The default remains mini1; host selection does not relax the delivery gates.
+
 `run-mac-vault.sh` in each local worktree dispatches to this shared controller
 when the Git setting exists. The lower-level build script accepts a laptop
 delivery only from that checkout with the controller's exact commit token.

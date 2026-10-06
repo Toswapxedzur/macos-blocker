@@ -80,7 +80,7 @@ class LauncherTests(unittest.TestCase):
         self.repo = self.base / 'checkout with spaces'
         self.tools = self.base / 'tools'
         self.tools.mkdir()
-        for source in ['scripts/development/launch-mac-vault-build.sh', 'scripts/release/sign_app.sh', 'scripts/signing/vault-app-group.py']:
+        for source in ['scripts/development/launch-mac-vault-build.sh', 'scripts/release/sign_app.sh', 'scripts/release/version.py', 'XcodeProject/project.yml', 'scripts/signing/vault-app-group.py']:
             target = self.repo / source
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(ROOT / source, target)
