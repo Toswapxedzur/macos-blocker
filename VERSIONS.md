@@ -2,7 +2,11 @@
 
 The owner approved this capability split on 2026-10-04. Existing tags and packaged downloads remain unchanged. All new records are **alpha, source-only**. A source record does not certify store submission, signing or native release acceptance.
 
-Current source version: **2.2.4**. See the group-level `CHANGELOG.md` for the cross-product chapters.
+Current source version: **2.2.5**. See the group-level `CHANGELOG.md` for the cross-product chapters.
+
+## 2.2.5 — 2026-10-07 — Native rule log downloads
+
+The native editor saves its Blob-based rule log downloads in Downloads, preserving existing files and concurrent exports. WebKit download failures are visible through the native error dialog.
 
 ## 2.2.4 — 2026-10-07 — Activity page position
 
