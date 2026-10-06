@@ -1,6 +1,7 @@
 import SwiftUI
 import MacBlockerAppFeature
 import MacBlockerWebUI
+import MacBlockerCore
 
 #if os(macOS)
 import AppKit
@@ -13,7 +14,7 @@ import AppKit
 /// keep-running-after-last-window-close) from `BlockerAppDelegate`.
 final class PanelAppDelegate: BlockerAppDelegate {
     override func applicationDidFinishLaunching(_ notification: Notification) {
-        if let url = Bundle.module.url(forResource: "mac-vault-master", withExtension: "png", subdirectory: "Resources"),
+        if let url = MacBundledResources.directory(target: "MacBlockerPanel", subdirectory: "Resources")?.appendingPathComponent("mac-vault-master.png"),
            let image = NSImage(contentsOf: url) {
             NSApp.applicationIconImage = image
         }

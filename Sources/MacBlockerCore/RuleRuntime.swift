@@ -186,20 +186,9 @@ public final class RuleRuntime {
 /// SwiftPM resource bundle next to the executable).
 enum RuntimeResources {
     static func url(name: String, ext: String) -> URL? {
-        let bundleName = "macosBlocker_MacBlockerCore.bundle"
-        var bases: [URL] = []
-        if let resourceURL = Bundle.main.resourceURL { bases.append(resourceURL) }
-        bases.append(Bundle.main.bundleURL)
-        if let executableURL = Bundle.main.executableURL { bases.append(executableURL.deletingLastPathComponent()) }
-        for base in bases {
-            let bundleURL = base.appendingPathComponent(bundleName, isDirectory: true)
-            for candidate in [bundleURL.appendingPathComponent("Resources/\(name).\(ext)"), bundleURL.appendingPathComponent("\(name).\(ext)")]
-            where FileManager.default.fileExists(atPath: candidate.path) {
-                return candidate
-            }
-        }
-        return Bundle.module.url(forResource: name, withExtension: ext, subdirectory: "Resources")
-            ?? Bundle.module.url(forResource: name, withExtension: ext)
+        guard let directory = MacBundledResources.directory(target: "MacBlockerCore", subdirectory: "Resources") else { return nil }
+        let url = directory.appendingPathComponent("\(name).\(ext)")
+        return FileManager.default.fileExists(atPath: url.path) ? url : nil
     }
 }
 

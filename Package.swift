@@ -88,7 +88,7 @@ let package = Package(
         ),
         .executableTarget(
             name: "MacBlockerPanel",
-            dependencies: ["MacBlockerAppFeature"],
+            dependencies: ["MacBlockerAppFeature", "MacBlockerCore"],
             resources: [.copy("Resources")],
             swiftSettings: cllamaIncludeFlags
         ),

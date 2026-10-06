@@ -2,7 +2,11 @@
 
 The owner approved this capability split on 2026-10-04. Existing tags and packaged downloads remain unchanged. All new records are **alpha, source-only**. A source record does not certify store submission, signing or native release acceptance.
 
-Current source version: **2.2.0**. See the group-level `CHANGELOG.md` for the cross-product chapters.
+Current source version: **2.2.1**. See the group-level `CHANGELOG.md` for the cross-product chapters.
+
+## 2.2.1 — 2026-10-06 — Installed resource lookup
+
+Resolve the packaged icon, rule engines and editor assets from the installed app, without depending on the build machine’s folders.
 
 ## 2.2.0 — 2026-10-04 — Official dictionaries and portable desktop services
 
