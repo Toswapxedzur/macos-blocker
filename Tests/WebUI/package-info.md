@@ -10,4 +10,4 @@ Run on mini1 from the repository root:
 
 `activity-performance.js`: 10,000-entry bounded lists, dense chart/strip canvases, full search and original hover identities. Run with the Activity fixture through the Classifier autosave runner on mini1.
 
-`activity-scroll.js`: background snapshots defer hidden-scene rendering/history requests, preserve the newest-day and manually chosen timeline positions, and render current data on return. Run with `UI_TEST_SCRIPT=Tests/WebUI/activity-scroll.js UI_TEST_EXPRESSION="runActivityScrollTests()"` through the same fixture runner.
+`activity-scroll.js`: background snapshots defer hidden-scene rendering/history requests, preserve the newest-day and manually chosen timeline positions, render current data on return, and retain the outer viewport across recording-setting snapshots. Run with `UI_TEST_SCRIPT=Tests/WebUI/activity-scroll.js UI_TEST_EXPRESSION="runActivityScrollTests()"` through the same fixture runner.

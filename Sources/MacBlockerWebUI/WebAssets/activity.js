@@ -1823,6 +1823,8 @@
     // user's place (or consume the initial newest-day positioning).
     if (!sceneVisible()) return false;
     var page = scope.getElementById("page");
+    var pageScroller = page.parentNode;
+    var pagePosition = [pageScroller.scrollLeft, pageScroller.scrollTop];
     var searchFocus = window.VaultUI.captureSearch(scope);
     var groupFocus = captureGroupFocus(scope.getElementById("groups"));
     var groupScrolls = captureGroupScrolls(scope.getElementById("groups"));
@@ -1850,6 +1852,10 @@
     restoreGroupFocus(scope.getElementById("groups"), groupFocus);
     window.VaultUI.restoreSearch(scope, searchFocus);
     restoreGroupScrolls(scope.getElementById("groups"), groupScrolls);
+    // Replacing the page can clamp the outer viewport or move its anchor.
+    // Keep the customer's place, including the recording controls at the end.
+    pageScroller.scrollLeft = pagePosition[0];
+    pageScroller.scrollTop = pagePosition[1];
     requestAnimationFrame(() => scope.querySelectorAll("svg").forEach(chart => chart.__updateDayWindow?.()));
     return true;
   }

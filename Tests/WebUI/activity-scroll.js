@@ -18,5 +18,15 @@ host.style.display='none';document.body.dataset.scene='classifier';const command
 host.style.display='block';document.body.dataset.scene='activity';apply();await wait();
 strip=activity.querySelector('#usage-section .strip-scroll');
 if(Math.abs(strip.scrollLeft-before)>1)throw Error('Hidden Activity snapshot loses newest-day scroll: '+before+' -> '+strip.scrollLeft);
-out.push('PASS hidden snapshot preserves newest-day scroll on return');if(!activity.textContent.includes('Updated while hidden'))throw Error('Visible refresh must render newest snapshot');out.push('PASS return renders new snapshot data');strip.scrollLeft=300;apply();await wait();if(activity.querySelector('#usage-section .strip-scroll').scrollLeft!==300)throw Error('Visible updates must preserve a historical position');out.push('PASS visible snapshot preserves chosen historical position');return out;
+out.push('PASS hidden snapshot preserves newest-day scroll on return');if(!activity.textContent.includes('Updated while hidden'))throw Error('Visible refresh must render newest snapshot');out.push('PASS return renders new snapshot data');strip.scrollLeft=300;apply();await wait();if(activity.querySelector('#usage-section .strip-scroll').scrollLeft!==300)throw Error('Visible updates must preserve a historical position');out.push('PASS visible snapshot preserves chosen historical position');const main=activity.querySelector('main');main.scrollTop=900;const pagePosition=main.scrollTop;
+if(pagePosition<=0)throw Error('Fixture must have a scrollable Activity page');
+snapshot.settings.appUsage.enabled=false;apply();await wait();
+if(Math.abs(main.scrollTop-pagePosition)>1)throw Error('Recording update loses page position: '+pagePosition+' -> '+main.scrollTop);
+out.push('PASS recording update preserves outer page scroll');
+const recording=activity.querySelector('.settings-panel details');recording.open=true;await wait();
+const recordSwitch=recording.querySelector('input[type="checkbox"]');main.scrollTop=main.scrollHeight;const bottomPosition=main.scrollTop;
+recordSwitch.click();snapshot.settings.appUsage.enabled=true;apply();await wait();
+if(Math.abs(main.scrollTop-bottomPosition)>1 || !activity.querySelector('.settings-panel details').open)throw Error('Recording switch must retain the open panel and page position');
+out.push('PASS real recording switch retains open panel and bottom viewport');
+return out;
 };
