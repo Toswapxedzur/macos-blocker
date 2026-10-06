@@ -38,6 +38,8 @@
 
 - Native click-through timer: one screen-sized page with a reserved countdown, five-second rotation, and only visible rows formatted. `BoundedOverlayTests` verifies native window containment and rotation.
 
-- `VERSIONS.md`: owner-approved 2026-10-04 capability split; current source version **2.2.0 alpha**. Historical tags/packages remain immutable.
+- `VERSIONS.md`: owner-approved 2026-10-04 capability split; current source version **2.2.3 alpha**. Historical tags/packages remain immutable.
 
 - Installed resource resolution: `Sources/MacBlockerCore/MacBundledResources.swift` resolves Panel, Core and WebUI bundles from app Resources or adjacent SwiftPM output without generated-accessor traps. `MacBundledResourcesTests` covers relocation and missing resources.
+
+- Public customer-audit patch 2.2.3: Activity defers hidden-scene snapshots until the native visible refresh, preserving chart scroll positions. `Tests/WebUI/activity-scroll.js` covers background and visible snapshots with synthetic data; owner-selected mini2 is this audit's verification host.

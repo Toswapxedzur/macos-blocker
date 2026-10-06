@@ -1,0 +1,22 @@
+window.runActivityScrollTests=async()=>{
+const out=[],wait=()=>new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));
+const host=document.createElement('div');host.style.cssText='display:block;height:100%';document.body.appendChild(host);document.getElementById('host').style.display='none';
+const activity=host.attachShadow({mode:'open'});
+activity.innerHTML='<link rel="stylesheet" href="/Sources/MacBlockerWebUI/WebAssets/vault-ui.css"><link rel="stylesheet" href="/Sources/MacBlockerWebUI/WebAssets/vault-info.css"><link rel="stylesheet" href="/Sources/MacBlockerWebUI/WebAssets/activity.css"><div id="activity"></div>';
+VaultScenes.scope=name=>name==='activity'?activity:scope;webkit.messageHandlers.activity={postMessage:m=>commands.push(m)};
+const load=src=>new Promise((resolve,reject)=>{const s=document.createElement('script');s.src=src;s.onload=resolve;s.onerror=reject;document.body.appendChild(s)});
+await load('/Sources/MacBlockerWebUI/WebAssets/activity-time-bins.js');await load('/Sources/MacBlockerWebUI/WebAssets/activity.js');
+const end=Date.now(), start=end-30*86400000;
+const snapshot={rangeStartMs:start,rangeEndMs:end,settings:{appUsage:{enabled:true},webVisit:{enabled:true},contentWatched:{enabled:true}},groups:[],app:{totalSeconds:120,bars:[{key:'fixture',label:'Fixture',colorIndex:1,seconds:120}],timeline:[{key:'fixture',label:'Fixture',startedAtMs:end-120000,seconds:120,startFraction:0.9999,widthFraction:0.0001}]},web:{totalSeconds:0,bars:[],timeline:[]},watchedTimeline:[]};
+const apply=()=>activityApply(structuredClone(snapshot),{},{},{},[]);
+document.body.dataset.scene='activity';apply();await wait();
+let strip=activity.querySelector('#usage-section .strip-scroll');
+let before=strip.scrollLeft;
+if(before<=0 || Math.abs(before-(strip.scrollWidth-strip.clientWidth))>1)throw Error('First visible month must open at newest days');
+out.push('PASS first visible month opens at newest days');
+host.style.display='none';document.body.dataset.scene='classifier';const commandCount=commands.length;snapshot.app.bars[0].label='Updated while hidden';apply();await wait();if(commands.length!==commandCount)throw Error('Hidden snapshot must defer chart history requests');
+host.style.display='block';document.body.dataset.scene='activity';apply();await wait();
+strip=activity.querySelector('#usage-section .strip-scroll');
+if(Math.abs(strip.scrollLeft-before)>1)throw Error('Hidden Activity snapshot loses newest-day scroll: '+before+' -> '+strip.scrollLeft);
+out.push('PASS hidden snapshot preserves newest-day scroll on return');if(!activity.textContent.includes('Updated while hidden'))throw Error('Visible refresh must render newest snapshot');out.push('PASS return renders new snapshot data');strip.scrollLeft=300;apply();await wait();if(activity.querySelector('#usage-section .strip-scroll').scrollLeft!==300)throw Error('Visible updates must preserve a historical position');out.push('PASS visible snapshot preserves chosen historical position');return out;
+};
