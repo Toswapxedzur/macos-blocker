@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path
 import signal
+import shlex
 import subprocess
 import sys
 import time
@@ -50,7 +51,7 @@ def check_launch(common):
     sha = git(ROOT, "rev-parse", "HEAD")
     state = read_state(common)
     if state.get("verified", {}).get("commit") != sha:
-        raise RuntimeError("This delivery commit has not passed mini1 verification. Run vault-delivery verify.")
+        raise RuntimeError("This delivery commit has not passed remote verification. Run vault-delivery verify.")
     if git(ROOT, "rev-parse", "@{upstream}") != sha:
         raise RuntimeError("Push the verified delivery branch before launching.")
     previous = state.get("delivered", {}).get("commit")
@@ -71,7 +72,7 @@ def integrate(common, source):
     print(f"Integrated {sha}; verify the combined delivery commit on mini1 before launch.")
 
 
-def verify(common):
+def verify(common, host="mini1", runtime_prefix=None):
     clean(ROOT)
     sha = git(ROOT, "rev-parse", "HEAD")
     # Only committed files cross hosts. Keep mini1's build cache, but remove
@@ -79,7 +80,7 @@ def verify(common):
     archive = subprocess.Popen(["git", "-C", str(ROOT), "archive", sha], stdout=subprocess.PIPE)
     transfer = 'set -eu; mkdir -p "$HOME/vault-delivery"; vault_stage=$(mktemp -d "$HOME/vault-delivery/snapshot.XXXXXX"); trap \'rm -rf "$vault_stage"\' EXIT; tar -xf - -C "$vault_stage"; mkdir -p "$HOME/vault-delivery/macosBlocker"; rsync -a --delete --exclude=.build "$vault_stage/" "$HOME/vault-delivery/macosBlocker/"'
     try:
-        subprocess.run(["ssh", "mini", transfer], stdin=archive.stdout, check=True)
+        subprocess.run(["ssh", "mini" if host == "mini1" else host, transfer], stdin=archive.stdout, check=True)
     finally:
         archive.stdout.close()
         if archive.wait():
@@ -91,15 +92,25 @@ def verify(common):
         "$HOME/.local/node/bin/node classifier/Tests/WebUI/autosave.mjs",
         'UI_TEST_SCRIPT=classifier/Tests/WebUI/dropdown-layout.js UI_TEST_EXPRESSION="runDropdownLayoutTests()" $HOME/.local/node/bin/node classifier/Tests/WebUI/autosave.mjs',
     ]
+    environment = ""
+    if runtime_prefix:
+        environment = "export " + " ".join(shlex.quote(key + "=" + value) for key, value in {
+            "VAULT_LLAMA_PREFIX": runtime_prefix,
+            "HOMEBREW_PREFIX": runtime_prefix,
+            "PKG_CONFIG_PATH": runtime_prefix + "/lib/pkgconfig",
+        }.items()) + " && "
+        checks[2] += " -Xlinker -rpath -Xlinker " + shlex.quote(runtime_prefix + "/lib")
     for command in checks:
-        subprocess.run(["ssh", "mini", 'cd "$HOME/vault-delivery/macosBlocker" && ' + command], check=True)
+        subprocess.run(["ssh", "mini" if host == "mini1" else host, 'cd "$HOME/vault-delivery/macosBlocker" && ' + environment + command], check=True)
     clean(ROOT)
     if git(ROOT, "rev-parse", "HEAD") != sha:
         raise RuntimeError("Delivery HEAD changed during verification; verify again.")
     state = read_state(common)
-    state["verified"] = {"commit": sha, "host": "mini1", "at": time.time(), "checks": checks}
+    state["verified"] = {"commit": sha, "host": host, "at": time.time(), "checks": checks}
+    if runtime_prefix:
+        state["verified"]["runtimePrefix"] = runtime_prefix
     write_state(common, state)
-    print(f"Verified {sha} on mini1.")
+    print(f"Verified {sha} on {host}.")
 
 
 def app_processes():
@@ -155,7 +166,9 @@ def main():
     commands = parser.add_subparsers(dest="command", required=True)
     merge = commands.add_parser("integrate")
     merge.add_argument("--source", required=True)
-    commands.add_parser("verify")
+    verification = commands.add_parser("verify")
+    verification.add_argument("--host", choices=["mini1", "mini2"], default="mini1")
+    verification.add_argument("--runtime-prefix", help="Absolute pinned llama runtime prefix on the selected test host")
     start = commands.add_parser("launch")
     start.add_argument("--check", action="store_true")
     commands.add_parser("status")
@@ -169,7 +182,7 @@ def main():
         if args.command == "integrate":
             integrate(common, args.source)
         elif args.command == "verify":
-            verify(common)
+            verify(common, args.host, args.runtime_prefix)
         elif args.command == "launch":
             launch(common, args.check)
         else:
