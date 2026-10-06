@@ -93,6 +93,8 @@ class DeliveryTests(unittest.TestCase):
         def run(command, **kwargs):
             if command[0] == "ssh":
                 remote.append(command)
+                if kwargs.get("stdin") is not None:
+                    kwargs["stdin"].read()
                 return subprocess.CompletedProcess(command, 0)
             return original_run(command, **kwargs)
         with patch.object(delivery.subprocess, "run", side_effect=run):
