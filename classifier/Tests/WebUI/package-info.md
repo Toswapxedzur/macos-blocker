@@ -83,3 +83,5 @@ mini1 with `UI_TEST_SCRIPT=classifier/Tests/WebUI/tag-bounds.js` and
 one Settings dialog across all three pages, native drafts/autosave, nested
 keyboard controls and model-menu dismissal. It also runs against generated
 Windows assets on mini1; native Windows verification remains in the VM.
+
+`tag-create-drafts.js` reproduces model-progress snapshots replacing a pending tag form, verifies both fields and caret survive, keeps creation explicit, and checks create/cancel draft isolation. Run with `UI_TEST_SCRIPT=classifier/Tests/WebUI/tag-create-drafts.js UI_TEST_EXPRESSION="runTagDraftTests()"` through `autosave.mjs` at wide and narrow widths. Verified on owner-selected mini2 during the public-release audit.

@@ -928,7 +928,7 @@
           isEdit ? "tree.nodeName" : "tree.tagName",
           "",
           "name",
-          isEdit ? popoverNode.name : "",
+          isEdit ? popoverNode.name : panelState.draft?.name || "",
           "text",
           isEdit ? `data-live-tag-name data-tree-id="${esc(tree.id)}" data-node-id="${esc(nodeID)}"` : ""
         );
@@ -936,14 +936,14 @@
           "tree.tagDescription",
           "tree.tagDescriptionCopy",
           "description",
-          isEdit ? popoverNode.description || "" : "",
+          isEdit ? popoverNode.description || "" : panelState.draft?.description || "",
           "maxlength=\"1024\""
         );
         const actions = isEdit
           ? `<button class="secondary" data-action="beginConnection" data-tree-id="${esc(tree.id)}" data-node-id="${esc(nodeID)}">${tx("tree.connection")}</button><button class="secondary" data-action="disconnectTag" data-tree-id="${esc(tree.id)}" data-node-id="${esc(nodeID)}"${disabled(!popoverNode.parentID)}>${tx("tree.disconnection")}</button><button class="danger" data-action="deleteTag" data-tree-id="${esc(tree.id)}" data-node-id="${esc(nodeID)}">${deleteLabel(`tag:${nodeID}`, tx("tree.deleteNode"))}</button>`
           : `<button class="primary" data-action="addTag" data-form="tag-popover-form" data-tree-id="${esc(tree.id)}">${tx("tree.createNode")}</button>`;
         // Placed beside its anchor, inside the visible part (placeTreePopovers).
-        return `<section class="tree-popover" data-anchor-x="${panelState.x}" data-anchor-y="${panelState.y}" data-anchor-w="${panelState.w || 0}" data-tree-popover data-form-id="tag-popover-form"${isEdit ? ` data-autosave-action="updateTag" data-tree-id="${esc(tree.id)}" data-node-id="${esc(nodeID)}"` : ""}><div class="tree-popover-head"><span class="eyebrow">${tx(isEdit ? "tree.editNode" : "tree.createNode")}</span><button class="tree-popover-close" data-action="cancelTagPanel" data-hint="${tx("tree.cancel")}" aria-label="${tx("tree.cancel")}">×</button></div><div class="tree-form">${nameField}${descriptionField}<div class="action-row">${actions}</div></div></section>`;
+        return `<section class="tree-popover" data-anchor-x="${panelState.x}" data-anchor-y="${panelState.y}" data-anchor-w="${panelState.w || 0}" data-tree-popover data-form-id="tag-popover-form" data-tree-id="${esc(tree.id)}"${isEdit ? ` data-autosave-action="updateTag" data-node-id="${esc(nodeID)}"` : ""}><div class="tree-popover-head"><span class="eyebrow">${tx(isEdit ? "tree.editNode" : "tree.createNode")}</span><button class="tree-popover-close" data-action="cancelTagPanel" data-hint="${tx("tree.cancel")}" aria-label="${tx("tree.cancel")}">×</button></div><div class="tree-form">${nameField}${descriptionField}<div class="action-row">${actions}</div></div></section>`;
       })() : "";
       const nodeMarkup = node => {
         const position = positions.get(node.id);
@@ -1554,6 +1554,12 @@
       return;
     }
     if (composingEdit) return;
+    // A new tag is an explicit action, so its fields are not autosave edits.
+    // Keep that pending draft when downloads or other snapshots redraw the UI.
+    const tagForm = uiQuery("[data-tree-popover]");
+    if (activeTagPanel?.kind === "create" && tagForm?.dataset.treeId === activeTagPanel.treeID) {
+      activeTagPanel.draft = collect("tag-popover-form");
+    }
     pendingLists = []; deferredChoices = new Map();
     const markup = shell(workspace()) + createTypeModal() + dictionaryOnboarding();
     const settingsMarkup = nativeSettingsContent();
@@ -1583,6 +1589,8 @@
     const modelSearch = activeControl()?.matches("[data-model-search]") ? activeControl() : null;
     const searchSelection = modelSearch ? { start: modelSearch.selectionStart, end: modelSearch.selectionEnd } : null;
     const active = activeControl();
+    const pendingTagFocus = activeTagPanel?.kind === "create" && active?.closest?.("[data-tree-popover]") && active.matches("[data-field]")
+      ? { field: active.dataset.field, start: active.selectionStart, end: active.selectionEnd, direction: active.selectionDirection } : null;
     const toolbarAction = active?.closest?.('.vui-topbar-links') ? active.dataset.action : null;
     const dialogControl = active?.closest?.('[role="dialog"]') ? {
       action: active.dataset.action, field: active.dataset.field,
@@ -1596,6 +1604,11 @@
     settingsRoot.__markup = settingsMarkup;
     mountChoices(); mountLists();
     restoreLiveEdits(focused);
+    if (pendingTagFocus) {
+      const control = uiQuery(`[data-tree-popover] [data-field="${CSS.escape(pendingTagFocus.field)}"]`);
+      control?.focus({ preventScroll: true });
+      if (control && pendingTagFocus.start != null) control.setSelectionRange(pendingTagFocus.start, pendingTagFocus.end, pendingTagFocus.direction);
+    }
     replacingControls = false;
     lastRenderedMarkup = markup;
     bindTreeMapWheel();
