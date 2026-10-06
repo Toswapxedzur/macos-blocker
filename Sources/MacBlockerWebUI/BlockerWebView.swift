@@ -233,7 +233,7 @@ public struct BlockerWebView: NSViewRepresentable {
 
     // MARK: Coordinator
 
-    public final class Coordinator: NSObject, WKScriptMessageHandler, WKUIDelegate, WKNavigationDelegate {
+    public final class Coordinator: NSObject, WKScriptMessageHandler, WKUIDelegate, WKNavigationDelegate, WKDownloadDelegate {
         weak var webView: WKWebView?
         var schemeHandler: WebAssetSchemeHandler?
         private let store: BlockerWebStore
@@ -246,6 +246,8 @@ public struct BlockerWebView: NSViewRepresentable {
         private let onLinkRequest: ((String, [String: Any]) -> String?)?
         private let tagNames: ((String) -> [String])?
         private let scenes: [WebScene]
+        private let downloadDirectory: URL
+        private var downloadDestinations: [ObjectIdentifier: URL] = [:]
 
         private var usagePushTimer: Timer?
         // Observes native writes to web-store.json (an MCP tool call, a direct
@@ -263,10 +265,12 @@ public struct BlockerWebView: NSViewRepresentable {
             clustersJSON: (() -> String?)?,
             onLinkRequest: ((String, [String: Any]) -> String?)?,
             tagNames: ((String) -> [String])?,
-            scenes: [WebScene]
+            scenes: [WebScene],
+            downloadDirectory: URL = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask)[0]
         ) {
             self.store = store
             self.scenes = scenes
+            self.downloadDirectory = downloadDirectory
             self.ruleLogJSON = ruleLogJSON
             self.onClearRuleLog = onClearRuleLog
             self.onStorePersisted = onStorePersisted
@@ -469,6 +473,55 @@ public struct BlockerWebView: NSViewRepresentable {
         }
 
         // MARK: WKNavigationDelegate
+
+        public func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction,
+                            decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
+            decisionHandler(navigationAction.shouldPerformDownload ? .download : .allow)
+        }
+
+        public func webView(_ webView: WKWebView, navigationAction: WKNavigationAction, didBecome download: WKDownload) {
+            download.delegate = self
+        }
+
+        public func download(_ download: WKDownload, decideDestinationUsing response: URLResponse,
+                             suggestedFilename: String, completionHandler: @escaping (URL?) -> Void) {
+            do {
+                let destination = try Self.availableDownloadURL(in: downloadDirectory, suggestedFilename: suggestedFilename,
+                                                               reserved: Set(downloadDestinations.values))
+                downloadDestinations[ObjectIdentifier(download)] = destination
+                completionHandler(destination)
+            } catch {
+                completionHandler(nil)
+                NSAlert(error: error).runModal()
+            }
+        }
+
+        public func downloadDidFinish(_ download: WKDownload) {
+            downloadDestinations.removeValue(forKey: ObjectIdentifier(download))
+        }
+
+        public func download(_ download: WKDownload, didFailWithError error: Error, resumeData: Data?) {
+            // A refused destination already reported its error above.
+            guard downloadDestinations.removeValue(forKey: ObjectIdentifier(download)) != nil else { return }
+            NSAlert(error: error).runModal()
+        }
+
+        /// WebKit requires a new destination. Preserve existing files and simultaneous downloads.
+        static func availableDownloadURL(in directory: URL, suggestedFilename: String, reserved: Set<URL> = []) throws -> URL {
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            let basename = (suggestedFilename as NSString).lastPathComponent
+            let filename = ["", ".", "..", "/"].contains(basename) ? "download.txt" : basename
+            let file = directory.appendingPathComponent(filename)
+            var destination = file
+            var suffix = 2
+            while FileManager.default.fileExists(atPath: destination.path) || reserved.contains(destination) {
+                let stem = file.deletingPathExtension().lastPathComponent
+                let ext = file.pathExtension.isEmpty ? "" : "." + file.pathExtension
+                destination = directory.appendingPathComponent("\(stem) (\(suffix))\(ext)")
+                suffix += 1
+            }
+            return destination
+        }
 
         /// The page (all scenes) died with its web content process: load it
         /// again and let each scene catch up.
