@@ -2,7 +2,15 @@
 
 The owner approved this capability split on 2026-10-04. Existing tags and packaged downloads remain unchanged. All new records are **alpha, source-only**. A source record does not certify store submission, signing or native release acceptance.
 
-Current source version: **2.2.1**. See the group-level `CHANGELOG.md` for the cross-product chapters.
+Current source version: **2.2.3**. See the group-level `CHANGELOG.md` for the cross-product chapters.
+
+## 2.2.3 — 2026-10-07 — Activity scroll preservation
+
+Background snapshots retain the hidden Activity page, preserving its newest-day and manually chosen timeline positions when returning from another page.
+
+## 2.2.2 — 2026-10-06 — Classifier drafts and Activity range boundaries
+
+Pending Classifier tag drafts survive model downloads; Activity includes sessions that overlap the selected range, including across midnight.
 
 ## 2.2.1 — 2026-10-06 — Installed resource lookup
 

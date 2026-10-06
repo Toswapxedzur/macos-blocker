@@ -1813,7 +1813,15 @@
 
   // ── The page ──
 
+  function sceneVisible() {
+    return !document.body.dataset.scene || document.body.dataset.scene === "activity";
+  }
+
   function render() {
+    // Hidden scenes report zero scroll offsets. Keep their DOM until the
+    // native scene-shown refresh, so a background snapshot cannot erase the
+    // user's place (or consume the initial newest-day positioning).
+    if (!sceneVisible()) return false;
     var page = scope.getElementById("page");
     var searchFocus = window.VaultUI.captureSearch(scope);
     var groupFocus = captureGroupFocus(scope.getElementById("groups"));
@@ -1843,6 +1851,7 @@
     window.VaultUI.restoreSearch(scope, searchFocus);
     restoreGroupScrolls(scope.getElementById("groups"), groupScrolls);
     requestAnimationFrame(() => scope.querySelectorAll("svg").forEach(chart => chart.__updateDayWindow?.()));
+    return true;
   }
 
   // The range's days, as Mac Vault answers them (at most a year).
@@ -1884,12 +1893,14 @@
     if (request.section === "content") {
       if (request.pick !== contentPick()) return;
       contentYear = data;
+      if (!sceneVisible()) return;
       var box = scope.getElementById("content-year");
       if (box) fillYear(box, contentYear, contentFocus === "all" ? at("allContent", "All content") : (tagByID()[contentFocus.slice(4)] || { name: "Tag" }).name, "content");
       return;
     }
     if (request.pick !== usageFocus || request.barDays !== historyDays()) return;
     usageHistory = data;
+    if (!sceneVisible()) return;
     var year = scope.getElementById("usage-year");
     if (year) fillYear(year, usageHistory.map, focusName(usageFocus), "usage");
     var totals = scope.getElementById("usage-totals");
@@ -2004,9 +2015,10 @@
       icons[key] = fact.creatorIcon;
       if (fact.creator) icons["author|" + fact.creator] = fact.creatorIcon;
     });
-    render();
-    requestUsageHistory();
-    requestContentHistory();
+    if (render()) {
+      requestUsageHistory();
+      requestContentHistory();
+    }
   };
 
   window.VaultUI.observe(scope);
