@@ -7,7 +7,7 @@ async function runInfoPopoverTests() {
     for (const label of scope.querySelectorAll('label.field,.research-model-field,.header-language,.toggle-row:not(.platform-choice)')) {
       if (!label.getBoundingClientRect().width || !label.querySelector('input,select')) continue;
       const button = label.querySelector('.vui-info-button');
-      check(button && button.getBoundingClientRect().width === 10, 'Field Info is visible: ' + (label.querySelector('[data-field]')?.dataset.field || 'language'));
+      check(button && button.getBoundingClientRect().width === 10, 'Field Info is visible: ' + (label.querySelector('[data-field]')?.dataset.field || label.outerHTML));
       check(getComputedStyle(button).color === 'rgb(148, 163, 184)', 'Field Info keeps the shared blue-gray color');
     }
   };
@@ -43,11 +43,16 @@ async function runInfoPopoverTests() {
   consent.closest('label').querySelector('.vui-info-button').click(); await delay();
   check(consent.checked === wasChecked, 'Consent Info does not enable research');
   document.dispatchEvent(new KeyboardEvent('keydown', {key:'Escape', bubbles:true})); await delay();
-  check(q('.utility-settings-modal'), 'Escape keeps Settings open');
-  const language = q('[data-language-selection]'); language.value = 'zh';
-  language.dispatchEvent(new Event('change', {bubbles:true})); await delay();
-  check(!q('.vui-info-button') && !q('.research-data-flow').classList.contains('vui-info-source'), 'Non-English layout retains inline explanations');
-  const back = q('[data-language-selection]'); back.value = 'en'; back.dispatchEvent(new Event('change', {bubbles:true})); await delay();
+  check(VaultSettings.isOpen(), 'Escape keeps Settings open');
+  // Shared language controls live in the integrated shell, not this fixture.
+  // Exercise the same language notification with real production catalogs.
+  window.VaultLoadMessages = async language => (await fetch('/Sources/MacBlockerWebUI/WebAssets/translation/' + language + '.json')).json();
+  document.documentElement.lang = 'zh';
+  window.dispatchEvent(new Event('vault-language-changed')); await delay();
+  const chinese = await VaultLoadMessages('zh');
+  check(q('[data-info-key="bridge.typeName"]')?.dataset.infoCopy === chinese['classifierInfo.bridge.typeName'], 'Non-English Info uses the production translated explanation');
+  document.documentElement.lang = 'en';
+  window.dispatchEvent(new Event('vault-language-changed')); await delay();
   check(q('.vui-info-button'), 'English Info returns after a language change');
   q('[data-action="closeUtilityPanel"]').click(); await delay();
   testState.workspace = 'knowledge';

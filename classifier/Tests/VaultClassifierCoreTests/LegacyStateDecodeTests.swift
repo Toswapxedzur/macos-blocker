@@ -2,7 +2,7 @@ import Foundation
 import XCTest
 @testable import VaultClassifierCore
 
-/// A state file written by ANY earlier build must still open. Removed features
+/// Compatible alpha state forms still open; future/unsupported schemas are refused. Removed features
 /// leave keys behind in stored JSON; every decoder here is keyed, so an unknown
 /// key is simply never read — there is no need for per-type "retired key" decode
 /// blocks, and this fixture proves it. It carries every key this project has ever
@@ -10,6 +10,31 @@ import XCTest
 /// file on either of the owner's machines still holds any of them except
 /// `policies` / `policyID`, retired the same day.)
 final class LegacyStateDecodeTests: XCTestCase {
+    func testCompatibleUnversionedAlphaPreservesCurrentSettings() throws {
+        var json = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(LocalClassifierState())) as? [String: Any])
+        json.removeValue(forKey: "schemaVersion")
+        let decoded = try JSONDecoder().decode(LocalClassifierState.self, from: JSONSerialization.data(withJSONObject: json))
+        XCTAssertEqual(decoded.schemaVersion, LocalClassifierState.currentSchemaVersion)
+        XCTAssertEqual(decoded.settings, LocalClassifierState().settings)
+        XCTAssertEqual(decoded.workspaceCatalog, LocalClassifierState().workspaceCatalog)
+    }
+
+    func testUnsupportedSchemaDoesNotRewriteStoredBytes() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let url = directory.appendingPathComponent("state.json")
+        for version in [-1, LocalClassifierState.currentSchemaVersion + 1, 99] {
+            let bytes = Data("{\"schemaVersion\":\(version),\"futureField\":{\"keep\":true}}".utf8)
+            try bytes.write(to: url)
+            XCTAssertThrowsError(try LocalStateFile(url: url).load()) { error in
+                XCTAssertEqual(error as? LocalStateSchemaError, .unsupportedVersion(version))
+            }
+            LocalStateFile.flushAllPendingWrites()
+            XCTAssertEqual(try Data(contentsOf: url), bytes)
+        }
+    }
+
     func testStateCarryingEveryRetiredKeyStillLoadsAndNeverWritesThemBack() throws {
         let starter = WorkspaceCatalog.starter()
         var catalog = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(starter)) as? [String: Any])

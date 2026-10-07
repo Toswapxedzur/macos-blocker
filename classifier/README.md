@@ -1,5 +1,11 @@
 # Vault Classifier
 
+Local state currently uses alpha document schema 2. Compatible unversioned and
+schema-1 forms reconcile to that structure. A newer or invalid schema is refused
+before decoding or saving, leaving its file untouched and showing an issue.
+These document numbers are separate from the planned Beta 1 major-version
+migration policy; the complete beta migration system is still pending.
+
 Vault Classifier is a local-first portable Swift package that tags collected public
 content (video titles, YouTube-first) on-device with a local language model. It
 is a pure tagging service: it returns tags with a 1–5 confidence and makes no

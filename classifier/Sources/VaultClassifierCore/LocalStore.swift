@@ -10,6 +10,10 @@ import Foundation
 /// classifier, audit, content-block policy — now the extension's) are simply never
 /// read, and so are never written back; see LegacyStateDecodeTests.
 public struct LocalClassifierState: Codable, Equatable, Sendable {
+    public static let currentSchemaVersion = 2
+    /// These are alpha document schemas, not beta product major numbers.
+    /// Compatible unversioned/schema-1 forms reconcile once to schema 2.
+    public static let minimumSupportedSchemaVersion = 0
     public var schemaVersion: Int
     public var settings: ClassifierSettings
     public var workspaceCatalog: WorkspaceCatalog
@@ -19,7 +23,7 @@ public struct LocalClassifierState: Codable, Equatable, Sendable {
     public var signedRollbackIdentities: [ActiveModelIdentity]
 
     public init(
-        schemaVersion: Int = 2,
+        schemaVersion: Int = Self.currentSchemaVersion,
         settings: ClassifierSettings = .init(),
         workspaceCatalog: WorkspaceCatalog = .starter(),
         backupConfiguration: LocalBackupConfiguration? = nil,
@@ -43,7 +47,11 @@ public struct LocalClassifierState: Codable, Equatable, Sendable {
 
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        schemaVersion = max(2, try container.decodeIfPresent(Int.self, forKey: .schemaVersion) ?? 2)
+        let storedVersion = try container.decodeIfPresent(Int.self, forKey: .schemaVersion) ?? 0
+        guard (Self.minimumSupportedSchemaVersion...Self.currentSchemaVersion).contains(storedVersion) else {
+            throw LocalStateSchemaError.unsupportedVersion(storedVersion)
+        }
+        schemaVersion = Self.currentSchemaVersion
         settings = try container.decodeIfPresent(ClassifierSettings.self, forKey: .settings) ?? .init()
         workspaceCatalog = try container.decodeIfPresent(WorkspaceCatalog.self, forKey: .workspaceCatalog) ?? .starter()
         // One bounded reconciliation of the retired global defaults. New groups
@@ -103,6 +111,17 @@ public struct LocalClassifierState: Codable, Equatable, Sendable {
         return values.filter {
             $0.kind == .signedPackage && $0.isStructurallyValid && seen.insert($0).inserted
         }.prefix(max(1, limit)).map { $0 }
+    }
+}
+
+public enum LocalStateSchemaError: Error, Equatable, LocalizedError {
+    case unsupportedVersion(Int)
+
+    public var errorDescription: String? {
+        switch self {
+        case .unsupportedVersion(let version):
+            return "Classifier storage schema \(version) is unsupported by this build. The saved data has been preserved."
+        }
     }
 }
 

@@ -16,7 +16,7 @@ and `UI_TEST_EXPRESSION='runTaggingControlTests()'` on mini1.
 
 `autosave.html` renders the production Classifier assets with synthetic local
 state and an in-memory native-action receiver. `autosave.mjs` serves that
-fixture and drives Chrome for Testing through CDP on mini1. It checks real
+fixture and drives an owned headless Chrome for Testing through Playwright on mini1. It checks real
 input/change/focus/composition handlers, delayed snapshots, dialog Escape/Tab
 focus restoration, creation drafts and complete group dial cards;
 Knowledge access, permanent deletion confirmation, group More state, independent group edits and dial summaries;
@@ -28,7 +28,7 @@ The same runner checks it after Classifier and saves a separate Activity capture
 
 Run on mini1 from the Mac Vault repository:
 `~/.local/node/bin/node classifier/Tests/WebUI/autosave.mjs`.
-Chrome for Testing must already expose loopback CDP at port 9222.
+The runner launches its own headless Chrome for Testing through Playwright and closes its context/browser in a guaranteed cleanup path. It does not attach to owner tabs. Defaults use mini1’s `~/agentic-tooling-test-env/` Playwright package and `~/chrome-testing/` executable; `UI_PLAYWRIGHT_MODULE` and `UI_BROWSER_EXECUTABLE` override their absolute paths.
 An optional first argument saves a screenshot to that path.
 
 `bounded-lists.js` adds 763 creators, terms and API keys to that fixture.
