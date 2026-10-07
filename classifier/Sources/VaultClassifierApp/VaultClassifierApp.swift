@@ -236,19 +236,38 @@ final class VaultClassifierViewModel: ObservableObject {
         let previous = localState
         localState = coordinator?.snapshot()
         reconcileProviderModelCatalogs()
+        if Self.browserStateChanged(from: previous, to: localState) {
+            sharedHubClient?.broadcast(operation: SharedBrowserBridgeOperation.classifierStateUpdatedBroadcast, body: [:] as [String: String])
+        }
+    }
+
+    // Refresh browser projections and covers without invalidating stored decisions.
+    static func browserStateChanged(from previous: LocalClassifierState?, to current: LocalClassifierState?) -> Bool {
         let activation: (LocalClassifierState?) -> [String] = { state in
             (state?.workspaceCatalog.classifierTypes ?? []).map {
-                "\($0.id):\($0.isPaused):\($0.applicablePlatformIDs.joined(separator: ","))"
+                "\($0.id):\($0.treeID):\($0.treeRevision):\($0.isPaused):\($0.applicablePlatformIDs.joined(separator: ","))"
             }.sorted()
         }
         let recording: (LocalClassifierState?) -> [String] = { state in
             (state?.workspaceCatalog.bindings ?? []).filter(\.collectionEnabled).map(\.id).sorted()
         }
-        if previous?.settings.classificationEnabled != localState?.settings.classificationEnabled
-            || activation(previous) != activation(localState)
-            || recording(previous) != recording(localState) {
-            sharedHubClient?.broadcast(operation: SharedBrowserBridgeOperation.classifierStateUpdatedBroadcast, body: [:] as [String: String])
+        let taxonomy: (LocalClassifierState?) -> [TagTreeAsset] = { state in
+            (state?.workspaceCatalog.trees ?? []).map { tree in
+                var tree = tree
+                tree.updatedAtMilliseconds = 0
+                tree.nodes = tree.nodes.map { node in
+                    var node = node
+                    node.positionX = nil
+                    node.positionY = nil
+                    return node
+                }
+                return tree
+            }
         }
+        return previous?.settings.classificationEnabled != current?.settings.classificationEnabled
+            || activation(previous) != activation(current)
+            || recording(previous) != recording(current)
+            || taxonomy(previous) != taxonomy(current)
     }
 
     struct ProviderResponseParseFailure: LocalizedError {

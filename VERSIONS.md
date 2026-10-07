@@ -6,7 +6,7 @@ Current source version: **2.2.7**. See the group-level `CHANGELOG.md` for the cr
 
 ## 2.2.7 — 2026-10-07 — Browser and website Activity accounting
 
-Show full browser durations alongside websites in Usage, keeping overlapping elapsed time unique in group totals. Exclude browsers before pie groups are merged. Retain narrow full-duration browser bands in the daily ordered and totals graphs. Regression coverage also verifies taxonomy revision changes project stored decisions through the current tree without reclassification.
+Show full browser durations alongside websites in Usage, keeping overlapping elapsed time unique in group totals. Exclude browsers before pie groups are merged. Retain narrow full-duration browser bands in the daily ordered and totals graphs. Taxonomy edits notify open browser tabs to refresh tags and covers from stored decisions without reclassification; moving a tag on the editor canvas does not trigger this refresh.
 
 ## 2.2.6 — 2026-10-07 — Custom-origin log exports and JSON file picker
 
