@@ -25,7 +25,7 @@ public final class BlockerWebStore: @unchecked Sendable {
     /// if the file does not already exist. Call once at launch so the
     /// enforcement bridge always has a store to read from.
     public func seedIfNeeded() {
-        guard shared.readData(SharedAppGroupStore.webStoreFileName) == nil else { return }
+        guard !FileManager.default.fileExists(atPath: fileURL.path) else { return }
         save(rawStore: ["blockedGroups": [] as [[String: Any]]])
     }
 
@@ -389,7 +389,9 @@ public final class BlockerWebStore: @unchecked Sendable {
     /// (possibly incomplete) copy into this Mac's own groups.
     private func loadStoreObject() -> [String: Any]? {
         guard let data = shared.readData(SharedAppGroupStore.webStoreFileName) else { return nil }
-        return (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+        guard let root = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+              (try? SharedAppGroupStore.webSchema.validateFlat(root)) != nil else { return nil }
+        return root
     }
 
     private func write(_ object: [String: Any]) {

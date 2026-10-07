@@ -49,3 +49,8 @@
 - Public audit follow-up 2.2.6: rule-log text uses the native bridge from the real cbasset page, bounded to 8 MiB and plain-text log filenames. Knowledge Choose File gets the missing WKUIDelegate panel. The app-origin regression uses the actual chrome shim and verifies exact text, native replies, collision preservation and invalid/oversized rejection.
 
 - **Activity browser accounting (owner 2026-10-07):** Usage retains full browser and website durations with thin browser bands in ordered/daily graphs; groups count overlapping time once. Pie inputs exclude every browser before merge groups are formed. `Tests/WebUI/activity-browser-accounting.js` verifies Safari/Chrome, full rows, group totals, browser-free merged pies and daily bands on mini2.
+
+- Native storage formats and per-product writer versions are defined in
+  `docs/STORAGE-SCHEMAS.md`. The shared policy/codec is in Classifier Core;
+  web-store writers retain opaque data and refuse unsupported destinations.
+  `sync-webui.sh` generates desktop identity and unbundled version resources.

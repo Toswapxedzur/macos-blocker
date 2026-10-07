@@ -53,7 +53,9 @@ final class ProviderModelCatalogStoreTests: XCTestCase {
                 ]
             ]
         )
-        let migrated = try JSONSerialization.jsonObject(with: Data(contentsOf: fileURL)) as? [String: Any]
+        let bytes = try Data(contentsOf: fileURL)
+        let payload = try StorageSchemaPolicy(format: "provider.model-catalog").payload(from: bytes)
+        let migrated = try JSONSerialization.jsonObject(with: payload) as? [String: Any]
         XCTAssertEqual(migrated?["version"] as? Int, 2)
     }
 }

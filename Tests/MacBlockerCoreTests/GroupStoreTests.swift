@@ -338,4 +338,31 @@ final class GroupStoreTests: XCTestCase {
         _ = try store.mutate { try $0.setGroup(id: "g1", patch: ["enabled": false]) }
         XCTAssertEqual(posts, 1)
     }
+    func testUnsupportedSchemaRefusesNativeMutationAndLateWrite() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let shared = SharedAppGroupStore(baseDirectory: directory), store = GroupStore(shared: SharedAppGroupStore(baseDirectory: directory))
+        let url = shared.url(for: SharedAppGroupStore.webStoreFileName)
+        let bytes = Data(#"{"schemaVersion":99,"blockedGroups":[{"id":"one"}],"future":"keep"}"#.utf8)
+        try bytes.write(to: url)
+        XCTAssertThrowsError(try store.mutate { _ in XCTFail("unsupported document must not reach the mutator") })
+        store.save(WebStoreDocument(raw: ["blockedGroups": []]))
+        XCTAssertEqual(try Data(contentsOf: url), bytes)
+        XCTAssertEqual(store.loadGroups().count, 0)
+    }
+
+    func testAlphaWebStoreWritesMetadataAndPreservesRawState() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let shared = SharedAppGroupStore(baseDirectory: directory)
+        let store = GroupStore(shared: shared)
+        store.save(WebStoreDocument(raw: ["blockedGroups": [], "opaque": ["keep": true], "usageTimersMs": ["one": 123]]))
+        let raw = try XCTUnwrap(JSONSerialization.jsonObject(with: XCTUnwrap(shared.readData(SharedAppGroupStore.webStoreFileName))) as? [String: Any])
+        XCTAssertEqual(raw["schemaVersion"] as? Int, 3)
+        XCTAssertEqual((raw["storageMetadata"] as? [String: Any])?["product"] as? String, "mac")
+        XCTAssertEqual((raw["opaque"] as? [String: Bool])?["keep"], true)
+        XCTAssertEqual((raw["usageTimersMs"] as? [String: Int])?["one"], 123)
+    }
+
 }

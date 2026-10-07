@@ -14,6 +14,7 @@ final class LegacyStateDecodeTests: XCTestCase {
         let original = LocalClassifierState()
         var json = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(original)) as? [String: Any])
         json.removeValue(forKey: "schemaVersion")
+        json.removeValue(forKey: "storageMetadata")
         let decoded = try JSONDecoder().decode(LocalClassifierState.self, from: JSONSerialization.data(withJSONObject: json))
         XCTAssertEqual(decoded.schemaVersion, LocalClassifierState.currentSchemaVersion)
         XCTAssertEqual(decoded.settings, original.settings)
@@ -75,7 +76,7 @@ final class LegacyStateDecodeTests: XCTestCase {
         ]
 
         let decoded = try JSONDecoder().decode(LocalClassifierState.self, from: JSONSerialization.data(withJSONObject: state))
-        XCTAssertEqual(decoded.schemaVersion, 2, "an older schema version is lifted, not rejected")
+        XCTAssertEqual(decoded.schemaVersion, LocalClassifierState.currentSchemaVersion, "an older schema version is lifted, not rejected")
         XCTAssertEqual(decoded.workspaceCatalog.classifierTypes[0].localModel.strictness, .broadest, "max 3 / min 1 → the Broadest position")
         XCTAssertEqual(decoded.workspaceCatalog.classifierTypes[0].localModel.maximumTags, 3)
         XCTAssertEqual(decoded.workspaceCatalog.classifierTypes[0].localModel.minimumTags, 1)

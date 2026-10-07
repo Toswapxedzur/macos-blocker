@@ -427,7 +427,7 @@
       }
     },
     getManifest: function () {
-      return window.__CB_DESKTOP_MANIFEST || { version: "1.2.0", name: "macosBlocker" };
+      return window.__CB_DESKTOP_MANIFEST || { version: "2.2.7", name: "Mac Vault" };
     },
     sendMessage: function (message, callback) {
       var result = handleSendMessage(message);

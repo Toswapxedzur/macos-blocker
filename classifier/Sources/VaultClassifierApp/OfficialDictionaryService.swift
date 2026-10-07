@@ -111,12 +111,19 @@ actor OfficialDictionaryService: DictionaryEvidenceProviding {
         var counts: [String: Int64]?
         var attempts: Int?
     }
+    private var ledgerWritable = true
     private var ledger: SubmissionLedger
     private let ledgerFile: URL
     init(disk: DictionaryDiskStore, http: any DictionaryHTTP = DictionaryHTTPClient()) {
         self.disk = disk; self.http = http
         ledgerFile = disk.root.appendingPathComponent("contribution-ledger.json")
-        ledger = (try? JSONDecoder().decode(SubmissionLedger.self, from: Data(contentsOf: ledgerFile))) ?? .init()
+        ledger = .init()
+        if FileManager.default.fileExists(atPath: ledgerFile.path) {
+            do {
+                let payload = try StorageSchemaPolicy(format: "dictionary.contribution-ledger").payload(from: Data(contentsOf: ledgerFile))
+                ledger = try JSONDecoder().decode(SubmissionLedger.self, from: payload)
+            } catch { ledgerWritable = false }
+        }
     }
     nonisolated func localEvidence(title: String, creatorID: String) -> DictionaryEvidence { disk.localEvidence(title: title, creatorID: creatorID) }
     func checkUpdates() async throws -> [String: Any] {
@@ -210,10 +217,14 @@ actor OfficialDictionaryService: DictionaryEvidenceProviding {
         }
     }
     private func saveLedger() throws {
-        try JSONEncoder().encode(ledger).write(to: ledgerFile, options: .atomic)
+        let schema = StorageSchemaPolicy(format: "dictionary.contribution-ledger")
+        try schema.checkDestination(ledgerFile)
+        guard ledgerWritable else { throw StorageSchemaError.unsupported("contribution ledger") }
+        try schema.wrap(JSONEncoder().encode(ledger)).write(to: ledgerFile, options: .atomic)
         try VaultPrivateFile.restrict(ledgerFile)
     }
     private func contribute(_ id: String, subscriberCount: Int64?) {
+        guard ledgerWritable else { return }
         let settings = disk.settings()
         guard settings.contributionEnabled && settings.contributionChoiceMade else { return }
         if let active = contributions[id] {
@@ -238,7 +249,7 @@ actor OfficialDictionaryService: DictionaryEvidenceProviding {
         // Re-read the gate at the send boundary. No stored user/device ID, title or term is sent.
         guard disk.settings().contributionEnabled && disk.settings().contributionChoiceMade else { return }
         ledger.attempts = (ledger.attempts ?? ledger.sent.count) + 1
-        try? saveLedger()
+        do { try saveLedger() } catch { ledgerWritable = false; return }
         let token = UUID()
         contributions[id] = Contribution(token: token, count: subscriberCount)
         let task = Task { [http, disk] in

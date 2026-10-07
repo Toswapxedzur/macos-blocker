@@ -13,6 +13,7 @@ public final class ActivityStore: @unchecked Sendable {
     private let calendar: Calendar
     private let lock = NSLock()
     private let fileManager = FileManager.default
+    public private(set) var storageIssue: String?
 
     private static let settingsFileName = "settings.json"
     private static let webIconsFileName = "web-icons.json"
@@ -80,8 +81,7 @@ public final class ActivityStore: @unchecked Sendable {
 
     private func loadWebIconsLocked() -> [String: String] {
         let url = rootDirectory.appendingPathComponent(Self.webIconsFileName)
-        guard let data = try? Data(contentsOf: url),
-              let icons = try? JSONDecoder().decode([String: String].self, from: data) else { return [:] }
+        guard let icons = readValue([String: String].self, at: url) else { return [:] }
         return icons
     }
 
@@ -139,8 +139,7 @@ public final class ActivityStore: @unchecked Sendable {
 
     private func loadFactsLocked() -> FactsFile {
         let url = rootDirectory.appendingPathComponent(Self.factsFileName)
-        guard let data = try? Data(contentsOf: url),
-              let file = try? JSONDecoder().decode(FactsFile.self, from: data) else { return FactsFile() }
+        guard let file = readValue(FactsFile.self, at: url) else { return FactsFile() }
         return file
     }
 
@@ -169,7 +168,7 @@ public final class ActivityStore: @unchecked Sendable {
     public func colorIndices(for ids: [String]) -> [String: Int] {
         lock.lock(); defer { lock.unlock() }
         let url = rootDirectory.appendingPathComponent(Self.colorsFileName)
-        var mapping = (try? JSONDecoder().decode([String: Int].self, from: Data(contentsOf: url))) ?? [:]
+        var mapping = readValue([String: Int].self, at: url) ?? [:]
         var next = (mapping.values.max() ?? -1) + 1
         var added = false
         for id in ids where mapping[id] == nil {
@@ -200,7 +199,7 @@ public final class ActivityStore: @unchecked Sendable {
 
     private func loadGroupsLocked() -> [ActivityGroup] {
         let url = rootDirectory.appendingPathComponent(Self.groupsFileName)
-        return (try? JSONDecoder().decode([ActivityGroup].self, from: Data(contentsOf: url))) ?? []
+        return readValue([ActivityGroup].self, at: url) ?? []
     }
 
     /// Saves a group (new when its id is empty or unknown); returns its id. A
@@ -211,7 +210,7 @@ public final class ActivityStore: @unchecked Sendable {
         case .failure(let refusal):
             return .failure(refusal)
         case .success(let saved):
-            write(encode(saved.groups), to: rootDirectory.appendingPathComponent(Self.groupsFileName))
+            guard write(encode(saved.groups), to: rootDirectory.appendingPathComponent(Self.groupsFileName)) else { return .failure(.storageUnavailable) }
             return .success(saved.id)
         }
     }
@@ -222,8 +221,7 @@ public final class ActivityStore: @unchecked Sendable {
         var groups = loadGroupsLocked()
         guard let index = groups.firstIndex(where: { $0.id == id }) else { return false }
         groups.remove(at: index)
-        write(encode(groups), to: rootDirectory.appendingPathComponent(Self.groupsFileName))
-        return true
+        return write(encode(groups), to: rootDirectory.appendingPathComponent(Self.groupsFileName))
     }
 
     /// Every app and website seen in the last `days` days, most used first —
@@ -254,8 +252,7 @@ public final class ActivityStore: @unchecked Sendable {
         var records = readRecords(at: url)
         guard !records.contains(where: { $0.id == record.id }) else { return false }
         records.append(record)
-        write(encode(records), to: url)
-        return true
+        return write(encode(records), to: url)
     }
 
     // MARK: - Aggregation (dashboard)
@@ -414,6 +411,7 @@ public final class ActivityStore: @unchecked Sendable {
             for url in dayFiles(for: category) {
                 guard let day = dayDate(fromFileName: url.deletingPathExtension().lastPathComponent),
                       day < cutoff else { continue }
+                guard (try? policy(for: url).checkDestination(url)) != nil else { continue }
                 try? fileManager.removeItem(at: url)
             }
         }
@@ -468,16 +466,14 @@ public final class ActivityStore: @unchecked Sendable {
 
     private func loadSettingsLocked() -> ActivitySettings {
         let url = rootDirectory.appendingPathComponent(Self.settingsFileName)
-        guard let data = try? Data(contentsOf: url),
-              let settings = try? Self.makeDecoder().decode(ActivitySettings.self, from: data) else {
+        guard let settings = readValue(ActivitySettings.self, at: url) else {
             return ActivitySettings()
         }
         return settings
     }
 
     private func readRecords(at url: URL) -> [ActivityRecord] {
-        guard let data = try? Data(contentsOf: url) else { return [] }
-        return (try? Self.makeDecoder().decode([ActivityRecord].self, from: data)) ?? []
+        readValue([ActivityRecord].self, at: url) ?? []
     }
 
     private func encode<T: Encodable>(_ value: T) -> Data {
@@ -487,14 +483,41 @@ public final class ActivityStore: @unchecked Sendable {
         return (try? encoder.encode(value)) ?? Data()
     }
 
-    private func write(_ data: Data, to url: URL) {
-        guard !data.isEmpty else { return }
+    private func policy(for url: URL) -> StorageSchemaPolicy {
+        let name = url.deletingPathExtension().lastPathComponent
+        let format = dayDate(fromFileName: name) == nil ? "activity." + name : "activity.records." + url.deletingLastPathComponent().lastPathComponent
+        return StorageSchemaPolicy(format: format)
+    }
+
+    private func readValue<T: Decodable>(_ type: T.Type, at url: URL) -> T? {
+        guard fileManager.fileExists(atPath: url.path) else { return nil }
+        do {
+            let data = try Data(contentsOf: url)
+            let schema = policy(for: url)
+            let payload = try schema.payload(from: data)
+            let result = try Self.makeDecoder().decode(type, from: payload)
+            // Wrap only after the compatible alpha payload was fully decoded.
+            if payload == data { _ = write(payload, to: url) }
+            return result
+        } catch {
+            storageIssue = error.localizedDescription
+            return nil
+        }
+    }
+
+    @discardableResult
+    private func write(_ data: Data, to url: URL) -> Bool {
+        guard !data.isEmpty else { return false }
         do {
             try VaultPrivateFile.createDirectory(at: url.deletingLastPathComponent(), fileManager: fileManager)
-            try data.write(to: url, options: .atomic)
+            let schema = policy(for: url)
+            try schema.checkDestination(url)
+            try schema.wrap(data).write(to: url, options: .atomic)
             try? VaultPrivateFile.restrict(url, fileManager: fileManager)
+            return true
         } catch {
-            // Best-effort background persistence; a lost record is preferable to a crash.
+            storageIssue = error.localizedDescription
+            return false
         }
     }
 
