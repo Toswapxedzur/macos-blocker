@@ -50,6 +50,28 @@ final class ViewModelCharacterizationTests: XCTestCase {
 
     // MARK: - Snapshot shape
 
+    func testBrowserRefreshIncludesTaxonomyEditsButIgnoresCanvasMovement() {
+        var original = LocalClassifierState()
+        original.workspaceCatalog.trees = [.init(id: "tree", name: "Audit", nodes: [.init(id: "tag", name: "Games")])]
+        XCTAssertFalse(VaultClassifierViewModel.browserStateChanged(from: original, to: original))
+        var moved = original
+        moved.workspaceCatalog.trees[0].nodes[0].positionX = 100
+        moved.workspaceCatalog.trees[0].updatedAtMilliseconds += 1
+        XCTAssertFalse(VaultClassifierViewModel.browserStateChanged(from: original, to: moved))
+        for edit in ["rename", "reparent", "delete"] {
+            var changed = original
+            changed.workspaceCatalog.trees[0].revision += 1
+            switch edit {
+            case "rename": changed.workspaceCatalog.trees[0].nodes[0].name = "Renamed"
+            case "reparent": changed.workspaceCatalog.trees[0].nodes[0].parentID = "parent"
+            default: changed.workspaceCatalog.trees[0].nodes = []
+            }
+            XCTAssertTrue(VaultClassifierViewModel.browserStateChanged(from: original, to: changed), edit)
+            XCTAssertTrue(VaultClassifierViewModel.browserStateChanged(from: changed, to: original), "reverse " + edit)
+            XCTAssertEqual(changed.workspaceCatalog.videoClassifications, original.workspaceCatalog.videoClassifications)
+        }
+    }
+
     func testPersonalDictionaryRoundTripAndInvalidImportFeedbackStayInSettings() throws {
         let vm = try makeViewModel()
         _ = vm.performWebAction("addKnowledgeTerm", data: ["subject": "Audit term", "meaning": "A personal description."])
