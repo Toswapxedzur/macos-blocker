@@ -177,6 +177,34 @@ final class ParentalPinAndLockToolsTests: XCTestCase {
         XCTAssertEqual((entry?["untilMs"] as? NSNumber)?.doubleValue, 1_000_000 + 7_200_000, "it lapses at the next reset")
     }
 
+    func testRepeatedBudgetSnoozeFromNativeStoreGrantsFreshUsage() throws {
+        let now = Date(timeIntervalSince1970: 1_600)
+        var raw = document().raw
+        var groups = try XCTUnwrap(raw["blockedGroups"] as? [[String: Any]])
+        groups[0].merge(["mode": "after-minutes", "allowedMinutes": 15,
+                        "snoozeKind": "budget", "snoozeMinutes": 5,
+                        "snoozeCooldownMinutes": 0.5, "snoozeConfirmations": 0,
+                        "resetIntervalHours": 2]) { _, new in new }
+        raw["blockedGroups"] = groups
+        raw["usageTimersMs"] = ["a": 1_200_000]
+        raw["usageResetAtMs"] = ["a": 1_000_000]
+        var doc = WebStoreDocument(raw: raw)
+        if case .refused(let reason) = try doc.startSnooze(id: "a", now: now) { XCTFail(reason) }
+        let entry = try XCTUnwrap((doc.raw["groupSnoozes"] as? [String: Any])?["a"] as? [String: Any])
+        XCTAssertEqual((entry["extraMs"] as? NSNumber)?.doubleValue, 600_000)
+        XCTAssertEqual((entry["grantMs"] as? NSNumber)?.doubleValue, 300_000)
+        XCTAssertNil(runtime.call("settleBudgetSnooze", [entry, groups[0], 1_200_000, 1_600_000]))
+        XCTAssertNotNil(runtime.call("settleBudgetSnooze", [entry, groups[0], 1_500_000, 1_900_000]))
+        // Native tools must use the hub's usage, not the lower local copy.
+        var linked = WebStoreDocument(raw: raw)
+        linked.sharedUsageTimersMs = ["a": 1_500_000]
+        linked.sharedUsageResetAtMs = ["a": 1_100_000]
+        if case .refused(let reason) = try linked.startSnooze(id: "a", now: now) { XCTFail(reason) }
+        let linkedEntry = try XCTUnwrap((linked.raw["groupSnoozes"] as? [String: Any])?["a"] as? [String: Any])
+        XCTAssertEqual((linkedEntry["extraMs"] as? NSNumber)?.doubleValue, 900_000)
+        XCTAssertEqual((linkedEntry["untilMs"] as? NSNumber)?.doubleValue, 8_300_000)
+    }
+
     func testTheRunToolIsTheEditorsRun() throws {
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent("runtool-\(UUID().uuidString)", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: dir); VaultMCPTools.runRule = nil }
