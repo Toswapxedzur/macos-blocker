@@ -21,6 +21,16 @@ private actor DictionaryHTTPFixture: DictionaryHTTP {
 }
 
 final class OfficialDictionaryServiceTests: XCTestCase {
+    private func submitted(_ store: DictionaryDiskStore, id: String, count: Int64?) async throws {
+        for _ in 0..<200 {
+            if let data = try? Data(contentsOf: store.root.appendingPathComponent("contribution-ledger.json")),
+               let row = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+               (row["sent"] as? [String])?.contains(id) == true,
+               count == nil || (row["counts"] as? [String: Int64])?[id] == count { return }
+            try await Task.sleep(nanoseconds: 10_000_000)
+        }
+        XCTFail("Contribution did not complete for \(id)")
+    }
     private func disk(_ settings: DictionarySettings = .init()) throws -> DictionaryDiskStore {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         addTeardownBlock { try? FileManager.default.removeItem(at: root) }
@@ -47,6 +57,7 @@ final class OfficialDictionaryServiceTests: XCTestCase {
         var settings = store.settings(); settings.contributionChoiceMade = true; try await service.configure(settings)
         _ = await service.evidence(title: "Never upload me", creatorID: id, subscriberCount: 123)
         _ = await service.evidence(title: "Repeat", creatorID: id, subscriberCount: 123)
+        try await submitted(store, id: id, count: 123)
         let posts = await http.requests().filter { $0.1 == "POST" }
         XCTAssertEqual(posts.count, 1)
         let payload = try XCTUnwrap(JSONSerialization.jsonObject(with: try XCTUnwrap(posts.first?.2)) as? [String:Any])
@@ -72,6 +83,7 @@ final class OfficialDictionaryServiceTests: XCTestCase {
         _ = await service.evidence(title: "Private feed", creatorID: id, subscriberCount: nil)
         _ = await service.evidence(title: "Private watch title", creatorID: id, subscriberCount: 123)
         _ = await service.evidence(title: "Same known count", creatorID: id, subscriberCount: 123)
+        try await submitted(store, id: id, count: 123)
         let posts = await http.requests().filter { $0.1 == "POST" }
         XCTAssertEqual(posts.count, 2)
         let row = try XCTUnwrap((JSONSerialization.jsonObject(with: try XCTUnwrap(posts.last?.2)) as? [String: Any])?["creators"] as? [[String: Any]])
@@ -85,13 +97,19 @@ final class OfficialDictionaryServiceTests: XCTestCase {
     func testFailedContributionCanRetryWithoutMarkingTheIDSent() async throws {
         var settings = DictionarySettings(); settings.creatorMode = .full
         settings.contributionEnabled = true; settings.contributionChoiceMade = true
-        let http = RetryContributionFixture(), service = OfficialDictionaryService(disk: try disk(settings), http: http)
+        let store = try disk(settings), http = RetryContributionFixture()
+        let service = OfficialDictionaryService(disk: store, http: http)
         let day = String(Int(Date().timeIntervalSince1970) / 86400)
         let id = try XCTUnwrap((0..<1000).map { "twitter:account:retry\($0)" }.first {
             (Int(DictionaryKeys.digest(Data((day + $0).utf8)).prefix(2), radix: 16) ?? 1) % 4 == 0
         })
         _ = await service.evidence(title: "Private", creatorID: id, subscriberCount: 123)
-        _ = await service.evidence(title: "Retry", creatorID: id, subscriberCount: 123)
+        for _ in 0..<200 {
+            _ = await service.evidence(title: "Retry", creatorID: id, subscriberCount: 123)
+            if await http.attempts >= 2 { break }
+            try await Task.sleep(nanoseconds: 10_000_000)
+        }
+        try await submitted(store, id: id, count: 123)
         _ = await service.evidence(title: "Already sent", creatorID: id, subscriberCount: 123)
         let attempts = await http.attempts
         XCTAssertEqual(attempts, 2)
@@ -171,6 +189,7 @@ extension OfficialDictionaryServiceTests {
         let started = await http.flags().0; XCTAssertTrue(started)
         settings.contributionEnabled = false; try await service.configure(settings)
         _ = await request.value
+        for _ in 0..<100 { if await http.flags().1 { break }; try await Task.sleep(nanoseconds: 10_000_000) }
         let cancelled = await http.flags().1; XCTAssertTrue(cancelled)
     }
 }
@@ -208,5 +227,46 @@ extension OfficialDictionaryServiceTests {
         let again = await local.evidence(title: "Fixture Mod episode", creatorID: "youtube:channel:UCfixture", subscriberCount: nil)
         XCTAssertEqual(again.terms.first?.id, "term:fixture mod"); XCTAssertNotNil(again.creator)
         let calls = await offline.total(); XCTAssertEqual(calls, 0)
+    }
+}
+
+private actor HeldContributionFixture: DictionaryHTTP {
+    var bodies: [Data] = []
+    private var release: CheckedContinuation<Void, Never>?
+    func request(path: String, method: String, body: Data?) async throws -> Data {
+        if let body { bodies.append(body) }
+        if bodies.count == 1 { await withCheckedContinuation { release = $0 } }
+        return Data("{}".utf8)
+    }
+    func unblock() { release?.resume(); release = nil }
+}
+
+extension OfficialDictionaryServiceTests {
+    func testHeldUploadDoesNotHoldEvidenceAndRetainsConcurrentKnownCount() async throws {
+        var settings = DictionarySettings(); settings.creatorMode = .full
+        settings.contributionEnabled = true; settings.contributionChoiceMade = true
+        let store = try disk(settings), http = HeldContributionFixture()
+        let service = OfficialDictionaryService(disk: store, http: http)
+        let day = String(Int(Date().timeIntervalSince1970) / 86400)
+        let id = try XCTUnwrap((0..<1000).map { "twitter:account:held\($0)" }.first {
+            (Int(DictionaryKeys.digest(Data((day + $0).utf8)).prefix(2), radix: 16) ?? 1) % 4 == 0
+        })
+        let returned = expectation(description: "Evidence returns while upload is held")
+        let request = Task {
+            _ = await service.evidence(title: "Private feed", creatorID: id, subscriberCount: nil)
+            returned.fulfill()
+        }
+        for _ in 0..<100 { if await http.bodies.count == 1 { break }; try await Task.sleep(nanoseconds: 10_000_000) }
+        let started = await http.bodies.count; XCTAssertEqual(started, 1)
+        // Always release the held fixture, even if the regression fails.
+        await fulfillment(of: [returned], timeout: 0.5)
+        _ = await service.evidence(title: "Private watch", creatorID: id, subscriberCount: 123)
+        _ = await service.evidence(title: "Repeat watch", creatorID: id, subscriberCount: 123)
+        let before = await http.bodies.count; XCTAssertEqual(before, 1)
+        await http.unblock(); _ = await request.value
+        try await submitted(store, id: id, count: 123)
+        let bodies = await http.bodies; XCTAssertEqual(bodies.count, 2)
+        let row = try XCTUnwrap((JSONSerialization.jsonObject(with: bodies.last!) as? [String: Any])?["creators"] as? [[String: Any]])
+        XCTAssertEqual(row.first?["subscriberCount"] as? Int, 123)
     }
 }

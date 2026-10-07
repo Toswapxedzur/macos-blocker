@@ -97,7 +97,12 @@ actor OfficialDictionaryService: DictionaryEvidenceProviding {
     private var available: [KnowledgeEntryKind: DictionaryManifest] = [:]
     private var inFlight: [String: Task<Void, Never>] = [:]
     private var contributionSends: [UUID: Task<Bool, Never>] = [:]
-    private var contributionIDs: Set<String> = []
+    private struct Contribution {
+        var token: UUID
+        var count: Int64?
+    }
+    private var contributions: [String: Contribution] = [:]
+    private var pendingCounts: [String: Int64] = [:]
     private var lookupUnavailableUntil = Date.distantPast
     private var failureUntil: [String: Date] = [:]
     private struct SubmissionLedger: Codable {
@@ -164,7 +169,7 @@ actor OfficialDictionaryService: DictionaryEvidenceProviding {
         let result = localEvidence(title: title, creatorID: creatorID)
         if result.creator == nil {
             // Contribution is independent of lookups. Full mode does not perform remote definition lookup.
-            await contribute(creatorID, subscriberCount: subscriberCount)
+            contribute(creatorID, subscriberCount: subscriberCount)
         }
         return result
     }
@@ -199,21 +204,27 @@ actor OfficialDictionaryService: DictionaryEvidenceProviding {
             for task in inFlight.values { task.cancel() }
             inFlight.removeAll()
         }
-        if !settings.contributionEnabled {
+        if !settings.contributionEnabled || !settings.contributionChoiceMade {
             for task in contributionSends.values { task.cancel() }
-            contributionSends.removeAll()
+            pendingCounts.removeAll()
         }
     }
     private func saveLedger() throws {
         try JSONEncoder().encode(ledger).write(to: ledgerFile, options: .atomic)
         try VaultPrivateFile.restrict(ledgerFile)
     }
-    private func contribute(_ id: String, subscriberCount: Int64?) async {
+    private func contribute(_ id: String, subscriberCount: Int64?) {
         let settings = disk.settings()
         guard settings.contributionEnabled && settings.contributionChoiceMade else { return }
+        if let active = contributions[id] {
+            if let subscriberCount {
+                pendingCounts[id] = subscriberCount != active.count ? subscriberCount : nil
+            }
+            return
+        }
         let day = String(Int(Date().timeIntervalSince1970) / 86400)
         if ledger.day != day { ledger = .init(day: day, sent: []) }
-        guard (ledger.attempts ?? ledger.sent.count) < 50, !contributionIDs.contains(id) else { return }
+        guard (ledger.attempts ?? ledger.sent.count) < 50 else { return }
         if ledger.sent.contains(id) {
             // A feed may submit an unknown count; a later watch page can enrich
             // it without repeatedly submitting the same known value.
@@ -228,8 +239,8 @@ actor OfficialDictionaryService: DictionaryEvidenceProviding {
         guard disk.settings().contributionEnabled && disk.settings().contributionChoiceMade else { return }
         ledger.attempts = (ledger.attempts ?? ledger.sent.count) + 1
         try? saveLedger()
-        contributionIDs.insert(id)
         let token = UUID()
+        contributions[id] = Contribution(token: token, count: subscriberCount)
         let task = Task { [http, disk] in
             guard !Task.isCancelled, disk.settings().contributionEnabled, disk.settings().contributionChoiceMade else { return false }
             do {
@@ -238,13 +249,23 @@ actor OfficialDictionaryService: DictionaryEvidenceProviding {
             } catch { return false }
         }
         contributionSends[token] = task
-        let succeeded = await task.value
+        // Telemetry must not hold up local tagging while the server responds.
+        Task {
+            let succeeded = await task.value
+            self.finishContribution(id, token: token, day: day, subscriberCount: subscriberCount, succeeded: succeeded)
+        }
+    }
+    private func finishContribution(_ id: String, token: UUID, day: String, subscriberCount: Int64?, succeeded: Bool) {
+        guard contributions[id]?.token == token else { return }
         contributionSends[token] = nil
-        contributionIDs.remove(id)
+        contributions[id] = nil
         if succeeded, ledger.day == day {
             if !ledger.sent.contains(id) { ledger.sent.append(id) }
             if let subscriberCount { var counts = ledger.counts ?? [:]; counts[id] = subscriberCount; ledger.counts = counts }
             try? saveLedger()
+        }
+        if let count = pendingCounts.removeValue(forKey: id) {
+            contribute(id, subscriberCount: count)
         }
     }
 }
