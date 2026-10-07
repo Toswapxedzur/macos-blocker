@@ -11,12 +11,13 @@ import XCTest
 /// `policies` / `policyID`, retired the same day.)
 final class LegacyStateDecodeTests: XCTestCase {
     func testCompatibleUnversionedAlphaPreservesCurrentSettings() throws {
-        var json = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(LocalClassifierState())) as? [String: Any])
+        let original = LocalClassifierState()
+        var json = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(original)) as? [String: Any])
         json.removeValue(forKey: "schemaVersion")
         let decoded = try JSONDecoder().decode(LocalClassifierState.self, from: JSONSerialization.data(withJSONObject: json))
         XCTAssertEqual(decoded.schemaVersion, LocalClassifierState.currentSchemaVersion)
-        XCTAssertEqual(decoded.settings, LocalClassifierState().settings)
-        XCTAssertEqual(decoded.workspaceCatalog, LocalClassifierState().workspaceCatalog)
+        XCTAssertEqual(decoded.settings, original.settings)
+        XCTAssertEqual(decoded.workspaceCatalog, original.workspaceCatalog)
     }
 
     func testUnsupportedSchemaDoesNotRewriteStoredBytes() throws {
