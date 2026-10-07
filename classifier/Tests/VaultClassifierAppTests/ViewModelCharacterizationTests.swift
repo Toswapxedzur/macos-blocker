@@ -50,6 +50,29 @@ final class ViewModelCharacterizationTests: XCTestCase {
 
     // MARK: - Snapshot shape
 
+    func testPersonalDictionaryRoundTripAndInvalidImportFeedbackStayInSettings() throws {
+        let vm = try makeViewModel()
+        _ = vm.performWebAction("addKnowledgeTerm", data: ["subject": "Audit term", "meaning": "A personal description."])
+        _ = vm.performWebAction("exportPersonalDictionary", data: [:])
+        let exported = try XCTUnwrap(vm.personalDictionaryJSON)
+        let before = vm.localState?.workspaceCatalog.knowledgeEntries
+        vm.dictionaryNotice = "Dictionary updated. Personal definitions are preserved."
+        _ = vm.performWebAction("importPersonalDictionary", data: ["json": "{"])
+        XCTAssertNil(vm.issue, "Settings must show the error next to the transfer controls.")
+        XCTAssertNotNil(vm.dictionaryNotice)
+        XCTAssertNotEqual(vm.dictionaryNotice, "Dictionary updated. Personal definitions are preserved.")
+        XCTAssertEqual(vm.localState?.workspaceCatalog.knowledgeEntries, before)
+        XCTAssertEqual(vm.personalDictionaryJSON, exported)
+        _ = vm.performWebAction("importPersonalDictionary", data: ["json": exported])
+        XCTAssertNil(vm.issue)
+        XCTAssertEqual(vm.dictionaryNotice, "Personal definitions imported.")
+        XCTAssertNil(vm.personalDictionaryJSON)
+        XCTAssertEqual(vm.localState?.workspaceCatalog.knowledgeEntries.map(\.subject), ["Audit term"])
+        _ = vm.performWebAction("exportPersonalDictionary", data: [:])
+        XCTAssertNil(vm.dictionaryNotice)
+        XCTAssertNotNil(vm.personalDictionaryJSON)
+    }
+
     func testClassifierOwnsPersistedGroupPauseAndGlobalActivation() throws {
         let vm = try makeViewModel()
         XCTAssertEqual(vm.localState?.settings.classificationEnabled, true)
