@@ -414,6 +414,8 @@ extension VaultClassifierViewModel {
     /// cannot become another native IPC or provider-control path.
     /// Returns whether the web shell should publish a new snapshot.
     func performWebAction(_ action: String, data: [String: Any]) -> Bool {
+        let dictionaryTransfer = action == "importPersonalDictionary" || action == "exportPersonalDictionary"
+        if dictionaryTransfer { dictionaryNotice = nil; issue = nil }
         do {
             switch action {
             case "state":
@@ -579,7 +581,8 @@ extension VaultClassifierViewModel {
                 throw WebBridgeInputError.invalidChoice("action")
             }
         } catch {
-            issue = error.localizedDescription
+            if dictionaryTransfer { dictionaryNotice = error.localizedDescription }
+            else { issue = error.localizedDescription }
         }
         return true
     }
