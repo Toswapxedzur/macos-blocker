@@ -407,6 +407,17 @@ public struct BlockerWebView: NSViewRepresentable {
                     webView?.evaluateJavaScript("window.__cbLinkRefused && window.__cbLinkRefused(\(json)[0]);", completionHandler: nil)
                 }
                 pushClusters()
+            case "save-rule-log":
+                guard message.frameInfo.isMainFrame, message.frameInfo.request.url?.scheme == WebAssetSchemeHandler.scheme,
+                      message.frameInfo.request.url?.host == WebAssetSchemeHandler.host,
+                      let payload = body["message"] as? [String: Any],
+                      let filename = payload["filename"] as? String, let text = payload["text"] as? String else { return }
+                do {
+                    _ = try saveRuleLog(filename: filename, text: text)
+                    nativeReply(body, ["ok": true])
+                } catch {
+                    nativeReply(body, ["ok": false, "error": error.localizedDescription])
+                }
             case "local-folder-status":
                 pushLocalFolderStatus()
             case "local-folder-choose":
@@ -472,6 +483,26 @@ public struct BlockerWebView: NSViewRepresentable {
             )
         }
 
+        /// Only the bounded plain-text rule-log export can write into Downloads.
+        func saveRuleLog(filename: String, text: String) throws -> URL {
+            guard filename.hasPrefix("blocker-logs-"), filename.hasSuffix(".txt"), filename.utf8.count <= 255,
+                  filename.range(of: #"^[A-Za-z0-9_.-]+$"#, options: .regularExpression) != nil,
+                  text.utf8.count <= 8 * 1024 * 1024 else {
+                throw CocoaError(.fileWriteInvalidFileName)
+            }
+            let data = Data(text.utf8)
+            while true {
+                let destination = try Self.availableDownloadURL(in: downloadDirectory, suggestedFilename: filename,
+                                                               reserved: Set(downloadDestinations.values))
+                do {
+                    try data.write(to: destination, options: .withoutOverwriting)
+                    return destination
+                } catch let error as NSError where error.domain == NSCocoaErrorDomain && error.code == NSFileWriteFileExistsError {
+                    continue
+                }
+            }
+        }
+
         // MARK: WKNavigationDelegate
 
         public func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction,
@@ -532,6 +563,24 @@ public struct BlockerWebView: NSViewRepresentable {
             webView.reload()
             MainActor.assumeIsolated {
                 for scene in scenes { scene.reloaded() }
+            }
+        }
+
+        // Mac WebKit disables file inputs unless the host supplies this delegate.
+        public func webView(_ webView: WKWebView, runOpenPanelWith parameters: WKOpenPanelParameters,
+                            initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping ([URL]?) -> Void) {
+            guard frame.isMainFrame, frame.request.url?.scheme == WebAssetSchemeHandler.scheme,
+                  frame.request.url?.host == WebAssetSchemeHandler.host else { completionHandler(nil); return }
+            let panel = NSOpenPanel()
+            panel.canChooseFiles = true
+            panel.canChooseDirectories = parameters.allowsDirectories
+            panel.allowsMultipleSelection = parameters.allowsMultipleSelection
+            if let window = webView.window {
+                panel.beginSheetModal(for: window) { response in
+                    completionHandler(response == .OK ? panel.urls : nil)
+                }
+            } else {
+                panel.begin { response in completionHandler(response == .OK ? panel.urls : nil) }
             }
         }
 

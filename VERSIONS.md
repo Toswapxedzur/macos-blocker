@@ -2,7 +2,11 @@
 
 The owner approved this capability split on 2026-10-04. Existing tags and packaged downloads remain unchanged. All new records are **alpha, source-only**. A source record does not certify store submission, signing or native release acceptance.
 
-Current source version: **2.2.5**. See the group-level `CHANGELOG.md` for the cross-product chapters.
+Current source version: **2.2.6**. See the group-level `CHANGELOG.md` for the cross-product chapters.
+
+## 2.2.6 — 2026-10-07 — Custom-origin log exports and JSON file picker
+
+Save selected-rule text through the bounded native bridge because WebKit cancels Blob downloads from the app’s cbasset origin. Preserve existing Downloads files. Supply the native file picker required by macOS WebKit for Knowledge’s JSON file input.
 
 ## 2.2.5 — 2026-10-07 — Native rule log downloads
 

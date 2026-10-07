@@ -370,6 +370,11 @@
     if (resolve) { delete nativeReplies[id]; resolve(reply); }
   };
 
+  // cbasset Blob downloads are cancelled by WebKit; save the selected log natively.
+  window.__cbSaveRuleLog = function (filename, text) {
+    return nativeRequest("save-rule-log", { filename: filename, text: text }, { ok: false, error: "Log download unavailable." });
+  };
+
   function bridgeOrResolve(kind, message, fallback) {
     var bridge = nativeBridge();
     if (bridge) {
