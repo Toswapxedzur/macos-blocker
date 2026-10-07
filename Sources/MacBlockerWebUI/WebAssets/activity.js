@@ -196,48 +196,41 @@
     return box;
   }
 
-  // `seconds` null = a row shown by name only (a browser in Usage).
-  function row(item, seconds, fraction, kind, onPick) {
-    var line = el("div", onPick ? "row pickable" : "row");
-    if (onPick) line.addEventListener("click", onPick);
-    line.dataset.hint = (item.label || item.key) + (seconds !== null ? " — " + fmt(seconds) : "");
-    var mark = icon(item.key, item.label);
-    if (item.color && !iconURI(item.key)) { mark.style.background = item.color; mark.style.color = "#ffffff"; }
-    line.appendChild(mark);
-    var body = el("div", "row-body");
-    var name = el("div", "row-name");
-    name.appendChild(el("span", "row-label", item.label || item.key));
-    if (kind) name.appendChild(el("span", "row-kind", kindLabel(kind)));
-    body.appendChild(name);
-    if (seconds !== null) {
-      var bar = el("div", "row-bar"), fill = item.color ? el("span") : paint(el("span"), item.colorIndex);
-      if (item.color) fill.style.background = item.color;
-      fill.style.width = Math.max(1.5, fraction * 100) + "%";
-      bar.appendChild(fill); body.appendChild(bar);
-    }
-    line.appendChild(body);
-    line.appendChild(el("div", "row-time", seconds === null ? "" : fmt(seconds)));
-    return line;
-  }
-
-  // Apps and websites in one ranked list, each marked. A browser whose sites
-  // are recorded is listed by name only (owner 2026-09-28: its time would
-  // dominate — its sites have their own rows); it is ranked, and counted in
-  // the total, by its time not spent on a recorded site. A browser without
-  // recorded sites (no Vault extension) keeps its time.
+  // Usage retains full app durations and the overlapping website breakdown.
+  // Pie inputs are selected separately so browsers never become extra slices.
   function usageItems(apps, sites, attribution, spanSeconds) {
     var items = [];
     apps.forEach(function (b) {
-      var seconds = b.seconds;
-      var inSites = attribution.byBrowser[b.key];
-      if (inSites) {
-        var siteSeconds = Object.keys(inSites).reduce(function (sum, key) { return sum + inSites[key] * spanSeconds; }, 0);
-        seconds = Math.max(0, b.seconds - siteSeconds);
-      }
-      if (seconds >= 1) items.push({ item: b, seconds: seconds, kind: "App", nameOnly: !!inSites });
+      var overlaps = {}, inSites = attribution.byBrowser[b.key] || {};
+      Object.keys(inSites).forEach(function (key) { overlaps[key] = inSites[key] * spanSeconds; });
+      if (b.seconds >= 1) items.push({ item: b, seconds: b.seconds, kind: "App", browser: !!BROWSERS[b.key], siteSeconds: overlaps });
     });
     sites.forEach(function (b) { items.push({ item: b, seconds: b.seconds, kind: "Website" }); });
     return items.sort(function (x, y) { return y.seconds - x.seconds; });
+  }
+
+  // A browser and its selected sites describe overlapping usage, not two clocks.
+  function usageGroupSeconds(items, members) {
+    var set = new Set(members), seconds = 0;
+    items.forEach(function (entry) {
+      if (!set.has(entryID(entry))) return;
+      seconds += entry.seconds;
+      if (entry.browser) Object.keys(entry.siteSeconds || {}).forEach(function (key) {
+        if (set.has("web|" + key)) seconds -= entry.siteSeconds[key];
+      });
+    });
+    return Math.max(0, seconds);
+  }
+
+  // The main daily stack partitions elapsed time; the narrow browser lane
+  // additionally shows each browser's full duration beside its websites.
+  function usagePartitionItems(items, members) {
+    var selected = members ? new Set(members) : null;
+    return items.map(function (entry) {
+      if (!entry.browser) return entry;
+      var seconds = entry.seconds - Object.keys(entry.siteSeconds || {}).reduce(function (sum, key) { return sum + (!selected || selected.has("web|" + key) ? entry.siteSeconds[key] : 0); }, 0);
+      return Object.assign({}, entry, { seconds: Math.max(0, seconds), siteSeconds: {} });
+    }).filter(function (entry) { return entry.seconds >= 1; });
   }
 
   // ── Groups ──────────────────────────────────────────────────────────────
@@ -274,6 +267,9 @@
         out.push(merged);
       }
       merged.seconds += entry.seconds;
+      if (entry.browser) Object.keys(entry.siteSeconds || {}).forEach(function (key) {
+        if (g.members.indexOf("web|" + key) !== -1) merged.seconds -= entry.siteSeconds[key];
+      });
     });
     return out.sort(function (x, y) { return y.seconds - x.seconds; });
   }
@@ -405,11 +401,11 @@
     };
   }
 
-  // A Usage entry (an app, a site, a merge group, a browser's leftover).
+  // A Usage entry: an app, a website or a merge group.
   function entryInfo(entry, lines) {
     var kind = entry.kind === "Group"
       ? at("mergeMembers", "Merge group · {count} members", { count: entry.group.members.length })
-      : entry.nameOnly ? at("outsideBrowser", "App · browser, time outside recorded sites", {})
+      : entry.browser ? at("appBrowser", "App · browser")
       : entry.videos ? kindLabel(entry.kind) + " · " + at("itemsCount", "{count} items", { count: entry.videos.length }) : kindLabel(entry.kind);
     if (entry.item.color) return { title: entry.item.label, color: entry.item.color, lines: [kind].concat(lines) };
     return { title: entry.item.label || entry.item.key, key: entry.item.key, lines: [kind].concat(lines) };
@@ -595,23 +591,20 @@
     return wrap;
   }
 
-  // What gets its own slice (owner 2026-09-29). Other holds the items under
-  // 2% of the total and a browser's leftover time (its time outside recorded
-  // sites — the list shows no number for it, so neither does the pie). At
-  // most 12 named slices; while there is room, Other's largest items get
-  // their own slice so Other stays the smallest. `items` is sorted largest first.
+  // Other combines items below 2% and limits the named slice count.
+  // Browser entries have already been excluded from Usage pie inputs.
   var OTHER_SHARE = 0.02, MAX_NAMED = 12;
   function splitSlices(items, total) {
     var named = [], other = [];
     items.forEach(function (entry) {
-      if (!entry.nameOnly && entry.seconds / total >= OTHER_SHARE && named.length < MAX_NAMED) named.push(entry);
+      if (entry.seconds / total >= OTHER_SHARE && named.length < MAX_NAMED) named.push(entry);
       else other.push(entry);
     });
     var otherSeconds = other.reduce(function (sum, entry) { return sum + entry.seconds; }, 0);
     while (named.length < MAX_NAMED && otherSeconds > 0) {
       var smallest = named.length ? named[named.length - 1].seconds : 0;
       if (otherSeconds < smallest) break;
-      var index = other.findIndex(function (entry) { return !entry.nameOnly; });
+      var index = other.length ? 0 : -1;
       if (index < 0) break;
       var promoted = other.splice(index, 1)[0];
       named.push(promoted);
@@ -643,12 +636,11 @@
       var line = fmt(slice.seconds) + " · " + share(slice.seconds, total, at("totalDuration", "the total ({time})", { time: fmt(total) }));
       if (slice.entry) return entryInfo(slice.entry, [line]);
       var list = slice.other.slice(0, 12).map(function (entry) {
-        return [entry.item.label || entry.item.key, entry.nameOnly ? at("outsideSites", "outside sites") : fmt(entry.seconds)];
+        return [entry.item.label || entry.item.key, fmt(entry.seconds)];
       });
       if (slice.other.length > 12) list.push([at("moreCount", "and {count} more", { count: slice.other.length - 12 }), ""]);
       var why = [];
-      if (slice.other.some(function (entry) { return !entry.nameOnly; })) why.push(at("itemsUnder2Each", "items under 2% each"));
-      if (slice.other.some(function (entry) { return entry.nameOnly; })) why.push(at("browsersTimeOutsideRecordedSites", "browsers' time outside recorded sites"));
+      if (slice.other.length) why.push(at("itemsUnder2Each", "items under 2% each"));
       return { title: slice.label, color: slice.color, lines: [line, why.join(at("andSeparator", ", and "))], list: list };
     }
     var size = 140, r = 64, c = size / 2;
@@ -747,14 +739,8 @@
     if (!editing) head.appendChild(textButton(at("newGroup", "New group"), function () { openEditor(null); }, "head-button"));
     box.appendChild(head);
     if (editing) { box.appendChild(groupForm()); return box; }
-    var usageSeconds = new Map();
-    usageItemsRaw.forEach(function (entry) {
-      var id = entryID(entry);
-      usageSeconds.set(id, (usageSeconds.get(id) || 0) + entry.seconds);
-    });
     var list = groupsList().map(function (g) {
-      var seconds = 0;
-      new Set(g.members).forEach(function (id) { seconds += usageSeconds.get(id) || 0; });
+      var seconds = usageGroupSeconds(usageItemsRaw, g.members);
       return { g: g, seconds: seconds };
     }).sort(function (x, y) { return y.seconds - x.seconds; });   // merge or not, by time (owner 2026-09-30)
     if (!list.length) {
@@ -1034,7 +1020,9 @@
         + pieces.filter(function (p) { return !set.has("app|" + p.browser.key); })
           .reduce(function (sum, p) { return sum + (p.to - p.from) * spanSeconds; }, 0)
       : apps.timeline.reduce(function (sum, s) { return sum + s.seconds; }, 0);
-    return { items: items, segments: segments, pieces: pieces, used: used, empty: Math.max(0, spanSeconds - used) };
+    var pieRaw = usageItemsRaw.filter(function (entry) { return !entry.browser && (!set || set.has(entryID(entry))); });
+    var pieItems = set ? pieRaw : mergeItems(pieRaw);
+    return { items: items, pieItems: pieItems, segments: segments, pieces: pieces, used: used, empty: Math.max(0, spanSeconds - used) };
   }
 
   // A time strip over the whole range, one fixed width per day, scrolling
@@ -1124,7 +1112,7 @@
       if (entry.item.key) line.appendChild(icon(entry.item.key, entry.item.label));
       line.appendChild(el("span", "colour-name", entry.item.label || entry.item.key));
       if (entry.kind && entry.kind !== "Tag") line.appendChild(el("span", "row-kind", entry.kind));
-      line.appendChild(el("span", "colour-time", entry.nameOnly ? "" : fmt(entry.seconds)));
+      line.appendChild(el("span", "colour-time", fmt(entry.seconds)));
       hoverable(line, entryInfo(entry, [fmt(entry.seconds)]));
       if (onPick) line.addEventListener("click", function () { onPick(entry); });
       return line;
@@ -1246,6 +1234,14 @@
         });
 
       });
+      var browserY = base;
+      (d.browsers || []).forEach(function (entry) {
+        var h = entry.seconds / topSeconds * plot;
+        browserY -= h;
+        appendDayRect(chart, { x: x + barWidth * .85, y: browserY, width: barWidth * .15, height: Math.max(.6, h), fill: colorOf(colorIndexFor("app", entry.item.key, entry.item.colorIndex)) }, function () {
+          return entryInfo(entry, [dayName(d.start), fmt(entry.seconds)]);
+        });
+      });
       if (d.rest > 0) {
         var h = d.rest / topSeconds * plot;
         yy -= h;
@@ -1305,10 +1301,13 @@
             var pieceHeight = h * piece.seconds / blockSeconds;
             if (pieceHeight <= 0) return;
             cursor -= pieceHeight;
-            var rect = { x: x, y: cursor, width: barWidth, height: pieceHeight, fill: piece.color };
+            var rect = { x: x, y: cursor, width: barWidth * ((d.browserBlocks || []).length ? .85 : 1), height: pieceHeight, fill: piece.color };
             appendDayRect(chart, rect, info);
 
           });
+        });
+        (d.browserBlocks || []).forEach(function (b) {
+          appendDayRect(chart, { x: x + barWidth * .85, y: base - b.to * plot, width: barWidth * .15, height: Math.max(.6, (b.to - b.from) * plot), fill: b.color }, b.info);
         });
       } else {
         d.blocks.forEach(function (b) {
@@ -1414,18 +1413,19 @@
     usageHistory.days.forEach(function (day) {
       var attribution = attributeSites(day.app, day.web);
       var raw = usageItems(barsOf(day.app), barsOf(day.web), attribution, 86400);
-      var items = (set ? raw.filter(function (entry) { return set.has(entryID(entry)); }) : mergeItems(raw))
-        .filter(function (entry) { return !entry.nameOnly && entry.seconds >= 1; })
+      var partition = usagePartitionItems(raw, set);
+      var items = (set ? partition.filter(function (entry) { return set.has(entryID(entry)); }) : mergeItems(partition))
+        .filter(function (entry) { return entry.seconds >= 1; })
         .sort(function (a, b) { return b.seconds - a.seconds; });
       var used = items.reduce(function (sum, e) { return sum + e.seconds; }, 0);
       var elapsed = Math.min(86400, Math.max(0, (now - day.dayStartMs) / 1000));
-      totals.push({ start: day.dayStartMs, items: items, rest: Math.max(0, elapsed - used) });
+      totals.push({ start: day.dayStartMs, items: items, browsers: raw.filter(function (entry) { return entry.browser && (!set || set.has(entryID(entry))); }), rest: Math.max(0, elapsed - used) });
       var blocks = [], binApps = [], binSites = [];
       day.app.forEach(function (seg) {
         if (set && !set.has("app|" + seg.key)) return;
         var color = colorOf(colorIndexFor("app", seg.key, seg.colorIndex));
         binApps.push({ key: seg.key, label: seg.label || seg.key, from: seg.startFraction, to: seg.startFraction + seg.widthFraction, color: color });
-        blocks.push({ from: seg.startFraction, to: seg.startFraction + seg.widthFraction, color: color,
+        blocks.push({ from: seg.startFraction, to: seg.startFraction + seg.widthFraction, color: color, browser: !!BROWSERS[seg.key],
           info: function () { return { title: seg.label || seg.key, key: seg.key, lines: [(BROWSERS[seg.key] ? at("appBrowser", "App · browser") : "App") + " · " + dayName(day.dayStartMs),
             hourMinute(seg.startFraction) + " – " + hourMinute(seg.startFraction + seg.widthFraction) + " · " + fmt(seg.widthFraction * 86400)] }; } });
       });
@@ -1438,7 +1438,7 @@
           info: function () { return { title: piece.site.label || piece.site.key, key: piece.site.key, lines: [at("websiteIn", "Website · in {browser}", { browser: piece.browser.label || piece.browser.key }) + " · " + dayName(day.dayStartMs),
             hourMinute(piece.from) + " – " + hourMinute(piece.to) + " · " + fmt((piece.to - piece.from) * 86400)] }; } });
       });
-      ordered.push({ start: day.dayStartMs, blocks: blocks,
+      ordered.push({ start: day.dayStartMs, blocks: blocks, browserBlocks: blocks.filter(function (block) { return block.browser; }),
         bins: usageBlockMinutes ? window.ActivityTimeBins.aggregate(binApps, binSites, usageBlockMinutes) : [] });
     });
     return dayCharts(ordered, totals, { name: at("noRecordedUsage", "No recorded usage"), color: EMPTY_COLOR }, true, true);
@@ -1500,7 +1500,7 @@
     }, at("noRecordedUsage", "No recorded usage")));
     grid.appendChild(mapPanel);
     var pieCell = el("div", "act-cell");
-    pieCell.appendChild(pie(data.items.filter(function (e) { return !e.nameOnly; }), at("share", "Share"), "activity-usage-share"));
+    pieCell.appendChild(pie(data.pieItems, at("share", "Share"), "activity-usage-share"));
     grid.appendChild(pieCell);
     var year = el("div", "act-cell");
     year.id = "usage-year";

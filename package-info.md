@@ -38,7 +38,7 @@
 
 - Native click-through timer: one screen-sized page with a reserved countdown, five-second rotation, and only visible rows formatted. `BoundedOverlayTests` verifies native window containment and rotation.
 
-- `VERSIONS.md`: owner-approved 2026-10-04 capability split; current source version **2.2.6 alpha**. Historical tags/packages remain immutable.
+- `VERSIONS.md`: owner-approved 2026-10-04 capability split; current source version **2.2.7 alpha**. Historical tags/packages remain immutable.
 
 - Installed resource resolution: `Sources/MacBlockerCore/MacBundledResources.swift` resolves Panel, Core and WebUI bundles from app Resources or adjacent SwiftPM output without generated-accessor traps. `MacBundledResourcesTests` covers relocation and missing resources.
 
@@ -47,3 +47,5 @@
 - Public customer-audit patch 2.2.5: `BlockerWebView.Coordinator` handles WebKit Blob downloads into Downloads with safe names and collision protection. `WebDownloadTests.swift` checks real WebKit bytes, immediate Blob revocation and existing/in-flight destination preservation on mini2.
 
 - Public audit follow-up 2.2.6: rule-log text uses the native bridge from the real cbasset page, bounded to 8 MiB and plain-text log filenames. Knowledge Choose File gets the missing WKUIDelegate panel. The app-origin regression uses the actual chrome shim and verifies exact text, native replies, collision preservation and invalid/oversized rejection.
+
+- **Activity browser accounting (owner 2026-10-07):** Usage retains full browser and website durations with thin browser bands in ordered/daily graphs; groups count overlapping time once. Pie inputs exclude every browser before merge groups are formed. `Tests/WebUI/activity-browser-accounting.js` verifies Safari/Chrome, full rows, group totals, browser-free merged pies and daily bands on mini2.
