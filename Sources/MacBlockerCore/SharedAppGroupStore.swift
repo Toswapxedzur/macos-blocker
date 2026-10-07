@@ -1,9 +1,11 @@
 import Foundation
+import VaultClassifierCore
 
 /// File-backed store inside the App Group container: where Mac Vault keeps the
 /// editor's store (web-store.json) and its other small files.
 public final class SharedAppGroupStore: @unchecked Sendable {
     public static let webStoreFileName = "web-store.json"
+    public static let webSchema = StorageSchemaPolicy(format: "vault.web-store", currentSchema: 3)
 
     public let baseDirectory: URL
     private let fileManager = FileManager.default
@@ -59,7 +61,16 @@ public final class SharedAppGroupStore: @unchecked Sendable {
             ensureDirectory()
             let target = url(for: fileName)
             do {
-                try data.write(to: target, options: [.atomic])
+                var output = data
+                if fileName == Self.webStoreFileName {
+                    if fileManager.fileExists(atPath: target.path) {
+                        guard let existing = try JSONSerialization.jsonObject(with: Data(contentsOf: target)) as? [String: Any] else { throw StorageSchemaError.unsupported("invalid web store") }
+                        try Self.webSchema.validateFlat(existing)
+                    }
+                    guard let root = try JSONSerialization.jsonObject(with: data) as? [String: Any] else { throw StorageSchemaError.unsupported("invalid web store") }
+                    output = try JSONSerialization.data(withJSONObject: Self.webSchema.stampFlat(root), options: [.sortedKeys])
+                }
+                try output.write(to: target, options: [.atomic])
             } catch {
                 print("[SharedAppGroupStore] writeData FAILED for \(target.path): \(error)")
             }

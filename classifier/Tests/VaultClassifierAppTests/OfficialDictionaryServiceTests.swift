@@ -24,7 +24,8 @@ final class OfficialDictionaryServiceTests: XCTestCase {
     private func submitted(_ store: DictionaryDiskStore, id: String, count: Int64?) async throws {
         for _ in 0..<200 {
             if let data = try? Data(contentsOf: store.root.appendingPathComponent("contribution-ledger.json")),
-               let row = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+               let payload = try? StorageSchemaPolicy(format: "dictionary.contribution-ledger").payload(from: data),
+               let row = (try? JSONSerialization.jsonObject(with: payload)) as? [String: Any],
                (row["sent"] as? [String])?.contains(id) == true,
                count == nil || (row["counts"] as? [String: Int64])?[id] == count { return }
             try await Task.sleep(nanoseconds: 10_000_000)

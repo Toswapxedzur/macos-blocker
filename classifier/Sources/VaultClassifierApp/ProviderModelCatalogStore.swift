@@ -25,7 +25,8 @@ final class ProviderModelCatalogStore {
     }
 
     func load(allowedProfileIDs: Set<String>) -> [String: [ProviderModelCatalogEntry]] {
-        guard let data = try? Data(contentsOf: fileURL) else {
+        guard let stored = try? Data(contentsOf: fileURL),
+              let data = try? StorageSchemaPolicy(format: "provider.model-catalog").payload(from: stored) else {
             return [:]
         }
         if let snapshot = try? JSONDecoder().decode(Snapshot.self, from: data),
@@ -58,7 +59,9 @@ final class ProviderModelCatalogStore {
         guard let data = try? JSONEncoder().encode(snapshot) else { return }
         do {
             try FileManager.default.createDirectory(at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true)
-            try data.write(to: fileURL, options: .atomic)
+            let schema = StorageSchemaPolicy(format: "provider.model-catalog")
+            try schema.checkDestination(fileURL)
+            try schema.wrap(data).write(to: fileURL, options: .atomic)
         } catch {
             // A Probe remains usable for this process if the optional cache
             // cannot be persisted locally.

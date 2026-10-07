@@ -42,7 +42,7 @@ let package = Package(
     targets: [
         .target(
             name: "MacBlockerCore",
-            dependencies: [.product(name: "VaultActivityCore", package: "classifier")],
+            dependencies: [.product(name: "VaultActivityCore", package: "classifier"), .product(name: "VaultClassifierCore", package: "classifier")],
             resources: [
                 // Whole folder: rule-core.js (the rule contract) with
                 // custom-rule-runtime.js (the Mac app's rule engine on it) and

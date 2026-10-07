@@ -23,3 +23,9 @@
 - **Planning docs:** `CLASSIFIER-INDEPENDENCE.md` (the 2026-09 four-target split + the tagging contract), `LATENCY-REFINEMENT.md`, `RESEARCH-REDESIGN.md`, `REWORK-local-model-centered.md`, `ROADMAP-per-type-granularity.md`, `PHASE3-BUILD-PLAN.md`; datasets `eval-set.json` (120, older), `eval-library.json` (450 real labelled YouTube videos: `trueTags` + `alsoAcceptable` + `uncertain`), `eval-oracle-terms.json` (72 hand-written correct terms for `score --knowledge-file=`); `scripts/score-research-ab.py` scores `score --dump-json` arms (`--knowledge=all|none|terms|creator`).
 
 - Official dictionaries: `OfficialDictionary.swift` defines contracts and personal JSON; `DictionaryDiskStore.swift` keeps indexed packs and a bounded creator cache; App `OfficialDictionaryService.swift` supplies public lookups/contributions; `VaultClassifierViewModel+Dictionaries.swift` exposes Knowledge controls. See the website `docs/OFFICIAL-DICTIONARIES.md` for publication. New dictionary copy is English; translation follows the release language batch.
+
+- `StorageSchema.swift` and `Resources/storage-product-versions.json` keep
+  document formats separate from host app versions. Classifier schema 3 and
+  envelope schema 1 for collected/Activity/cache files preserve compatible alpha
+  payloads through bounded import and protect future data from late writes.
+  `StorageSchemaTests` covers app-major expiry independently of schema numbers.

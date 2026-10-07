@@ -39,6 +39,7 @@ public struct ActivityKnownItem: Codable, Equatable, Sendable {
 
 /// Why a group was not saved.
 public enum ActivityGroupRefusal: Error, Equatable, Sendable {
+    case storageUnavailable
     /// The name is empty.
     case noName
     /// A member id is not "app|…" / "web|…".
@@ -50,6 +51,7 @@ public enum ActivityGroupRefusal: Error, Equatable, Sendable {
 
     public var message: String {
         switch self {
+        case .storageUnavailable: return "Saved Activity storage cannot be updated by this build. The data is preserved."
         case .noName: return "Enter a group name."
         case .badMember(let id): return "\"\(id)\" is not an app or a website"
         case .inAnotherMergeGroup(let owners):

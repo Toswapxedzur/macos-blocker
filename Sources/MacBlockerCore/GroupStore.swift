@@ -69,6 +69,8 @@ public final class GroupStore: @unchecked Sendable {
     /// share them.
     public func loadGroups() -> [BlockGroup] {
         guard var data = shared.readData(SharedAppGroupStore.webStoreFileName, silent: true) else { return [] }
+        guard let root = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+              (try? SharedAppGroupStore.webSchema.validateFlat(root)) != nil else { return [] }
         if let overlay = Self.sharedOverlay,
            let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
            let overlaid = try? JSONSerialization.data(withJSONObject: overlay(object)) {
@@ -95,11 +97,12 @@ public final class GroupStore: @unchecked Sendable {
     /// closure receives the current document; if it throws, nothing is written.
     /// Returns the persisted document so a caller can reconcile the live WebView.
     @discardableResult
-    public func mutate(_ body: (inout WebStoreDocument) throws -> Void) rethrows -> WebStoreDocument {
+    public func mutate(_ body: (inout WebStoreDocument) throws -> Void) throws -> WebStoreDocument {
         lock.lock()
         let document: WebStoreDocument
         do {
             var working = loadLocked()
+            try SharedAppGroupStore.webSchema.validateFlat(working.raw)
             // Locks are judged on the shared view: a group locked on a linked
             // device is locked here too, even before the editor adopts it.
             Self.attachSharedView(&working)

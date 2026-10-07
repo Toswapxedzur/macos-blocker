@@ -10,11 +10,12 @@ import Foundation
 /// classifier, audit, content-block policy — now the extension's) are simply never
 /// read, and so are never written back; see LegacyStateDecodeTests.
 public struct LocalClassifierState: Codable, Equatable, Sendable {
-    public static let currentSchemaVersion = 2
+    public static let currentSchemaVersion = 3
     /// These are alpha document schemas, not beta product major numbers.
     /// Compatible unversioned/schema-1 forms reconcile once to schema 2.
     public static let minimumSupportedSchemaVersion = 0
     public var schemaVersion: Int
+    public var storageMetadata: StorageMetadata?
     public var settings: ClassifierSettings
     public var workspaceCatalog: WorkspaceCatalog
     public var backupConfiguration: LocalBackupConfiguration?
@@ -32,6 +33,7 @@ public struct LocalClassifierState: Codable, Equatable, Sendable {
         signedRollbackIdentities: [ActiveModelIdentity] = []
     ) {
         self.schemaVersion = schemaVersion
+        self.storageMetadata = StorageSchemaPolicy(format: "classifier.state", currentSchema: Self.currentSchemaVersion).metadata
         self.settings = settings
         self.workspaceCatalog = workspaceCatalog
         self.backupConfiguration = backupConfiguration
@@ -41,7 +43,7 @@ public struct LocalClassifierState: Codable, Equatable, Sendable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case schemaVersion, settings, workspaceCatalog, backupConfiguration
+        case schemaVersion, storageMetadata, settings, workspaceCatalog, backupConfiguration
         case activeModelIdentity, highestAcceptedSignedRelease, signedRollbackIdentities
     }
 
@@ -51,12 +53,17 @@ public struct LocalClassifierState: Codable, Equatable, Sendable {
         guard (Self.minimumSupportedSchemaVersion...Self.currentSchemaVersion).contains(storedVersion) else {
             throw LocalStateSchemaError.unsupportedVersion(storedVersion)
         }
+        let storedMetadata = try container.decodeIfPresent(StorageMetadata.self, forKey: .storageMetadata)
+        if let storedMetadata, storedMetadata.schemaVersion != storedVersion { throw StorageSchemaError.unsupported("inconsistent Classifier schema") }
+        let policy = StorageSchemaPolicy(format: "classifier.state", currentSchema: Self.currentSchemaVersion)
+        try policy.validate(storedMetadata)
         schemaVersion = Self.currentSchemaVersion
+        storageMetadata = policy.metadata
         settings = try container.decodeIfPresent(ClassifierSettings.self, forKey: .settings) ?? .init()
         workspaceCatalog = try container.decodeIfPresent(WorkspaceCatalog.self, forKey: .workspaceCatalog) ?? .starter()
         // One bounded reconciliation of the retired global defaults. New groups
         // always own their settings; no inheritance survives decoding or encoding.
-        if let retired = try? RetiredDialState(from: decoder) {
+        if storedVersion < Self.currentSchemaVersion, let retired = try? RetiredDialState(from: decoder) {
             let defaults = retired.settings?.localLLM ?? .init()
             for legacy in retired.workspaceCatalog?.classifierTypes ?? [] where legacy.localModel == nil {
                 guard let index = workspaceCatalog.classifierTypes.firstIndex(where: { $0.id == legacy.id }) else { continue }
@@ -165,7 +172,11 @@ public final class LocalStateFile: @unchecked Sendable {
             for platform in (try? manager.contentsOfDirectory(at: datasetDirectory, includingPropertiesForKeys: nil)) ?? [] {
                 for day in (try? manager.contentsOfDirectory(at: platform, includingPropertiesForKeys: nil)) ?? [] where day.pathExtension == "json" {
                     guard let data = try? Data(contentsOf: day),
-                          let entries = try? JSONDecoder().decode([CollectedPlatformEntry].self, from: data) else { continue }
+                          let payload = try? StorageSchemaPolicy(format: "classifier.collected").payload(from: data),
+                          let entries = try? JSONDecoder().decode([CollectedPlatformEntry].self, from: payload) else {
+                        if let data = try? Data(contentsOf: day) { _ = try StorageSchemaPolicy(format: "classifier.collected").payload(from: data) }
+                        continue
+                    }
                     for entry in entries where known.insert(entry.id).inserted {
                         state.workspaceCatalog.datasets[index].collectedEntries.append(entry)
                     }
@@ -176,10 +187,19 @@ public final class LocalStateFile: @unchecked Sendable {
         Self.lock.lock()
         Self.writtenDays[url.path] = signatures
         Self.lock.unlock()
+        // Successful decoding is the only alpha import path. Future formats
+        // throw above, before any collected file or state can be rewritten.
+        let disk = try JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any]
+        if (disk?["schemaVersion"] as? Int) != LocalClassifierState.currentSchemaVersion || disk?["storageMetadata"] == nil { try save(state) }
         return state
     }
 
     public func save(_ state: LocalClassifierState) throws {
+        if FileManager.default.fileExists(atPath: url.path) {
+            let root = try JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any]
+            guard let root else { throw StorageSchemaError.unsupported("invalid Classifier document") }
+            try StorageSchemaPolicy(format: "classifier.state", currentSchema: LocalClassifierState.currentSchemaVersion).validateFlat(root)
+        }
         let key = url.path
         let fileURL = url
         Self.lock.lock()
@@ -210,10 +230,18 @@ public final class LocalStateFile: @unchecked Sendable {
     private static func writeToDisk(_ state: LocalClassifierState, url: URL) {
         do {
             let manager = FileManager.default
+            let policy = StorageSchemaPolicy(format: "classifier.state", currentSchema: LocalClassifierState.currentSchemaVersion)
+            if manager.fileExists(atPath: url.path) {
+                let root = try JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any]
+                guard let root else { throw StorageSchemaError.unsupported("invalid Classifier document") }
+                try policy.validateFlat(root)
+            }
             try VaultPrivateFile.createDirectory(at: url.deletingLastPathComponent(), fileManager: manager)
             // The collected entries go to their day files; the state file holds the rest.
             let days = collectedDays(of: state)
             var slim = state
+            slim.schemaVersion = LocalClassifierState.currentSchemaVersion
+            slim.storageMetadata = policy.metadata
             for index in slim.workspaceCatalog.datasets.indices { slim.workspaceCatalog.datasets[index].collectedEntries = [] }
             let encoder = JSONEncoder()
             encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
@@ -229,7 +257,9 @@ public final class LocalStateFile: @unchecked Sendable {
                 guard previous[relative] != signature else { continue }
                 let file = directory.appendingPathComponent(relative)
                 try VaultPrivateFile.createDirectory(at: file.deletingLastPathComponent(), fileManager: manager)
-                try compact.encode(entries).write(to: file, options: .atomic)
+                let dayPolicy = StorageSchemaPolicy(format: "classifier.collected")
+                try dayPolicy.checkDestination(file)
+                try dayPolicy.wrap(compact.encode(entries)).write(to: file, options: .atomic)
                 try VaultPrivateFile.restrict(file, fileManager: manager)
             }
             for relative in previous.keys where written[relative] == nil {

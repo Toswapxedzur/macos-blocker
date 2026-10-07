@@ -1,5 +1,6 @@
 #if os(macOS)
 import Foundation
+import struct VaultClassifierCore.StorageSchemaPolicy
 import MacBlockerCore
 import Network
 import VaultClassifierBridge
@@ -93,6 +94,7 @@ final class ConnectionHub: ObservableObject {
     private var budgetTimer: DispatchSourceTimer?
     /// The registry last written (skips identical writes from the budget timer).
     private var lastPersistedClusters: Data?
+    private var clusterStorageWritable = true
     private var wantsToListen = false
     // Internal (not private) so tests can stand in for a hosting hub.
     var hostingLocalHub = false
@@ -1183,6 +1185,7 @@ final class ConnectionHub: ObservableObject {
     /// group already in another link, and for a second group of one program.
     /// Returns the refusal, or nil.
     func linkGroups(program: String, groupId: String, targetProgram: String, targetGroupId: String) -> String? {
+        guard clusterStorageWritable else { return "unsupported-storage" }
         guard !program.isEmpty, !targetProgram.isEmpty, program != targetProgram, !groupId.isEmpty, !targetGroupId.isEmpty else { return "invalid-link" }
         lock.lock()
         guard let own = rosters[program]?.first(where: { $0.id == groupId }),
@@ -1219,6 +1222,7 @@ final class ConnectionHub: ObservableObject {
     /// the shared settings; each keeps only its own program's lines. Refused
     /// while the link is locked.
     func unlinkGroup(program: String, groupId: String) -> String? {
+        guard clusterStorageWritable else { return "unsupported-storage" }
         lock.lock()
         guard let cluster = clusterLocked(program: program, groupId: groupId) else { lock.unlock(); return "not-linked" }
         if WebStoreDocument.isLocked(cluster.sharedLock) { lock.unlock(); return "group-locked" }
@@ -1718,8 +1722,11 @@ final class ConnectionHub: ObservableObject {
                 "bucketsSeeded": c.bucketsSeeded
             ]
         }
-        guard let data = try? JSONSerialization.data(withJSONObject: arr, options: [.sortedKeys]),
-              data != lastPersistedClusters else { return }
+        let schema = StorageSchemaPolicy(format: "hub.clusters")
+        guard clusterStorageWritable,
+              let payload = try? JSONSerialization.data(withJSONObject: arr, options: [.sortedKeys]),
+              let data = try? schema.wrap(payload), data != lastPersistedClusters else { return }
+        if let existing = UserDefaults.standard.data(forKey: ConnectionHub.clustersDefaultsKey), (try? schema.payload(from: existing)) == nil { clusterStorageWritable = false; return }
         lastPersistedClusters = data
         UserDefaults.standard.set(data, forKey: ConnectionHub.clustersDefaultsKey)
     }
@@ -1737,7 +1744,11 @@ final class ConnectionHub: ObservableObject {
             UserDefaults.standard.removeObject(forKey: ConnectionHub.droppedClustersDefaultsKey)
         }
         guard let data = UserDefaults.standard.data(forKey: ConnectionHub.clustersDefaultsKey),
-              let arr = (try? JSONSerialization.jsonObject(with: data)) as? [[String: Any]] else { return }
+              let payload = try? StorageSchemaPolicy(format: "hub.clusters").payload(from: data),
+              let arr = (try? JSONSerialization.jsonObject(with: payload)) as? [[String: Any]] else {
+            if UserDefaults.standard.data(forKey: ConnectionHub.clustersDefaultsKey) != nil { clusterStorageWritable = false }
+            return
+        }
         for obj in arr {
             guard let id = obj["id"] as? String,
                   let groupName = obj["groupName"] as? String else { continue }

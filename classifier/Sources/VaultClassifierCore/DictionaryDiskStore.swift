@@ -37,7 +37,8 @@ public final class DictionaryDiskStore: @unchecked Sendable {
                (try? manifest.validate()) != nil, manifest.kind == kind { active[kind] = manifest }
         }
         if let data = Self.boundedRead(root.appendingPathComponent("creator-cache.json"), max: 256*1024*1024),
-           let decoded = try? JSONDecoder().decode([String: CachedCreator].self, from: data) {
+           let payload = try? StorageSchemaPolicy(format: "dictionary.creator-cache").payload(from: data),
+           let decoded = try? JSONDecoder().decode([String: CachedCreator].self, from: payload) {
             cache = decoded.filter { DictionaryKeys.isPublicCreatorID($0.key) && ($0.value.entry == nil || (try? $0.value.entry?.validate()) != nil) }
         }
         trim()
@@ -68,7 +69,9 @@ public final class DictionaryDiskStore: @unchecked Sendable {
     }
     private func saveCache() throws {
         let file = root.appendingPathComponent("creator-cache.json")
-        try JSONEncoder().encode(cache).write(to: file, options: .atomic)
+        let schema = StorageSchemaPolicy(format: "dictionary.creator-cache")
+        try schema.checkDestination(file)
+        try schema.wrap(JSONEncoder().encode(cache)).write(to: file, options: .atomic)
         try VaultPrivateFile.restrict(file)
     }
     public func activateCacheManifest(_ manifest: DictionaryManifest) throws {

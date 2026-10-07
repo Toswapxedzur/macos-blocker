@@ -252,4 +252,26 @@ final class ActivityStoreTests: XCTestCase {
         }
         XCTAssertEqual(settings.retentionDays, 365)
     }
+    func testCompatibleAlphaActivityMigratesOnceAndFutureSettingsStayUnchanged() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let file = root.appendingPathComponent("settings.json")
+        let original = ActivitySettings()
+        try JSONEncoder().encode(original).write(to: file)
+        let store = ActivityStore(directory: root)
+        XCTAssertEqual(store.loadSettings(), original)
+        let migrated = try Data(contentsOf: file)
+        let object = try XCTUnwrap(JSONSerialization.jsonObject(with: migrated) as? [String: Any])
+        XCTAssertNotNil(object["storageMetadata"])
+        XCTAssertEqual(store.loadSettings(), original)
+        XCTAssertEqual(try Data(contentsOf: file), migrated)
+        let future = Data(#"{"storageMetadata":{"format":"activity.settings","schemaVersion":99,"product":"mac","writtenByAppVersion":"9.0.0"},"value":{"future":"keep"}}"#.utf8)
+        try future.write(to: file)
+        _ = store.loadSettings()
+        store.saveSettings(original)
+        XCTAssertNotNil(store.storageIssue)
+        XCTAssertEqual(try Data(contentsOf: file), future)
+    }
+
 }
