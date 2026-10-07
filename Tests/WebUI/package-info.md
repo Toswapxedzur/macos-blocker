@@ -11,3 +11,5 @@ Run on mini1 from the repository root:
 `activity-performance.js`: 10,000-entry bounded lists, dense chart/strip canvases, full search and original hover identities. Run with the Activity fixture through the Classifier autosave runner on mini1.
 
 `activity-scroll.js`: background snapshots defer hidden-scene rendering/history requests, preserve the newest-day and manually chosen timeline positions, render current data on return, and retain the outer viewport across recording-setting snapshots. Run with `UI_TEST_SCRIPT=Tests/WebUI/activity-scroll.js UI_TEST_EXPRESSION="runActivityScrollTests()"` through the same fixture runner.
+
+`activity-browser-accounting.js` verifies full Safari/Chrome durations beside websites, unique elapsed/group time, pie exclusion before merging, and thin browser bands in daily ordered/totals graphs. Run on owner-selected mini2 using the Activity fixture and `runBrowserAccountingTests()`.

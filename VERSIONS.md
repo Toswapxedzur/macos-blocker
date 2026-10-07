@@ -2,7 +2,11 @@
 
 The owner approved this capability split on 2026-10-04. Existing tags and packaged downloads remain unchanged. All new records are **alpha, source-only**. A source record does not certify store submission, signing or native release acceptance.
 
-Current source version: **2.2.6**. See the group-level `CHANGELOG.md` for the cross-product chapters.
+Current source version: **2.2.7**. See the group-level `CHANGELOG.md` for the cross-product chapters.
+
+## 2.2.7 — 2026-10-07 — Browser and website Activity accounting
+
+Show full browser durations alongside websites in Usage, keeping overlapping elapsed time unique in group totals. Exclude browsers before pie groups are merged. Retain narrow full-duration browser bands in the daily ordered and totals graphs. Regression coverage also verifies taxonomy revision changes project stored decisions through the current tree without reclassification.
 
 ## 2.2.6 — 2026-10-07 — Custom-origin log exports and JSON file picker
 

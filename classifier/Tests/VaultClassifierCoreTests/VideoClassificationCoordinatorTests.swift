@@ -213,6 +213,28 @@ final class VideoClassificationCoordinatorTests: XCTestCase {
         XCTAssertEqual(cached?.tags.map(\.id), ["g"])
     }
 
+    func testTaxonomyEditsProjectStoredDecisionsWithoutReclassification() async throws {
+        let (coordinator, root) = try makeCoordinatorWithYouTubeType()
+        defer { try? FileManager.default.removeItem(at: root) }
+        _ = try await coordinator.classifyVideo(platformID: "youtube", entryID: "youtube:video:v1", creatorID: "c1", title: "Games highlights")
+        let decisions = coordinator.snapshot().workspaceCatalog.videoClassifications
+        var catalog = coordinator.snapshot().workspaceCatalog
+        let index = try XCTUnwrap(catalog.trees.firstIndex { $0.id == "t" })
+        catalog.trees[index].nodes[0].name = "Renamed Games"
+        catalog.trees[index].nodes[0].parentID = "p"
+        catalog.trees[index].revision += 1
+        try coordinator.updateWorkspaceCatalog(catalog)
+        let renamed = coordinator.cachedVideoTags(platformID: "youtube", entryID: "youtube:video:v1")
+        XCTAssertEqual(renamed?.tags.map(\.name), ["Renamed Games"])
+        XCTAssertEqual(renamed?.tags.first?.parentID, "p")
+        XCTAssertEqual(coordinator.snapshot().workspaceCatalog.videoClassifications, decisions)
+        catalog.trees[index].nodes.removeAll { $0.id == "g" }
+        catalog.trees[index].revision += 1
+        try coordinator.updateWorkspaceCatalog(catalog)
+        XCTAssertEqual(coordinator.cachedVideoTags(platformID: "youtube", entryID: "youtube:video:v1")?.tags, [])
+        XCTAssertEqual(coordinator.snapshot().workspaceCatalog.videoClassifications, decisions)
+    }
+
     func testClassifyVideoUpdatesDerivedCreatorHistogram() async throws {
         let (coordinator, root) = try makeCoordinatorWithYouTubeType()
         defer { try? FileManager.default.removeItem(at: root) }
