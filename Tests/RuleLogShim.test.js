@@ -2,14 +2,16 @@ const fs=require('node:fs'),vm=require('node:vm'),assert=require('node:assert/st
 const path=require('node:path');
 const script=fs.readFileSync(path.join(__dirname,'../Sources/MacBlockerWebUI/WebAssets/chrome-shim.js'),'utf8');
 const storage=new Map([['__cb_chrome_storage__',JSON.stringify({blockedGroups:[{id:'a'},{id:'b'}],ruleLog:[{group:'Old mixed log',message:'stale'}]})]]);
-const create=()=>{
+const create=(programID="macapp")=>{
   const context=vm.createContext({console,URL,Date,Set,Math,Promise,setTimeout,clearTimeout,
     navigator:{language:'en'},localStorage:{getItem:key=>storage.get(key)||null,setItem:(key,value)=>storage.set(key,value)},
     location:{href:'http://localhost/popup.html',origin:'http://localhost'},addEventListener(){}});
-  context.window=context;vm.runInContext(script,context);return context;
+  context.window=context;context.__CB_DESKTOP_PROGRAM_ID=programID;vm.runInContext(script,context);return context;
 };
 (async()=>{
   let context=create();
+  assert.equal(typeof context.__cbSaveRuleLog,'function','Mac uses its native export');
+  assert.equal(typeof create('windowsapp').__cbSaveRuleLog,'undefined','Windows retains its WebView Blob download instead of an unsupported Mac message');
   const get=groupId=>context.chrome.runtime.sendMessage({type:'get-log-feed',groupId});
   assert.equal((await get('a')).entries.length,0,'mixed legacy buffer is discarded');
   const log=(groupId,message)=>({source:'v.log',groupId,group:'Same name',message});
