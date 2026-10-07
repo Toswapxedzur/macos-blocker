@@ -56,6 +56,8 @@ public final class GroupStore: @unchecked Sendable {
         document.sharedView = Dictionary(groups.compactMap { g in (g["id"] as? String).map { ($0, g) } },
                                          uniquingKeysWith: { first, _ in first })
         document.sharedSnoozes = overlaid["groupSnoozes"] as? [String: Any]
+        document.sharedUsageTimersMs = overlaid["usageTimersMs"] as? [String: Any]
+        document.sharedUsageResetAtMs = overlaid["usageResetAtMs"] as? [String: Any]
     }
 
     /// Lays the live shared state of linked groups over a stored document (set
@@ -169,6 +171,8 @@ public struct WebStoreDocument {
     public var sharedView: [String: [String: Any]]?
     /// The snoozes as linked devices share them (see sharedView).
     public var sharedSnoozes: [String: Any]?
+    public var sharedUsageTimersMs: [String: Any]?
+    public var sharedUsageResetAtMs: [String: Any]?
     /// Set by `unlockCheck`: the lock version its confirmation is for.
     public private(set) var checkedLockVersion: Int?
 
@@ -600,8 +604,9 @@ public struct WebStoreDocument {
         if let refusal = try snoozePlan(id: id, now: now).refusal { return .refused(refusal) }
         let nowMs = (now.timeIntervalSince1970 * 1000).rounded()
         // The budget anchor sets when a budget snooze's extra room lapses.
-        let resetAt: Any = (raw["usageResetAtMs"] as? [String: Any])?[id] ?? NSNull()
-        guard let entry = GroupActionsRuntime.shared.call("snoozeEntry", [current, nowMs, resetAt]) else { return .refused("internal") }
+        let resetAt: Any = (sharedUsageResetAtMs ?? raw["usageResetAtMs"] as? [String: Any])?[id] ?? NSNull()
+        let used: Any = (sharedUsageTimersMs ?? raw["usageTimersMs"] as? [String: Any])?[id] ?? 0
+        guard let entry = GroupActionsRuntime.shared.call("snoozeEntry", [current, nowMs, resetAt, used]) else { return .refused("internal") }
         var snoozes = raw["groupSnoozes"] as? [String: Any] ?? [:]
         snoozes[id] = entry
         raw["groupSnoozes"] = snoozes
