@@ -47,6 +47,8 @@ final class ClusterScopesShareTests: XCTestCase {
             "snooze": ["startsAtMs": now, "untilMs": now + 600_000, "cooldownUntilMs": now + 600_000, "changedAtMs": now],
             "snoozeTs": now
         ], ts: 5)
+        // Both originals must arrive before any scope union can be adopted.
+        hub.applySync(program: "macapp", groupId: "m1", contribution: ["scopes": [[String: Any]]()], ts: 0)
         let stored: [String: Any] = [
             "blockedGroups": [["id": "m1", "name": "Focus", "allowedMinutes": 15]],
             "groupSnoozes": ["m1": ["startsAtMs": now - 5_000, "untilMs": now - 1_000, "cooldownUntilMs": now - 1_000]]
@@ -68,7 +70,10 @@ final class ClusterScopesShareTests: XCTestCase {
         let apps: [[String: Any]] = [["id": "apps-1", "surface": "apps", "platform": NSNull(), "action": "block", "apps": [["id": "com.apple.Safari", "name": "Safari"]]]]
 
         hub.applySync(program: "chrome", groupId: "c1", contribution: ["scalars": ["mode": "instant"], "scopes": youtube], ts: 10)
-        XCTAssertEqual(keys(sharedScopes(hub)), ["youtube", "youtube"], "the first member's entries become the shared ones")
+        XCTAssertNil(sharedScopes(hub), "partial scopes stay withheld until the Mac contributes its original lines")
+        let original: [String: Any] = ["blockedGroups": [["id": "m1", "scopes": apps]]]
+        let pending = hub.overlayShared(onto: original)["blockedGroups"] as? [[String: Any]]
+        XCTAssertEqual(keys(pending?.first?["scopes"] as? [[String: Any]]), ["apps"], "linking preserves the original local lines while waiting")
 
         hub.applySync(program: "macapp", groupId: "m1", contribution: ["scalars": ["mode": "instant"], "scopes": apps], ts: 5)
         XCTAssertEqual(keys(sharedScopes(hub)), ["youtube", "youtube", "apps"], "the Mac's first contribution adds its Apps entry even with an older ts")

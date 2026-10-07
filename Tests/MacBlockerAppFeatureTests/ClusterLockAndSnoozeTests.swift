@@ -34,6 +34,33 @@ final class ClusterLockAndSnoozeTests: XCTestCase {
                       contribution: ["scalars": ["allowedMinutes": 15], "lock": lock, "lockBase": base], ts: 1)
     }
 
+    func testOfflineUsageTransferIsCountedOnceAndReceiptSurvivesRestart() throws {
+        for rolling in [false, true] {
+            let hub = linkedHub()
+            let now = Date().timeIntervalSince1970 * 1000
+            hub.applySync(program: "macapp", groupId: "m1", contribution: ["scalars": ["allowedMinutes": 15, "resetIntervalHours": 2, "rollingLimit": rolling], "usageResetAtMs": now], ts: 1)
+            let transfer: [String: Any] = rolling
+                ? ["usageTransferId": "fixture-transfer", "usageBuckets": UsageBudget.bucketJSON([floor(now / 60_000) * 60_000: 60_000])]
+                : ["usageTransferId": "fixture-transfer", "usageDeltaMs": 60_000.0, "usageDeltaAnchorMs": now]
+            hub.applySync(program: "chrome", groupId: "c1", contribution: transfer, ts: 0)
+            hub.applySync(program: "chrome", groupId: "c1", contribution: transfer, ts: 0)
+            func sharedState(_ h: ConnectionHub) throws -> [String: Any] {
+                let data = Data(h.clustersJSON().utf8)
+                let root = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+                return try XCTUnwrap((root["clusters"] as? [[String: Any]])?.first?["shared"] as? [String: Any])
+            }
+            let state = try sharedState(hub)
+            XCTAssertNotNil((state["usageTransferReceipts"] as? [String: Double])?["chrome:fixture-transfer"])
+            if rolling { XCTAssertEqual(UsageBudget.usedMs(UsageBudget.parseBuckets(state["usageBuckets"]) ?? [:]), 60_000) }
+            else { XCTAssertEqual(state["usageMs"] as? Double, 60_000) }
+            let restored = ConnectionHub(); restored.restoreClustersLocked()
+            restored.applySync(program: "chrome", groupId: "c1", contribution: transfer, ts: 0)
+            let after = try sharedState(restored)
+            if rolling { XCTAssertEqual(UsageBudget.usedMs(UsageBudget.parseBuckets(after["usageBuckets"]) ?? [:]), 60_000) }
+            else { XCTAssertEqual(after["usageMs"] as? Double, 60_000) }
+        }
+    }
+
     func testTheLinksLockMovesOnlyOnTopOfItsVersion() {
         let hub = linkedHub()
         sync(hub, "chrome", lock: unit(locked: false, version: 3), base: 0)

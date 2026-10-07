@@ -96,10 +96,16 @@ actor OfficialDictionaryService: DictionaryEvidenceProviding {
     private let http: any DictionaryHTTP
     private var available: [KnowledgeEntryKind: DictionaryManifest] = [:]
     private var inFlight: [String: Task<Void, Never>] = [:]
-    private var contributionSends: [UUID: Task<Void, Never>] = [:]
+    private var contributionSends: [UUID: Task<Bool, Never>] = [:]
+    private var contributionIDs: Set<String> = []
     private var lookupUnavailableUntil = Date.distantPast
     private var failureUntil: [String: Date] = [:]
-    private struct SubmissionLedger: Codable { var day: String = ""; var sent: [String] = [] }
+    private struct SubmissionLedger: Codable {
+        var day: String = ""
+        var sent: [String] = []
+        var counts: [String: Int64]?
+        var attempts: Int?
+    }
     private var ledger: SubmissionLedger
     private let ledgerFile: URL
     init(disk: DictionaryDiskStore, http: any DictionaryHTTP = DictionaryHTTPClient()) {
@@ -207,22 +213,38 @@ actor OfficialDictionaryService: DictionaryEvidenceProviding {
         guard settings.contributionEnabled && settings.contributionChoiceMade else { return }
         let day = String(Int(Date().timeIntervalSince1970) / 86400)
         if ledger.day != day { ledger = .init(day: day, sent: []) }
-        guard ledger.sent.count < 50, !ledger.sent.contains(id) else { return }
+        guard (ledger.attempts ?? ledger.sent.count) < 50, !contributionIDs.contains(id) else { return }
+        if ledger.sent.contains(id) {
+            // A feed may submit an unknown count; a later watch page can enrich
+            // it without repeatedly submitting the same known value.
+            guard let subscriberCount, ledger.counts?[id] != subscriberCount else { return }
+        }
         // Sample one in four IDs deterministically per day, so repeated sightings do not multiply uploads.
         let sample = DictionaryKeys.digest(Data((day + id).utf8)).prefix(2)
         guard (Int(sample, radix: 16) ?? 0) % 4 == 0 else { return }
-        ledger.sent.append(id); try? saveLedger()
         let row: [String: Any] = ["creatorID": id, "subscriberCount": subscriberCount.map { $0 as Any } ?? NSNull()]
         guard let data = try? JSONSerialization.data(withJSONObject: ["creators": [row]]) else { return }
         // Re-read the gate at the send boundary. No stored user/device ID, title or term is sent.
         guard disk.settings().contributionEnabled && disk.settings().contributionChoiceMade else { return }
+        ledger.attempts = (ledger.attempts ?? ledger.sent.count) + 1
+        try? saveLedger()
+        contributionIDs.insert(id)
         let token = UUID()
         let task = Task { [http, disk] in
-            guard !Task.isCancelled, disk.settings().contributionEnabled, disk.settings().contributionChoiceMade else { return }
-            _ = try? await http.request(path: "creator-contributions", method: "POST", body: data)
+            guard !Task.isCancelled, disk.settings().contributionEnabled, disk.settings().contributionChoiceMade else { return false }
+            do {
+                _ = try await http.request(path: "creator-contributions", method: "POST", body: data)
+                return !Task.isCancelled
+            } catch { return false }
         }
         contributionSends[token] = task
-        await task.value
+        let succeeded = await task.value
         contributionSends[token] = nil
+        contributionIDs.remove(id)
+        if succeeded, ledger.day == day {
+            if !ledger.sent.contains(id) { ledger.sent.append(id) }
+            if let subscriberCount { var counts = ledger.counts ?? [:]; counts[id] = subscriberCount; ledger.counts = counts }
+            try? saveLedger()
+        }
     }
 }

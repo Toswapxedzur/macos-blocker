@@ -60,6 +60,43 @@ final class OfficialDictionaryServiceTests: XCTestCase {
         _ = await service.evidence(title: "A niche term", creatorID: "", subscriberCount: nil)
         let last = await http.requests(); XCTAssertEqual(last.count, all.count)
     }
+    func testUnknownSubscriberCountCanBeEnrichedLaterThatDay() async throws {
+        var settings = DictionarySettings(); settings.creatorMode = .full
+        settings.contributionEnabled = true; settings.contributionChoiceMade = true
+        let store = try disk(settings), http = DictionaryHTTPFixture()
+        let service = OfficialDictionaryService(disk: store, http: http)
+        let day = String(Int(Date().timeIntervalSince1970) / 86400)
+        let id = try XCTUnwrap((0..<1000).map { "twitter:account:enrichment\($0)" }.first {
+            (Int(DictionaryKeys.digest(Data((day + $0).utf8)).prefix(2), radix: 16) ?? 1) % 4 == 0
+        })
+        _ = await service.evidence(title: "Private feed", creatorID: id, subscriberCount: nil)
+        _ = await service.evidence(title: "Private watch title", creatorID: id, subscriberCount: 123)
+        _ = await service.evidence(title: "Same known count", creatorID: id, subscriberCount: 123)
+        let posts = await http.requests().filter { $0.1 == "POST" }
+        XCTAssertEqual(posts.count, 2)
+        let row = try XCTUnwrap((JSONSerialization.jsonObject(with: try XCTUnwrap(posts.last?.2)) as? [String: Any])?["creators"] as? [[String: Any]])
+        XCTAssertEqual(row.first?["subscriberCount"] as? Int, 123)
+        let reopened = OfficialDictionaryService(disk: store, http: http)
+        _ = await reopened.evidence(title: "After restart", creatorID: id, subscriberCount: 123)
+        let finalPosts = await http.requests().filter { $0.1 == "POST" }
+        XCTAssertEqual(finalPosts.count, 2, "successful enrichment is retained across restart")
+    }
+
+    func testFailedContributionCanRetryWithoutMarkingTheIDSent() async throws {
+        var settings = DictionarySettings(); settings.creatorMode = .full
+        settings.contributionEnabled = true; settings.contributionChoiceMade = true
+        let http = RetryContributionFixture(), service = OfficialDictionaryService(disk: try disk(settings), http: http)
+        let day = String(Int(Date().timeIntervalSince1970) / 86400)
+        let id = try XCTUnwrap((0..<1000).map { "twitter:account:retry\($0)" }.first {
+            (Int(DictionaryKeys.digest(Data((day + $0).utf8)).prefix(2), radix: 16) ?? 1) % 4 == 0
+        })
+        _ = await service.evidence(title: "Private", creatorID: id, subscriberCount: 123)
+        _ = await service.evidence(title: "Retry", creatorID: id, subscriberCount: 123)
+        _ = await service.evidence(title: "Already sent", creatorID: id, subscriberCount: 123)
+        let attempts = await http.attempts
+        XCTAssertEqual(attempts, 2)
+    }
+
     func testRealLoopbackHTTPDownload() async throws {
         let process = Process()
         let environment = ProcessInfo.processInfo.environment
@@ -97,6 +134,15 @@ final class OfficialDictionaryServiceTests: XCTestCase {
             do { _ = try await client.request(path: path, method: "GET", body: nil); XCTFail("Accepted prohibited transfer: \(path)") }
             catch { XCTAssertTrue(error is DictionaryError, "\(path): \(error)") }
         }
+    }
+}
+
+private actor RetryContributionFixture: DictionaryHTTP {
+    var attempts = 0
+    func request(path: String, method: String, body: Data?) async throws -> Data {
+        attempts += 1
+        if attempts == 1 { throw DictionaryError.unavailable }
+        return Data(#"{"accepted":1}"#.utf8)
     }
 }
 

@@ -278,6 +278,9 @@ final class ConnectionHub: ObservableObject {
         var sharedUsageMs: Double = 0
         var sharedUsageResetAtMs: Double = 0
         var usageSeeded = false
+        /// Durable receipts for immutable offline usage batches, keyed by peer
+        /// program and transfer id. Retried batches never consume usage twice.
+        var usageTransferReceipts: [String: Double] = [:]
         /// Rolling-limit groups share per-minute usage (minute-start ms -> ms)
         /// instead of one total: a sliding window needs to know WHEN time was
         /// used so old minutes can age out. Deltas only, like `sharedUsageMs`.
@@ -616,6 +619,7 @@ final class ConnectionHub: ObservableObject {
             send(conn, dict: [
                 "kind": "welcome",
                 "v": Self.protocolVersion,
+                "usageTransferReceipts": true,
                 "hubProgram": Self.localProgram,
                 "peers": peerListJSON()
             ])
@@ -1341,17 +1345,22 @@ final class ConnectionHub: ObservableObject {
         }
         let nowMs = Date().timeIntervalSince1970 * 1000
         rollBudgetLocked(cluster, nowMs: nowMs)
+        let transferID = contribution["usageTransferId"] as? String
+        let transferKey = transferID.flatMap { !$0.isEmpty && $0.count <= 128 ? "\(program):\($0)" : nil }
+        let receiptLifetime = max(86_400_000, ((cluster.sharedScalars["resetIntervalHours"] as? NSNumber)?.doubleValue ?? 24) * 10_800_000)
+        cluster.usageTransferReceipts = cluster.usageTransferReceipts.filter { $0.value >= nowMs - receiptLifetime }
+        let duplicateTransfer = transferKey.map { cluster.usageTransferReceipts[$0] != nil } ?? false
         // Time a browser counted while the hub was away arrives tagged with
         // its period: added only when that period is still the current one.
         let deltaPeriod = (contribution["usageDeltaAnchorMs"] as? NSNumber)?.doubleValue
-        if let delta = contribution["usageDeltaMs"] as? Double, delta != 0,
+        if !duplicateTransfer, let delta = contribution["usageDeltaMs"] as? Double, delta != 0,
            deltaPeriod == nil || deltaPeriod!.rounded(.down) == cluster.sharedUsageResetAtMs.rounded(.down) {
             if (cluster.sharedScalars["rollingLimit"] as? Bool) != true {
                 Self.countBudgetSnoozeLocked(cluster, beforeMs: cluster.sharedUsageMs, addedMs: delta, nowMs: nowMs)
             }
             cluster.sharedUsageMs = max(0, cluster.sharedUsageMs + delta)
             cluster.usageSeeded = true
-        } else if !cluster.usageSeeded,
+        } else if !duplicateTransfer, !cluster.usageSeeded,
                   let seed = contribution["usageMs"] as? Double,
                   seed > cluster.sharedUsageMs {
             // No real delta yet: seed the budget from the largest existing member
@@ -1365,8 +1374,8 @@ final class ConnectionHub: ObservableObject {
             resetAtMidnight: (cluster.sharedScalars["resetAtMidnight"] as? Bool) == true
         )
         let rollingBefore = UsageBudget.usedMs(UsageBudget.pruneBuckets(cluster.sharedBuckets, group: rollingPolicy, nowMs: nowMs))
-        applyBucketContributionLocked(cluster, contribution)
-        if (cluster.sharedScalars["rollingLimit"] as? Bool) == true,
+        if !duplicateTransfer { applyBucketContributionLocked(cluster, contribution) }
+        if !duplicateTransfer, (cluster.sharedScalars["rollingLimit"] as? Bool) == true,
            let deltas = UsageBudget.parseBuckets(contribution["usageBuckets"]), !deltas.isEmpty {
             let rollingAfter = UsageBudget.usedMs(UsageBudget.pruneBuckets(cluster.sharedBuckets, group: rollingPolicy, nowMs: nowMs))
             Self.countBudgetSnoozeLocked(cluster, beforeMs: rollingBefore, addedMs: max(0, rollingAfter - rollingBefore), nowMs: nowMs)
@@ -1388,7 +1397,10 @@ final class ConnectionHub: ObservableObject {
         // Persist only on config-bearing syncs (scalars/scopes/snooze), not
         // on per-tick usage pings, so the on-disk registry tracks structural and
         // settings changes without hammering the disk every second.
-        if carriesConfig { persistClustersLocked() }
+        if let transferKey { cluster.usageTransferReceipts[transferKey] = nowMs }
+        // Receipts and the usage they acknowledge are saved together before
+        // the snapshot lets a sender remove its durable outbox batch.
+        if carriesConfig || transferKey != nil { persistClustersLocked() }
 
         let after = clusterJSONObject(cluster)
         lock.unlock()
@@ -1538,7 +1550,7 @@ final class ConnectionHub: ObservableObject {
             let pinned = cluster.memberGroupIds[Self.localProgram] ?? ""
             guard !pinned.isEmpty, let index = groups.firstIndex(where: { ($0["id"] as? String) == pinned }) else { continue }
             for (field, value) in cluster.sharedScalars { groups[index][field] = value }
-            if !cluster.contributed.isEmpty { groups[index]["scopes"] = cluster.sharedScopes }
+            if cluster.members.isSubset(of: cluster.contributed) { groups[index]["scopes"] = cluster.sharedScopes }
             if !cluster.sharedLock.isEmpty {
                 for (field, value) in cluster.sharedLock { groups[index][field] = value }
                 groups[index]["lockSyncedVersion"] = cluster.sharedLock["lockVersion"]
@@ -1702,6 +1714,7 @@ final class ConnectionHub: ObservableObject {
                 "sharedUsageResetAtMs": c.sharedUsageResetAtMs,
                 "sharedBuckets": UsageBudget.bucketJSON(c.sharedBuckets),
                 "usageSeeded": c.usageSeeded,
+                "usageTransferReceipts": c.usageTransferReceipts,
                 "bucketsSeeded": c.bucketsSeeded
             ]
         }
@@ -1750,6 +1763,7 @@ final class ConnectionHub: ObservableObject {
             cluster.sharedUsageResetAtMs = (obj["sharedUsageResetAtMs"] as? Double) ?? 0
             cluster.sharedBuckets = UsageBudget.parseBuckets(obj["sharedBuckets"]) ?? [:]
             cluster.usageSeeded = (obj["usageSeeded"] as? Bool) ?? false
+            cluster.usageTransferReceipts = (obj["usageTransferReceipts"] as? [String: Double]) ?? [:]
             cluster.bucketsSeeded = (obj["bucketsSeeded"] as? Bool) ?? false
             // Only restore clusters that still have ≥2 members (a 1-member
             // cluster is meaningless and would never broadcast).
@@ -1788,7 +1802,7 @@ final class ConnectionHub: ObservableObject {
         ]
         if hasShared || cluster.sharedUsageMs > 0
             || !cluster.sharedBuckets.isEmpty
-            || cluster.sharedSnoozeTs > 0 || cluster.sharedSnoozeTotalMs > 0 {
+            || cluster.sharedSnoozeTs > 0 || cluster.sharedSnoozeTotalMs > 0 || !cluster.usageTransferReceipts.isEmpty {
             var shared: [String: Any] = [
                 "scalars": cluster.sharedScalars,
                 "ts": cluster.sharedTs,
@@ -1799,9 +1813,10 @@ final class ConnectionHub: ObservableObject {
                 "snoozeTs": cluster.sharedSnoozeTs,
                 "snoozeTotalMs": cluster.sharedSnoozeTotalMs
             ]
-            // Lines appear once a member contributed: before that there is
-            // nothing to adopt; after it an empty list is an emptied one.
-            if !cluster.contributed.isEmpty { shared["scopes"] = cluster.sharedScopes }
+            // Publish the union only after every member brought its original
+            // lines. Afterwards an empty list represents an explicit deletion.
+            shared["usageTransferReceipts"] = cluster.usageTransferReceipts
+            if cluster.members.isSubset(of: cluster.contributed) { shared["scopes"] = cluster.sharedScopes }
             if !cluster.sharedLock.isEmpty { shared["lock"] = cluster.sharedLock }
             dict["shared"] = shared
         }
