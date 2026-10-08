@@ -39,11 +39,20 @@ private actor ControlledModelDownloadTransport: ModelDownloadTransport {
     }
 }
 
-private actor DownloadProgressRecorder {
-    private(set) var values: [ModelDownloadProgress] = []
+private final class DownloadProgressRecorder: @unchecked Sendable {
+    private let lock = NSLock()
+    private var recorded: [ModelDownloadProgress] = []
+
+    var values: [ModelDownloadProgress] {
+        lock.lock()
+        defer { lock.unlock() }
+        return recorded
+    }
 
     func append(_ value: ModelDownloadProgress) {
-        values.append(value)
+        lock.lock()
+        defer { lock.unlock() }
+        recorded.append(value)
     }
 }
 
@@ -104,7 +113,7 @@ final class ModelDownloadManagerTests: XCTestCase {
 
         let recorder = DownloadProgressRecorder()
         let downloaded = try await URLSessionModelDownloadTransport().download(from: fixture.url) { update in
-            Task { await recorder.append(update) }
+            recorder.append(update)
         }
         defer { try? FileManager.default.removeItem(at: downloaded) }
         XCTAssertEqual(try Data(contentsOf: downloaded), bytes, "the whole file, kept past the callback")
@@ -143,7 +152,7 @@ final class ModelDownloadManagerTests: XCTestCase {
         )
         let download = Task {
             try await manager.download(entry) { progress in
-                Task { await recorder.append(progress) }
+                recorder.append(progress)
             }
         }
 
@@ -167,10 +176,9 @@ final class ModelDownloadManagerTests: XCTestCase {
         let publishedNames = try FileManager.default.contentsOfDirectory(atPath: modelsDirectory.path)
         XCTAssertEqual(publishedNames, [entry.ggufFileName])
 
-        for _ in 0..<1_000 where await recorder.values.count < 2 {
-            await Task.yield()
-        }
-        let values = await recorder.values
+        // Record in the callback itself; separately scheduled tasks can reorder
+        // the initial zero update behind the transport's first progress update.
+        let values = recorder.values
         XCTAssertEqual(values.first?.bytesReceived, 0)
         XCTAssertTrue(values.contains { $0.bytesReceived == 25 && $0.totalBytes == 100 })
     }
