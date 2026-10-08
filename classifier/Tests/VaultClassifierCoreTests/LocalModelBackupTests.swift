@@ -67,4 +67,39 @@ final class LocalModelBackupTests: XCTestCase {
         )
         #endif
     }
+    func testFutureBackupManifestAndPayloadAreRefusedWithoutCleanup() throws {
+        let metadata = #""storageMetadata":{"format":"classifier.backup-manifest","schemaVersion":99,"product":"mac","writtenByAppVersion":"9.0.0"}"#
+        let raw = Data(("{" + metadata + ",\"createdAtMilliseconds\":1,\"packageChecksum\":\"keep\"}").utf8)
+        XCTAssertThrowsError(try JSONDecoder().decode(LocalModelBackupManifest.self, from: raw))
+        XCTAssertThrowsError(try JSONDecoder().decode(LocalModelBackupPayload.self, from: Data(#"{"schemaVersion":99}"#.utf8)))
+        let state = LocalClassifierState()
+        let decoded = try JSONDecoder().decode(LocalModelBackupPayload.self, from: JSONEncoder().encode(LocalModelBackupPayload(state: state)))
+        XCTAssertEqual(decoded.storageMetadata, state.storageMetadata)
+
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let futureFolder = root.appendingPathComponent("model-future", isDirectory: true)
+        try FileManager.default.createDirectory(at: futureFolder, withIntermediateDirectories: true)
+        let manifestURL = futureFolder.appendingPathComponent("manifest.json")
+        try raw.write(to: manifestURL)
+        let payloadFolder = root.appendingPathComponent("model-future-payload", isDirectory: true)
+        try FileManager.default.createDirectory(at: payloadFolder, withIntermediateDirectories: true)
+        let currentManifest = LocalModelBackupManifest(createdAtMilliseconds: 0, activeModelIdentity: nil,
+            packageChecksum: "keep", collectedEntryCount: 0, videoClassificationCount: 0)
+        try JSONEncoder().encode(currentManifest).write(to: payloadFolder.appendingPathComponent("manifest.json"))
+        let payloadURL = payloadFolder.appendingPathComponent("model-state.json")
+        let futurePayload = Data(#"{"schemaVersion":99}"#.utf8)
+        try futurePayload.write(to: payloadURL)
+        let seed = try SeedPackageLoader.bundled()
+        for index in 1...5 {
+            _ = try LocalModelBackup().backup(state: state, package: seed, in: root,
+                at: Date(timeIntervalSince1970: TimeInterval(index)))
+        }
+        XCTAssertEqual(try Data(contentsOf: manifestURL), raw)
+        XCTAssertEqual(try Data(contentsOf: payloadURL), futurePayload)
+        let folders = try FileManager.default.contentsOfDirectory(at: root, includingPropertiesForKeys: nil)
+            .filter { $0.hasDirectoryPath && $0.lastPathComponent.hasPrefix("model-") }
+        XCTAssertEqual(folders.count, LocalBackupConfiguration.retainedSnapshotCount + 2)
+    }
+
 }

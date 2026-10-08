@@ -14,6 +14,7 @@ worker explicitly. A test runner's bundle version is never a product version.
 | Collected entries | `classifier.collected`, envelope schema 1 | Compatible day arrays wrap; dataset/platform/day partitioning remains. |
 | Activity | `activity.settings`, `web-icons`, `colors`, `groups`, `watched-facts`, `records.<category>`, envelope schema 1 | Decode compatible alpha settings/maps/arrays fully before atomic wrapping. |
 | Linked registry | `hub.clusters`, envelope schema 1 | Current explicit-link array migrates; retired automatic links remain retired. Mac uses its existing UserDefaults key; Windows uses its existing file. |
+| Local backups | Classifier payload schema 3 and `classifier.backup-manifest` metadata schema 1 | Share the state decoder/expiry policy. Retention excludes unreadable or unsupported manifests instead of treating them as oldest and deleting them. |
 | Local caches | `dictionary.creator-cache`, `dictionary.contribution-ledger`, `provider.model-catalog`, envelope schema 1 | Compatible local data imports; an unsupported contribution ledger also prevents HTTP contributions that could evade deduplication/attempt limits. |
 
 Envelopes contain `storageMetadata` (`format`, `schemaVersion`, `product`,
