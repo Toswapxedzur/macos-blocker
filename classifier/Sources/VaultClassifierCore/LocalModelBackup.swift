@@ -38,6 +38,7 @@ public struct LocalBackupConfiguration: Codable, Equatable, Sendable {
 }
 
 public struct LocalModelBackupManifest: Codable, Equatable, Sendable {
+    public var storageMetadata: StorageMetadata?
     public var createdAtMilliseconds: Int64
     public var activeModelIdentity: ActiveModelIdentity?
     public var packageChecksum: String
@@ -51,6 +52,7 @@ public struct LocalModelBackupManifest: Codable, Equatable, Sendable {
         collectedEntryCount: Int,
         videoClassificationCount: Int
     ) {
+        self.storageMetadata = StorageSchemaPolicy(format: "classifier.backup-manifest").metadata
         self.createdAtMilliseconds = createdAtMilliseconds
         self.activeModelIdentity = activeModelIdentity
         self.packageChecksum = packageChecksum
@@ -59,12 +61,15 @@ public struct LocalModelBackupManifest: Codable, Equatable, Sendable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case createdAtMilliseconds, activeModelIdentity, packageChecksum
+        case storageMetadata, createdAtMilliseconds, activeModelIdentity, packageChecksum
         case collectedEntryCount, videoClassificationCount
     }
 
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
+        let schema = StorageSchemaPolicy(format: "classifier.backup-manifest")
+        try schema.validate(container.decodeIfPresent(StorageMetadata.self, forKey: .storageMetadata))
+        storageMetadata = schema.metadata
         createdAtMilliseconds = try container.decode(Int64.self, forKey: .createdAtMilliseconds)
         activeModelIdentity = try container.decodeIfPresent(ActiveModelIdentity.self, forKey: .activeModelIdentity)
         packageChecksum = try container.decode(String.self, forKey: .packageChecksum)
@@ -75,6 +80,7 @@ public struct LocalModelBackupManifest: Codable, Equatable, Sendable {
 
 /// The local backup payload contains current authored and collected state only.
 public struct LocalModelBackupPayload: Codable, Equatable, Sendable {
+    public var storageMetadata: StorageMetadata?
     public var schemaVersion: Int
     public var settings: ClassifierSettings
     public var workspaceCatalog: WorkspaceCatalog
@@ -82,7 +88,12 @@ public struct LocalModelBackupPayload: Codable, Equatable, Sendable {
     public var highestAcceptedSignedRelease: PackageReleaseStamp?
     public var signedRollbackIdentities: [ActiveModelIdentity]
 
+    public init(from decoder: Decoder) throws {
+        self.init(state: try LocalClassifierState(from: decoder))
+    }
+
     public init(state: LocalClassifierState) {
+        storageMetadata = state.storageMetadata
         schemaVersion = state.schemaVersion
         settings = state.settings
         workspaceCatalog = state.workspaceCatalog
@@ -168,17 +179,32 @@ public struct LocalModelBackup: Sendable {
             includingPropertiesForKeys: [.contentModificationDateKey],
             options: [.skipsHiddenFiles]
         )
-        .filter { $0.hasDirectoryPath && $0.lastPathComponent.hasPrefix("model-") }
+        .compactMap { folder -> (url: URL, manifest: LocalModelBackupManifest)? in
+            guard folder.hasDirectoryPath, folder.lastPathComponent.hasPrefix("model-"),
+                  let manifest = try? supportedManifest(at: folder) else { return nil }
+            return (folder, manifest)
+        }
         .sorted {
-            let left = (try? JSONDecoder().decode(LocalModelBackupManifest.self, from: Data(contentsOf: $0.appendingPathComponent("manifest.json"))).createdAtMilliseconds) ?? Int64.min
-            let right = (try? JSONDecoder().decode(LocalModelBackupManifest.self, from: Data(contentsOf: $1.appendingPathComponent("manifest.json"))).createdAtMilliseconds) ?? Int64.min
+            let left = $0.manifest.createdAtMilliseconds
+            let right = $1.manifest.createdAtMilliseconds
             if left != right { return left > right }
-            return $0.lastPathComponent > $1.lastPathComponent
+            return $0.url.lastPathComponent > $1.url.lastPathComponent
         }
         for stale in snapshots.dropFirst(LocalBackupConfiguration.retainedSnapshotCount) {
-            try fileManager.removeItem(at: stale)
+            // Recheck before removal in case another writer replaced this snapshot.
+            guard (try? supportedManifest(at: stale.url)) != nil else { continue }
+            try fileManager.removeItem(at: stale.url)
         }
         return destination
+    }
+
+    private func supportedManifest(at folder: URL) throws -> LocalModelBackupManifest {
+        let decoder = JSONDecoder()
+        let manifest = try decoder.decode(LocalModelBackupManifest.self,
+            from: Data(contentsOf: folder.appendingPathComponent("manifest.json")))
+        _ = try decoder.decode(LocalModelBackupPayload.self,
+            from: Data(contentsOf: folder.appendingPathComponent("model-state.json")))
+        return manifest
     }
 }
 
