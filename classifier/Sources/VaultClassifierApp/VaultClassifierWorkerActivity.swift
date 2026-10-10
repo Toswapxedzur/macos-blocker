@@ -35,6 +35,55 @@ final class VaultClassifierWorkerActivity {
         }
     }
 
+    /// The public Activity tools share the page's store and group validation.
+    /// Their result shapes match Mac Vault's ActivityMCPTools, independently of
+    /// the page's broader snapshot and 365-day searchable item catalog.
+    func handleMcp(_ body: [String: Any]) async throws -> Any {
+        guard let tool = body["tool"] as? String,
+              let raw = body["arguments"] as? [String: Any] else {
+            throw ActivityMCPError.invalidArguments
+        }
+        switch tool {
+        case "list_activity_groups":
+            let store = self.store
+            let data = try await Task.detached(priority: .userInitiated) {
+                let groups = store.groups().map {
+                    ["id": $0.id, "name": $0.name, "merge": $0.merge, "members": $0.members] as [String: Any]
+                }
+                let items = store.knownItems(days: 180).prefix(300).map {
+                    ["id": $0.id, "label": $0.label, "seconds": Int($0.seconds)] as [String: Any]
+                }
+                return try JSONSerialization.data(withJSONObject: ["groups": groups, "items": items])
+            }.value
+            return try JSONSerialization.jsonObject(with: data)
+        case "save_activity_group":
+            let arguments = try ActivityMCPArguments.decode(raw)
+            guard let name = arguments.name, let members = arguments.members else {
+                throw ActivityMCPError.invalidArguments
+            }
+            let group = ActivityGroup(id: arguments.id ?? "", name: name,
+                                      merge: arguments.merge ?? false, members: members)
+            switch store.saveGroup(group, move: arguments.move ?? false) {
+            case .success(let id):
+                refresh()
+                return ["id": id]
+            case .failure(let refusal):
+                throw ActivityMCPError.refused("Refused: \(refusal.message).")
+            }
+        case "delete_activity_group":
+            guard let id = raw["id"] as? String else {
+                throw ActivityMCPError.invalidArguments
+            }
+            guard store.deleteGroup(id: id) else {
+                throw ActivityMCPError.refused("Refused: no such group.")
+            }
+            refresh()
+            return "Deleted."
+        default:
+            throw ActivityMCPError.unknownTool
+        }
+    }
+
     func handle(_ body: [String: Any]) async throws -> [String: Any] {
         let kind = body["kind"] as? String ?? "ready"
         switch kind {
@@ -276,4 +325,36 @@ final class VaultClassifierWorkerActivity {
 private enum ActivityWorkerError: String, Error, LocalizedError {
     case invalidOperation = "invalid-activity-operation"
     var errorDescription: String? { rawValue }
+}
+
+private struct ActivityMCPArguments: Decodable {
+    var id: String?
+    var name: String?
+    var members: [String]?
+    var merge: Bool?
+    var move: Bool?
+
+    static func decode(_ raw: [String: Any]) throws -> Self {
+        guard !["id", "name", "members", "merge", "move"].contains(where: { raw[$0] is NSNull }) else {
+            throw ActivityMCPError.invalidArguments
+        }
+        do {
+            return try JSONDecoder().decode(Self.self, from: JSONSerialization.data(withJSONObject: raw))
+        } catch {
+            throw ActivityMCPError.invalidArguments
+        }
+    }
+}
+
+private enum ActivityMCPError: Error, LocalizedError {
+    case invalidArguments
+    case unknownTool
+    case refused(String)
+    var errorDescription: String? {
+        switch self {
+        case .invalidArguments: return "invalid-activity-mcp-arguments"
+        case .unknownTool: return "unknown-tool"
+        case .refused(let message): return message
+        }
+    }
 }

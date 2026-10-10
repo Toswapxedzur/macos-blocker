@@ -103,6 +103,10 @@ public final class VaultClassifierWorkerService {
             }
             throw WorkerInputError.missingResource
         case "activity":
+            if data["kind"] as? String == "mcp" {
+                guard let activity else { throw WorkerInputError.invalidOperation }
+                return try await activity.handleMcp(data)
+            }
             return try await activity?.handle(data) ?? [:]
         case "hostEvent":
             // Host events cannot bypass the page/MCP action validation.
