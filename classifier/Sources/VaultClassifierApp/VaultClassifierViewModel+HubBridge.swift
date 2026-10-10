@@ -76,7 +76,17 @@ extension VaultClassifierViewModel {
     /// Each chunk's verdicts are broadcast the moment it lands.
     func classifyChunk(platformID: String, _ chunk: [NativeVideoTagsBatchItem]) async {
         defer { for item in chunk { inFlightVideoClassifications.remove(Self.inFlightKey(platformID, item.entryID)) } }
-        guard let coordinator else { return }
+        let projections = await resolveClassificationChunk(platformID: platformID, chunk)
+        for item in chunk {
+            guard let projection = projections[item.entryID] else { continue }
+            broadcastResolvedVideoTags(platformID: platformID, entryID: item.entryID, projection: projection)
+        }
+    }
+
+    /// Resolves the chunk before delivery; retries and persisted model decisions
+    /// still belong to the coordinator, while terminal replies are transient.
+    func resolveClassificationChunk(platformID: String, _ chunk: [NativeVideoTagsBatchItem]) async -> [String: VideoTagsProjection] {
+        guard let coordinator else { return [:] }
         let inputs = chunk.map {
             VideoClassificationPipeline.Input(
                 title: $0.title, summary: $0.summary, text: $0.text, entryID: $0.entryID, creatorID: $0.creatorID)
@@ -93,10 +103,14 @@ extension VaultClassifierViewModel {
                 }
             }
         }
-        for item in chunk {
-            guard let projection = projections[item.entryID] else { continue }
-            broadcastResolvedVideoTags(platformID: platformID, entryID: item.entryID, projection: projection)
+        guard coordinator.enabledClassificationPlatformIDs().contains(platformID) else { return [:] }
+        // A terminal failure must clear the browser's pending state as Untagged.
+        // This is only a delivery result: do not save a fabricated model decision,
+        // so later requests can retry and replace it with real tags.
+        for item in chunk where projections[item.entryID] == nil {
+            projections[item.entryID] = VideoTagsProjection(tags: [], predicted: false)
         }
+        return projections
     }
 
     func broadcastResolvedVideoTags(platformID: String, entryID: String, projection: VideoTagsProjection) {
