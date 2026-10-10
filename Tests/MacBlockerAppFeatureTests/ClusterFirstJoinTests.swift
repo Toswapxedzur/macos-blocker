@@ -101,14 +101,19 @@ final class ClusterFirstJoinTests: XCTestCase {
         XCTAssertEqual(try XCTUnwrap(h.sharedUsage(groupID: "m1")).resetAtMs, now - 60_000)
     }
     func testRealBudgetEditDuringJoinResetsUsageAndRejectsOldOriginal() throws {
-        let h = hub(), now = (Date().timeIntervalSince1970 * 1000).rounded(.down)
-        h.applySync(program: "chrome", groupId: "c1", contribution: original("chrome", rolling: false, anchor: now - 60_000), ts: 0)
-        h.applySync(program: "chrome", groupId: "c1", contribution: ["scalars": ["name": "Browser", "mode": "after-minutes", "allowedMinutes": 20, "resetIntervalHours": 6, "rollingLimit": false]], ts: now)
-        let reset = try XCTUnwrap(h.sharedUsage(groupID: "m1"))
-        XCTAssertEqual(reset.ms, 0)
-        h.applySync(program: "macapp", groupId: "m1", contribution: original("macapp", rolling: false, anchor: now - 60_000), ts: 0)
-        XCTAssertEqual(try XCTUnwrap(h.sharedUsage(groupID: "m1")).ms, 0)
-        XCTAssertEqual(try group(h, anchor: now)["resetIntervalHours"] as? Int, 6)
+        for rolling in [false, true] {
+            let h = hub(), now = (Date().timeIntervalSince1970 * 1000).rounded(.down)
+            h.applySync(program: "chrome", groupId: "c1", contribution: original("chrome", rolling: rolling, anchor: now - 60_000), ts: 0)
+            h.applySync(program: "chrome", groupId: "c1", contribution: ["scalars": ["name": "Browser", "mode": "after-minutes", "allowedMinutes": 20, "resetIntervalHours": 6, "rollingLimit": rolling]], ts: now)
+            let reset = try XCTUnwrap(h.sharedUsage(groupID: "m1"))
+            XCTAssertEqual(reset.ms, 0)
+            XCTAssertTrue(reset.buckets.isEmpty)
+            h.applySync(program: "macapp", groupId: "m1", contribution: original("macapp", rolling: rolling, anchor: now - 60_000), ts: 0)
+            let after = try XCTUnwrap(h.sharedUsage(groupID: "m1"))
+            XCTAssertEqual(after.ms, 0)
+            XCTAssertTrue(after.buckets.isEmpty, "a pending original cannot revive rolling history after a real edit")
+            XCTAssertEqual(try group(h, anchor: now)["resetIntervalHours"] as? Int, 6)
+        }
     }
     func testRemovingPendingBrowserAndRelinkingDoesNotReuseJoiningDeltas() throws {
         let h = hub(), now = (Date().timeIntervalSince1970 * 1000).rounded(.down)
