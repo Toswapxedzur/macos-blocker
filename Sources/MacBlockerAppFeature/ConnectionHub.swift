@@ -280,6 +280,14 @@ final class ConnectionHub: ObservableObject {
         var sharedUsageMs: Double = 0
         var sharedUsageResetAtMs: Double = 0
         var usageSeeded = false
+        /// Only while original definitions are still joining: max original
+        /// usage plus increments accrued after linking. A delayed original
+        /// seed must neither erase those increments nor be suppressed by them.
+        var joiningUsageBaseMs: Double? = nil
+        var joiningUsageDeltaMs: Double = 0
+        var joiningSeedFloorMs: Double = 0
+        var joiningBucketsBase: [Double: Double] = [:]
+        var joiningBucketDeltas: [Double: Double] = [:]
         /// Durable receipts for immutable offline usage batches, keyed by peer
         /// program and transfer id. Retried batches never consume usage twice.
         var usageTransferReceipts: [String: Double] = [:]
@@ -458,7 +466,9 @@ final class ConnectionHub: ObservableObject {
         // UsageBudget and group-actions.js decide it.
         guard start != cluster.sharedUsageResetAtMs else { return false }
         cluster.sharedUsageMs = 0
+        if cluster.joiningUsageBaseMs != nil { cluster.joiningUsageBaseMs = 0; cluster.joiningUsageDeltaMs = 0 }
         cluster.sharedUsageResetAtMs = start.rounded(.down)
+        if cluster.joiningUsageBaseMs != nil { cluster.joiningSeedFloorMs = cluster.sharedUsageResetAtMs }
         // A fresh period: a member's absolute total from the old one must not
         // seed it back.
         cluster.usageSeeded = true
@@ -1141,6 +1151,13 @@ final class ConnectionHub: ObservableObject {
         cluster.members.remove(program)
         cluster.memberGroupIds.removeValue(forKey: program)
         cluster.contributed.remove(program)
+        if cluster.members.isSubset(of: cluster.contributed) {
+            cluster.joiningUsageBaseMs = nil
+            cluster.joiningUsageDeltaMs = 0
+            cluster.joiningSeedFloorMs = 0
+            cluster.joiningBucketsBase = [:]
+            cluster.joiningBucketDeltas = [:]
+        }
         if cluster.members.count < 2 {
             if cluster.members.contains(Self.localProgram), let id = cluster.memberGroupIds[Self.localProgram] {
                 unlinkedLocal.insert(id)
@@ -1208,6 +1225,15 @@ final class ConnectionHub: ObservableObject {
             clusters[created.id] = created
             return created
         }()
+        // A new join window starts from the current authoritative budget.
+        // Existing linked members' counters are already included in this base.
+        if cluster.joiningUsageBaseMs == nil {
+            cluster.joiningUsageBaseMs = cluster.sharedUsageMs
+            cluster.joiningUsageDeltaMs = 0
+            cluster.joiningSeedFloorMs = 0
+            cluster.joiningBucketsBase = cluster.sharedBuckets
+            cluster.joiningBucketDeltas = [:]
+        }
         cluster.members.formUnion([program, targetProgram])
         cluster.memberGroupIds[program] = groupId
         cluster.memberGroupIds[targetProgram] = targetGroupId
@@ -1269,8 +1295,8 @@ final class ConnectionHub: ObservableObject {
         let scalarsPayload = contribution["scalars"] as? [String: Any]
         let scopesPayload = contribution["scopes"] as? [[String: Any]]
         let carriesConfig = scalarsPayload != nil || scopesPayload != nil
+        let firstContribution = carriesConfig && !cluster.contributed.contains(program)
         if carriesConfig {
-            let firstContribution = !cluster.contributed.contains(program)
             // The group whose Link button made the link: its settings win.
             let priority = firstContribution && program == cluster.initiator
             let wins = priority || ts >= cluster.sharedTs
@@ -1283,7 +1309,8 @@ final class ConnectionHub: ObservableObject {
                 if priority {
                     cluster.sharedScalars = scalars
                     cluster.sharedTs = max(cluster.sharedTs, ts) + 1
-                } else if ts >= cluster.sharedTs {
+                } else if ts >= cluster.sharedTs,
+                          !(firstContribution && cluster.contributed.contains(cluster.initiator)) {
                     cluster.sharedScalars = scalars
                     cluster.sharedTs = ts
                 }
@@ -1292,14 +1319,18 @@ final class ConnectionHub: ObservableObject {
             // A changed budget (the editor's own rule, group-actions.js
             // budgetRestarts) restarts the shared budget for every device:
             // linked groups are one group.
-            if !scalarsBefore.isEmpty,
+            if !firstContribution, !scalarsBefore.isEmpty,
                GroupActionsRuntime.shared.call("budgetRestarts", [scalarsBefore, cluster.sharedScalars]) as? Bool == true {
                 cluster.sharedUsageMs = 0
+                if cluster.joiningUsageBaseMs != nil { cluster.joiningUsageBaseMs = 0; cluster.joiningUsageDeltaMs = 0 }
+                cluster.joiningBucketsBase = [:]
+                cluster.joiningBucketDeltas = [:]
                 // The new period starts on the group's own grid (with midnight
                 // re-anchoring that is today's grid, not this instant), as every
                 // program computes it — else each would see a different period.
                 let nowMs = (Date().timeIntervalSince1970 * 1000).rounded(.down)
                 cluster.sharedUsageResetAtMs = Self.sharedPeriodStartMs(anchorMs: nowMs, scalars: cluster.sharedScalars, nowMs: nowMs).rounded(.down)
+                if cluster.joiningUsageBaseMs != nil { cluster.joiningSeedFloorMs = cluster.sharedUsageResetAtMs }
                 cluster.sharedBuckets = [:]
                 cluster.usageSeeded = true
                 cluster.bucketsSeeded = true
@@ -1363,13 +1394,20 @@ final class ConnectionHub: ObservableObject {
                 Self.countBudgetSnoozeLocked(cluster, beforeMs: cluster.sharedUsageMs, addedMs: delta, nowMs: nowMs)
             }
             cluster.sharedUsageMs = max(0, cluster.sharedUsageMs + delta)
+            if cluster.joiningUsageBaseMs != nil { cluster.joiningUsageDeltaMs += delta }
             cluster.usageSeeded = true
-        } else if !duplicateTransfer, !cluster.usageSeeded,
+        } else if !duplicateTransfer,
                   let seed = contribution["usageMs"] as? Double,
-                  seed > cluster.sharedUsageMs {
-            // No real delta yet: seed the budget from the largest existing member
-            // counter so a group that already had usage keeps it when it links.
-            cluster.sharedUsageMs = seed
+                  seed.isFinite, seed >= 0,
+                  (!cluster.usageSeeded || firstContribution),
+                  (cluster.joiningSeedFloorMs == 0 || ((contribution["usageResetAtMs"] as? Double) ?? 0) >= cluster.joiningSeedFloorMs) {
+            // Initial seeds take the maximum original usage. During joining,
+            // retain increments already accrued instead of losing either side
+            // when a member's original arrives later.
+            if let base = cluster.joiningUsageBaseMs {
+                cluster.joiningUsageBaseMs = max(base, seed)
+                cluster.sharedUsageMs = max(0, max(base, seed) + cluster.joiningUsageDeltaMs)
+            } else if seed > cluster.sharedUsageMs { cluster.sharedUsageMs = seed }
         }
         let rollingPolicy = BlockGroup(
             id: "", groupType: .site, name: "", enabled: true, mode: .afterMinutes,
@@ -1378,7 +1416,7 @@ final class ConnectionHub: ObservableObject {
             resetAtMidnight: (cluster.sharedScalars["resetAtMidnight"] as? Bool) == true
         )
         let rollingBefore = UsageBudget.usedMs(UsageBudget.pruneBuckets(cluster.sharedBuckets, group: rollingPolicy, nowMs: nowMs))
-        if !duplicateTransfer { applyBucketContributionLocked(cluster, contribution) }
+        if !duplicateTransfer { applyBucketContributionLocked(cluster, contribution, firstContribution: firstContribution) }
         if !duplicateTransfer, (cluster.sharedScalars["rollingLimit"] as? Bool) == true,
            let deltas = UsageBudget.parseBuckets(contribution["usageBuckets"]), !deltas.isEmpty {
             let rollingAfter = UsageBudget.usedMs(UsageBudget.pruneBuckets(cluster.sharedBuckets, group: rollingPolicy, nowMs: nowMs))
@@ -1401,6 +1439,13 @@ final class ConnectionHub: ObservableObject {
         // Persist only on config-bearing syncs (scalars/scopes/snooze), not
         // on per-tick usage pings, so the on-disk registry tracks structural and
         // settings changes without hammering the disk every second.
+        if cluster.members.isSubset(of: cluster.contributed) {
+            cluster.joiningUsageBaseMs = nil
+            cluster.joiningUsageDeltaMs = 0
+            cluster.joiningSeedFloorMs = 0
+            cluster.joiningBucketsBase = [:]
+            cluster.joiningBucketDeltas = [:]
+        }
         if let transferKey { cluster.usageTransferReceipts[transferKey] = nowMs }
         // Receipts and the usage they acknowledge are saved together before
         // the snapshot lets a sender remove its durable outbox batch.
@@ -1528,6 +1573,13 @@ final class ConnectionHub: ObservableObject {
                                         "scalars": scalars]
             // Only Mac Vault's own lines, even none (an emptied list is shared too).
             frame["scopes"] = scopes.filter { Self.lineOwner(line: $0) == "desktop" }
+            if !joined {
+                // Capture usage atomically with the original definition before
+                // any shared adoption or live increment can rebase it.
+                frame["usageMs"] = (document["usageTimersMs"] as? [String: Any])?[groupID] ?? 0
+                if let anchor = (document["usageResetAtMs"] as? [String: Any])?[groupID] { frame["usageResetAtMs"] = anchor }
+                if let buckets = (document["usageBucketsMs"] as? [String: Any])?[groupID] { frame["usageBucketsSeed"] = buckets }
+            }
             if !lockUnit.isEmpty {
                 frame["lock"] = lockUnit
                 frame["lockBase"] = (group["lockSyncedVersion"] as? NSNumber)?.intValue ?? 0
@@ -1553,11 +1605,15 @@ final class ConnectionHub: ObservableObject {
         for cluster in clusters.values where cluster.members.contains(Self.localProgram) {
             let pinned = cluster.memberGroupIds[Self.localProgram] ?? ""
             guard !pinned.isEmpty, let index = groups.firstIndex(where: { ($0["id"] as? String) == pinned }) else { continue }
-            for (field, value) in cluster.sharedScalars { groups[index][field] = value }
-            if cluster.members.isSubset(of: cluster.contributed) { groups[index]["scopes"] = cluster.sharedScopes }
-            if !cluster.sharedLock.isEmpty {
-                for (field, value) in cluster.sharedLock { groups[index][field] = value }
-                groups[index]["lockSyncedVersion"] = cluster.sharedLock["lockVersion"]
+            // Preserve the local original until its first contribution is
+            // accepted, including across a restart during an interrupted join.
+            if cluster.contributed.contains(Self.localProgram) {
+                for (field, value) in cluster.sharedScalars { groups[index][field] = value }
+                if cluster.members.isSubset(of: cluster.contributed) { groups[index]["scopes"] = cluster.sharedScopes }
+                if !cluster.sharedLock.isEmpty {
+                    for (field, value) in cluster.sharedLock { groups[index][field] = value }
+                    groups[index]["lockSyncedVersion"] = cluster.sharedLock["lockVersion"]
+                }
             }
             changed = true
             if cluster.sharedSnoozeTs > 0, !cluster.sharedSnooze.isEmpty,
@@ -1643,16 +1699,21 @@ final class ConnectionHub: ObservableObject {
     /// used (max per minute) only until the first real increment arrives so a
     /// group that already had rolling usage keeps it when it links. Minutes older
     /// than any window the group can use (its interval, at least a day) are pruned.
-    private func applyBucketContributionLocked(_ cluster: ClusterState, _ contribution: [String: Any]) {
+    private func applyBucketContributionLocked(_ cluster: ClusterState, _ contribution: [String: Any], firstContribution: Bool = false) {
         if let deltas = UsageBudget.parseBuckets(contribution["usageBuckets"]), !deltas.isEmpty {
             for (minute, delta) in deltas {
                 let next = (cluster.sharedBuckets[minute] ?? 0) + delta
                 cluster.sharedBuckets[minute] = next > 0 ? next : nil
+                if cluster.joiningUsageBaseMs != nil { cluster.joiningBucketDeltas[minute, default: 0] += delta }
             }
             cluster.bucketsSeeded = true
-        } else if !cluster.bucketsSeeded, let seed = UsageBudget.parseBuckets(contribution["usageBucketsSeed"]) {
-            for (minute, used) in seed where used > (cluster.sharedBuckets[minute] ?? 0) {
-                cluster.sharedBuckets[minute] = used
+        } else if !cluster.bucketsSeeded || firstContribution, let seed = UsageBudget.parseBuckets(contribution["usageBucketsSeed"]) {
+            for (minute, used) in seed {
+                if cluster.joiningUsageBaseMs != nil {
+                    let base = max(used, cluster.joiningBucketsBase[minute] ?? 0)
+                    cluster.joiningBucketsBase[minute] = base
+                    cluster.sharedBuckets[minute] = max(0, base + (cluster.joiningBucketDeltas[minute] ?? 0))
+                } else if used > (cluster.sharedBuckets[minute] ?? 0) { cluster.sharedBuckets[minute] = used }
             }
         }
         guard !cluster.sharedBuckets.isEmpty else { return }
@@ -1660,6 +1721,8 @@ final class ConnectionHub: ObservableObject {
         let horizonMs = max(intervalHours, 24) * 3_600_000 + 60_000
         let cutoff = Date().timeIntervalSince1970 * 1000 - horizonMs
         cluster.sharedBuckets = cluster.sharedBuckets.filter { $0.key > cutoff }
+        cluster.joiningBucketsBase = cluster.joiningBucketsBase.filter { $0.key > cutoff }
+        cluster.joiningBucketDeltas = cluster.joiningBucketDeltas.filter { $0.key > cutoff }
     }
 
     /// The links and every program's groups (for the Link picker), pushed to
@@ -1718,6 +1781,11 @@ final class ConnectionHub: ObservableObject {
                 "sharedUsageResetAtMs": c.sharedUsageResetAtMs,
                 "sharedBuckets": UsageBudget.bucketJSON(c.sharedBuckets),
                 "usageSeeded": c.usageSeeded,
+                "joiningUsageBaseMs": c.joiningUsageBaseMs as Any? ?? NSNull(),
+                "joiningUsageDeltaMs": c.joiningUsageDeltaMs,
+                "joiningSeedFloorMs": c.joiningSeedFloorMs,
+                "joiningBucketsBase": UsageBudget.bucketJSON(c.joiningBucketsBase),
+                "joiningBucketDeltas": UsageBudget.bucketJSON(c.joiningBucketDeltas),
                 "usageTransferReceipts": c.usageTransferReceipts,
                 "bucketsSeeded": c.bucketsSeeded
             ]
@@ -1776,6 +1844,13 @@ final class ConnectionHub: ObservableObject {
             cluster.usageSeeded = (obj["usageSeeded"] as? Bool) ?? false
             cluster.usageTransferReceipts = (obj["usageTransferReceipts"] as? [String: Double]) ?? [:]
             cluster.bucketsSeeded = (obj["bucketsSeeded"] as? Bool) ?? false
+            if !cluster.members.isSubset(of: cluster.contributed) {
+                cluster.joiningUsageBaseMs = (obj["joiningUsageBaseMs"] as? Double) ?? cluster.sharedUsageMs
+                cluster.joiningUsageDeltaMs = (obj["joiningUsageDeltaMs"] as? Double) ?? 0
+                cluster.joiningSeedFloorMs = (obj["joiningSeedFloorMs"] as? Double) ?? 0
+                cluster.joiningBucketsBase = UsageBudget.parseBuckets(obj["joiningBucketsBase"]) ?? cluster.sharedBuckets
+                cluster.joiningBucketDeltas = UsageBudget.parseBuckets(obj["joiningBucketDeltas"]) ?? [:]
+            }
             // Only restore clusters that still have ≥2 members (a 1-member
             // cluster is meaningless and would never broadcast).
             if cluster.members.count >= 2 { clusters[id] = cluster }
