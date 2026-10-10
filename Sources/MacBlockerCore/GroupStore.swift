@@ -107,7 +107,7 @@ public final class GroupStore: @unchecked Sendable {
             // device is locked here too, even before the editor adopts it.
             Self.attachSharedView(&working)
             try body(&working)
-            saveLocked(working)
+            try shared.writeDataThrowing(JSONSerialization.data(withJSONObject: working.raw, options: [.sortedKeys]), to: SharedAppGroupStore.webStoreFileName)
             document = working
         } catch {
             lock.unlock()
@@ -182,7 +182,7 @@ public struct WebStoreDocument {
     /// Per-group companion maps the editor keys by group id. They are cleared for
     /// a deleted group so the store doesn't accrue orphaned usage/snooze entries.
     public static let perGroupMapKeys = [
-        "usageTimersMs", "usageResetAtMs", "usageBucketsMs", "groupSnoozes", "groupSnoozeTotalsMs",
+        "usageTimersMs", "usageResetAtMs", "usageBucketsMs", "groupSnoozes", "groupSnoozeTotalsMs", "cbRuleState",
         pinAttemptsKey,
     ]
 

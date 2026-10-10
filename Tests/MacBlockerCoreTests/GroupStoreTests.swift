@@ -138,6 +138,27 @@ final class GroupStoreTests: XCTestCase {
         XCTAssertEqual(document.raw["usageResetAtMs"] as? [String: Int], [:])
     }
 
+    func testDeleteCustomGroupAtomicallyRemovesOnlyItsMemory() throws {
+        let (store, shared, directory) = makeStore()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        var raw = sampleEnvelope()
+        raw["blockedGroups"] = [["id": "g1", "name": "Rule1", "groupType": "custom"], ["id": "g2", "name": "Rule2", "groupType": "custom"]]
+        raw["cbRuleState"] = ["g1": ["events": 3], "g2": ["events": 91]]
+        store.save(WebStoreDocument(raw: raw))
+        let before = try Data(contentsOf: shared.url(for: SharedAppGroupStore.webStoreFileName))
+        try FileManager.default.setAttributes([.posixPermissions: 0o555], ofItemAtPath: directory.path)
+        defer { try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: directory.path) }
+        XCTAssertThrowsError(try store.mutate { try $0.deleteGroup(id: "g1") })
+        XCTAssertEqual(try Data(contentsOf: shared.url(for: SharedAppGroupStore.webStoreFileName)), before)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: directory.path)
+        try store.mutate { try $0.deleteGroup(id: "g1") }
+        let loaded = store.load()
+        XCTAssertNil(loaded.group(id: "g1"))
+        XCTAssertEqual((loaded.raw["cbRuleState"] as? [String: [String: Int]])?.keys.sorted(), ["g2"])
+        XCTAssertEqual((loaded.raw["cbRuleState"] as? [String: [String: Int]])?["g2"], ["events": 91])
+        XCTAssertNotNil(loaded.raw["ruleLog"], "historical user log is not erased by a group deletion")
+    }
+
     func testDeleteGroupClearsItsRollingMinutesToo() throws {
         var raw = sampleEnvelope()
         raw["usageBucketsMs"] = ["g1": ["60000": 1000], "g2": ["60000": 5]]
