@@ -108,7 +108,8 @@ extension VaultClassifierViewModel {
         // This is only a delivery result: do not save a fabricated model decision,
         // so later requests can retry and replace it with real tags.
         for item in chunk where projections[item.entryID] == nil {
-            projections[item.entryID] = VideoTagsProjection(tags: [], predicted: false)
+            projections[item.entryID] = coordinator.cachedVideoTags(platformID: platformID, entryID: item.entryID)
+                ?? VideoTagsProjection(tags: [], predicted: false)
         }
         return projections
     }

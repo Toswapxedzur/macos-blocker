@@ -142,6 +142,21 @@ final class ClassificationFailureSettlementTests: XCTestCase {
         try assertNoFailedDecision(model)
     }
 
+    func testCurrentCachedModelResultSurvivesFailedSibling() async throws {
+        let model = try makeModel(), engine = SettlementLLM(.succeed)
+        let coordinator = try XCTUnwrap(model.coordinator)
+        coordinator.setOnDeviceLLM(engine)
+        _ = await model.resolveClassificationChunk(platformID: "youtube", [good])
+        let cached = try XCTUnwrap(coordinator.cachedVideoTags(platformID: "youtube", entryID: good.entryID))
+        await engine.setMode(.allFail)
+        let resolved = await model.resolveClassificationChunk(platformID: "youtube", [failed, good])
+        try assertTerminal(resolved[failed.entryID])
+        XCTAssertEqual(resolved[good.entryID], cached)
+        XCTAssertEqual(coordinator.cachedVideoTags(platformID: "youtube", entryID: good.entryID), cached)
+        XCTAssertEqual(coordinator.snapshot().workspaceCatalog.videoClassifications.map(\.entryID), [good.entryID])
+        try assertNoFailedDecision(model)
+    }
+
     func testDisablingClassificationDuringFailureSuppressesTerminalDelivery() async throws {
         let model = try makeModel(), coordinator = try XCTUnwrap(model.coordinator)
         let engine = SettlementLLM(.allFail, beforeBatch: {
