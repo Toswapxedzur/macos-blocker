@@ -82,6 +82,22 @@ final class ConnectionHub: ObservableObject {
 
     private let queue = DispatchQueue(label: "macosBlocker.ConnectionHub")
     private let lock = NSLock()
+    private let outboundQueue: DispatchQueue
+    /// Optional transport injection: production sends the exact same serialized
+    /// frames to NWConnection; isolated tests observe delivery without sockets.
+    private let outboundDelivery: ((Data) -> Void)?
+
+    init() {
+        // Production always owns a private serial FIFO. Only the isolated
+        // transport initializer below permits a test queue and delivery sink.
+        outboundQueue = DispatchQueue(label: "macosBlocker.ConnectionHub.outbound")
+        outboundDelivery = nil
+    }
+
+    init(testOutboundQueue: DispatchQueue, outboundDelivery: @escaping (Data) -> Void) {
+        self.outboundQueue = testOutboundQueue
+        self.outboundDelivery = outboundDelivery
+    }
 
     /// The Activity log store. When set, the hub handles the activity ops locally
     /// (writing this store) instead of relaying them to the classifier peer. Set
@@ -454,14 +470,12 @@ final class ConnectionHub: ObservableObject {
     /// counts every shared snooze that finished, and tells the members.
     func rollSharedBudgets(nowMs: Double) {
         lock.lock()
-        var changed: [[String: Any]] = []
         for cluster in clusters.values {
             let rolled = rollBudgetLocked(cluster, nowMs: nowMs)
             let counted = Self.countSnoozeLocked(cluster, nowMs: nowMs)
-            if rolled || counted { changed.append(clusterJSONObject(cluster)) }
+            if rolled || counted { broadcastClusterLocked(clusterJSONObject(cluster)) }
         }
         lock.unlock()
-        for snapshot in changed { broadcastCluster(snapshot) }
     }
 
     /// Caller must hold `lock`. The hub is the only authority over a linked
@@ -634,21 +648,20 @@ final class ConnectionHub: ObservableObject {
             if !duplicate {
                 peers[key]?.program = program
                 peers[key]?.connected = true
+                // A newly authenticated peer must receive welcome before any
+                // cluster frame. State publication and enqueue are one unit.
+                enqueueLocked([
+                    "kind": "welcome",
+                    "v": Self.protocolVersion,
+                    "usageTransferReceipts": true,
+                    "hubProgram": Self.localProgram,
+                    "peers": peerListJSONLocked()
+                ], to: [conn])
+                broadcastPeersLocked()
+                sendClustersSnapshotLocked(conn)
             }
             lock.unlock()
-            if duplicate {
-                rejectAndClose(conn, reason: "duplicate-program")
-                return
-            }
-            send(conn, dict: [
-                "kind": "welcome",
-                "v": Self.protocolVersion,
-                "usageTransferReceipts": true,
-                "hubProgram": Self.localProgram,
-                "peers": peerListJSON()
-            ])
-            broadcastPeers()
-            sendClustersSnapshot(conn)
+            if duplicate { rejectAndClose(conn, reason: "duplicate-program") }
         case "groups-announce":
             lock.lock()
             let prog = peers[key]?.program ?? ((obj["program"] as? String) ?? "")
@@ -707,15 +720,31 @@ final class ConnectionHub: ObservableObject {
     }
 
     private func send(_ conn: NWConnection, dict: [String: Any]) {
-        guard let data = try? JSONSerialization.data(withJSONObject: dict) else { return }
-        let metadata = NWProtocolWebSocket.Metadata(opcode: .text)
-        let context = NWConnection.ContentContext(identifier: "text", metadata: [metadata])
-        conn.send(
-            content: data,
-            contentContext: context,
-            isComplete: true,
-            completion: .contentProcessed { _ in }
-        )
+        lock.lock()
+        enqueueLocked(dict, to: [conn])
+        lock.unlock()
+    }
+
+    /// Caller holds the hub lock. Freeze payload and authenticated destinations
+    /// before submitting to the one FIFO, in the same order as state commits.
+    /// Enqueueing after unlock would allow an older snapshot to arrive last.
+    private func enqueueLocked(_ dict: [String: Any], to connections: [NWConnection]) {
+        guard !connections.isEmpty || outboundDelivery != nil,
+              let data = try? JSONSerialization.data(withJSONObject: dict) else { return }
+        let deliver = outboundDelivery
+        outboundQueue.async { [self] in
+            // The producer may still own the lock when async begins. Wait for
+            // its release, then perform transport/callback work without it.
+            lock.lock()
+            lock.unlock()
+            if let deliver { deliver(data); return }
+            for connection in connections {
+                let metadata = NWProtocolWebSocket.Metadata(opcode: .text)
+                let context = NWConnection.ContentContext(identifier: "text", metadata: [metadata])
+                connection.send(content: data, contentContext: context, isComplete: true,
+                                completion: .contentProcessed { _ in })
+            }
+        }
     }
 
     // MARK: Shared classifier route
@@ -832,10 +861,8 @@ final class ConnectionHub: ObservableObject {
         let browsers = peers.values
             .filter { $0.connected && Self.browserPrograms.contains($0.program) }
             .map(\.connection)
+        enqueueLocked(["kind": "classifier-broadcast", "operation": operation, "body": body], to: browsers)
         lock.unlock()
-        for conn in browsers {
-            send(conn, dict: ["kind": "classifier-broadcast", "operation": operation, "body": body])
-        }
     }
 
     private func routeClassifierResponse(from key: ObjectIdentifier, program: String, object: [String: Any]) {
@@ -1053,55 +1080,40 @@ final class ConnectionHub: ObservableObject {
         let strandedBrowserRequests = browserRequests.filter { $0.value.browserPeerID == removedPeerID }
         for (requestID, _) in strandedBrowserRequests { browserRequests.removeValue(forKey: requestID) }
         let strandedBrowserCompletions = strandedBrowserRequests.values.map { $0.completion }
-        let existed = removed != nil
-        lock.unlock()
-        for completion in strandedBrowserCompletions { completion(.failure("browser-unavailable")) }
         for (source, requestID, operation) in replyTargets {
-            send(source, dict: [
+            enqueueLocked([
                 "kind": "classifier-response",
                 "requestID": requestID,
                 "operation": operation,
                 "error": "classifier-unavailable",
-            ])
+            ], to: [source])
         }
         if let program, !program.isEmpty {
-            // A dropped socket means the program went OFFLINE, not that it left
-            // its clusters. We keep its cluster membership and its last
-            // contribution (sites/apps/scalars/usage baseline) so the cluster's
-            // shared memory survives a brief disconnect — the member is shown
-            // offline until it reconnects. The roster is dropped because it is
-            // re-announced on reconnect, so stale groups can't validate links.
-            lock.lock()
+            // Offline retains membership and runtime. The online state, roster
+            // and affected snapshots must enqueue in this same transition.
             rosters.removeValue(forKey: program)
-            let affected = clusters.values
-                .filter { $0.members.contains(program) }
-                .map { clusterJSONObject($0) }
-            let rosterSnapshot = rostersJSONObjectLocked()
-            lock.unlock()
-            for snapshot in affected { broadcastCluster(snapshot) }
-            // The other browsers' Link pickers drop the program's groups.
-            broadcastToPeers(["kind": "rosters", "rosters": rosterSnapshot])
+            for cluster in clusters.values where cluster.members.contains(program) {
+                broadcastClusterLocked(clusterJSONObject(cluster))
+            }
+            broadcastToPeersLocked(["kind": "rosters", "rosters": rostersJSONObjectLocked()])
         }
-        if existed { broadcastPeers() }
+        if removed != nil { broadcastPeersLocked() }
+        lock.unlock()
+        for completion in strandedBrowserCompletions { completion(.failure("browser-unavailable")) }
     }
 
-    private func broadcastPeers() {
-        lock.lock()
-        let conns = peers.values.filter { $0.connected }.map { $0.connection }
-        lock.unlock()
-        let payload: [String: Any] = ["kind": "peers", "peers": peerListJSON()]
-        for conn in conns { send(conn, dict: payload) }
+    /// Caller holds the hub lock.
+    private func broadcastPeersLocked() {
+        broadcastToPeersLocked(["kind": "peers", "peers": peerListJSONLocked()])
     }
 
     // MARK: Status
 
-    private func peerListJSON() -> [[String: Any]] {
-        lock.lock()
-        let list = peers.values.filter { $0.connected }.map {
+    /// Caller holds the hub lock.
+    private func peerListJSONLocked() -> [[String: Any]] {
+        peers.values.filter { $0.connected }.map {
             ["id": $0.id, "program": $0.program, "connected": $0.connected] as [String: Any]
         }
-        lock.unlock()
-        return list
     }
 
     // MARK: Cluster registry API (called from the WS path and the web bridge)
@@ -1127,8 +1139,6 @@ final class ConnectionHub: ObservableObject {
                 frozen: ($0["frozen"] as? Bool) ?? false
             )
         }
-        var snapshots: [[String: Any]] = []
-        var rosterSnapshot: [String: Any] = [:]
         do {
             try withMembershipDocument { document, save in
                 self.lock.lock(); defer { self.lock.unlock() }
@@ -1141,18 +1151,16 @@ final class ConnectionHub: ObservableObject {
                 self.rosters[program] = infos
                 for cluster in affected {
                     self.removeMemberLocked(cluster, program: program)
-                    snapshots.append(self.clusterJSONObject(cluster))
                 }
                 if !affected.isEmpty { self.persistClustersLocked() }
-                rosterSnapshot = self.rostersJSONObjectLocked()
+                for cluster in affected { self.broadcastClusterLocked(self.clusterJSONObject(cluster)) }
+                self.broadcastToPeersLocked(["kind": "rosters", "rosters": self.rostersJSONObjectLocked()])
             }
         } catch {
             // A newer or unwritable local store must not lose its last shared
             // runtime because a peer disappeared from the roster.
             return
         }
-        for snapshot in snapshots { broadcastCluster(snapshot) }
-        broadcastToPeers(["kind": "rosters", "rosters": rosterSnapshot])
     }
 
     private func withMembershipDocument<T>(_ operation: ([String: Any]?, ([String: Any]) throws -> Void) throws -> T) throws -> T {
@@ -1234,11 +1242,9 @@ final class ConnectionHub: ObservableObject {
         rosters.mapValues { infos in infos.map { ["id": $0.id, "name": $0.name, "frozen": $0.frozen] as [String: Any] } }
     }
 
-    private func broadcastToPeers(_ payload: [String: Any]) {
-        lock.lock()
-        let conns = peers.values.filter { $0.connected }.map(\.connection)
-        lock.unlock()
-        for conn in conns { send(conn, dict: payload) }
+    /// Caller holds the hub lock; recipients belong to this captured state.
+    private func broadcastToPeersLocked(_ payload: [String: Any]) {
+        enqueueLocked(payload, to: peers.values.filter { $0.connected }.map(\.connection))
     }
 
     // MARK: Links — made and removed by the user (owner 2026-09-27)
@@ -1285,9 +1291,8 @@ final class ConnectionHub: ObservableObject {
         cluster.memberGroupIds[program] = groupId
         cluster.memberGroupIds[targetProgram] = targetGroupId
         persistClustersLocked()
-        let snapshot = clusterJSONObject(cluster)
+        broadcastClusterLocked(clusterJSONObject(cluster))
         lock.unlock()
-        broadcastCluster(snapshot)
         return nil
     }
 
@@ -1296,7 +1301,6 @@ final class ConnectionHub: ObservableObject {
     /// while the link is locked.
     func unlinkGroup(program: String, groupId: String) -> String? {
         guard clusterStorageWritable else { return "unsupported-storage" }
-        var snapshot: [String: Any]?
         do {
             let refusal = try withMembershipDocument { document, save -> String? in
                 self.lock.lock(); defer { self.lock.unlock() }
@@ -1309,10 +1313,9 @@ final class ConnectionHub: ObservableObject {
                 try self.preserveDetachedLocalLocked([cluster], removing: program, document: document, save: save)
                 self.removeMemberLocked(cluster, program: program)
                 self.persistClustersLocked()
-                snapshot = self.clusterJSONObject(cluster)
+                self.broadcastClusterLocked(self.clusterJSONObject(cluster))
                 return nil
             }
-            if let snapshot { broadcastCluster(snapshot) }
             return refusal
         } catch { return "local-storage-unavailable" }
     }
@@ -1521,11 +1524,10 @@ final class ConnectionHub: ObservableObject {
         if carriesConfig || transferKey != nil { persistClustersLocked() }
 
         let after = clusterJSONObject(cluster)
-        lock.unlock()
-
         if !NSDictionary(dictionary: before).isEqual(to: after) {
-            broadcastCluster(after)
+            broadcastClusterLocked(after)
         }
+        lock.unlock()
     }
 
     /// The entry a scope line belongs to: "apps" for the app list, "site" for
@@ -2182,21 +2184,22 @@ final class ConnectionHub: ObservableObject {
         return dict
     }
 
-    private func broadcastCluster(_ snapshot: [String: Any]) {
-        let payload: [String: Any] = ["kind": "cluster-updated", "cluster": snapshot]
-        lock.lock()
-        let conns = peers.values.filter { $0.connected }.map { $0.connection }
-        lock.unlock()
-        for conn in conns { send(conn, dict: payload) }
-        // The Mac's own web editor is refreshed by the per-tick clustersJSON push.
+    /// Caller holds the hub lock. The Mac's editor still polls clustersJSON.
+    private func broadcastClusterLocked(_ snapshot: [String: Any]) {
+        broadcastToPeersLocked(["kind": "cluster-updated", "cluster": snapshot])
     }
 
-    private func sendClustersSnapshot(_ conn: NWConnection) {
+    /// Captures a full reconnect snapshot in the same ordered stream as updates.
+    func sendClustersSnapshot(_ conn: NWConnection) {
         lock.lock()
-        let arr = clusters.values.map { clusterJSONObject($0) }
-        let rosterSnapshot = rostersJSONObjectLocked()
+        sendClustersSnapshotLocked(conn)
         lock.unlock()
-        send(conn, dict: ["kind": "clusters", "clusters": arr, "rosters": rosterSnapshot])
+    }
+
+    /// Caller holds the hub lock, including while authenticating a new peer.
+    private func sendClustersSnapshotLocked(_ conn: NWConnection) {
+        enqueueLocked(["kind": "clusters", "clusters": clusters.values.map { clusterJSONObject($0) },
+                       "rosters": rostersJSONObjectLocked()], to: [conn])
     }
 
 }
