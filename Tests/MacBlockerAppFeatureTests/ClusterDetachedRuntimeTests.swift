@@ -236,4 +236,60 @@ final class ClusterDetachedRuntimeTests: XCTestCase {
             XCTAssertEqual(rolling ? UsageBudget.usedMs(after.buckets) : after.ms, before + 2_000)
         }
     }
+    func testUnreportedNativeLockRefusesExplicitUnlinkFromEitherPeer() throws {
+        for program in ["macapp", "chrome"] {
+            let (hub, store, directory, now) = try fixture(rolling: false)
+            defer { try? FileManager.default.removeItem(at: directory) }
+            var document = try raw(store)
+            var groups = try XCTUnwrap(document["blockedGroups"] as? [[String: Any]])
+            groups[0]["lockVersion"] = 7; groups[0]["lockedAtMs"] = now
+            groups[0]["parentalPasswordHash"] = "private-fixture-hash"
+            document["blockedGroups"] = groups; store.save(rawStore: document)
+            let before = try Data(contentsOf: store.fileURL)
+            XCTAssertEqual(hub.unlinkGroup(program: program, groupId: program == "macapp" ? "m1" : "c1"), "group-locked")
+            XCTAssertNotNil(hub.sharedUsage(groupID: "m1"))
+            XCTAssertEqual(try Data(contentsOf: store.fileURL), before)
+        }
+    }
+
+    func testPeerRosterRemovalPreservesStrictlyNewerAtomicNativeLock() throws {
+        let (hub, store, directory, now) = try fixture(rolling: false)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let stale: [String: Any] = ["lockVersion": 2, "lockedAtMs": NSNull(), "lockWaitHours": 0,
+                                    "parentalPasswordHash": NSNull(), "parentalPasswordSalt": NSNull()]
+        hub.applySync(program: "chrome", groupId: "c1", contribution: ["scalars": ["name": "Browser", "enabled": false, "mode": "after-minutes", "allowedMinutes": 20, "resetIntervalHours": 24, "rollingLimit": false], "lock": stale, "lockBase": 0], ts: 10)
+        var document = try raw(store)
+        var groups = try XCTUnwrap(document["blockedGroups"] as? [[String: Any]])
+        groups[0]["lockVersion"] = 7; groups[0]["lockedAtMs"] = now
+        groups[0]["lockWaitHours"] = 3; groups[0]["parentalPasswordHash"] = "private-fixture-hash"
+        groups[0]["parentalPasswordSalt"] = "private-fixture-salt"; groups[0]["lockSyncedVersion"] = 2
+        let expected = groups[0]; document["blockedGroups"] = groups; store.save(rawStore: document)
+        hub.setRoster(program: "chrome", groups: [])
+        XCTAssertNil(hub.sharedUsage(groupID: "m1"))
+        let saved = try XCTUnwrap((try raw(store)["blockedGroups"] as? [[String: Any]])?.first)
+        for field in WebStoreDocument.lockFieldNames + ["lockSyncedVersion"] {
+            XCTAssertEqual(WebStoreDocument.canonicalJSON(saved[field]), WebStoreDocument.canonicalJSON(expected[field]), field)
+        }
+        XCTAssertEqual(number(try raw(store), "usageTimersMs"), 240_000)
+    }
+
+    func testNewerOrEqualSharedUnlockClearsStaleLocalAtomicLockAndPermitsUnlink() throws {
+        for sharedVersion in [7, 8] {
+            let (hub, store, directory, now) = try fixture(rolling: false)
+            defer { try? FileManager.default.removeItem(at: directory) }
+            var document = try raw(store)
+            var groups = try XCTUnwrap(document["blockedGroups"] as? [[String: Any]])
+            groups[0]["lockVersion"] = 7; groups[0]["lockedAtMs"] = now
+            groups[0]["parentalPasswordHash"] = "private-fixture-hash"; groups[0]["parentalPasswordSalt"] = "private-fixture-salt"
+            document["blockedGroups"] = groups; store.save(rawStore: document)
+            hub.applySync(program: "chrome", groupId: "c1", contribution: ["scalars": ["name": "Browser", "enabled": false, "mode": "after-minutes", "allowedMinutes": 20, "resetIntervalHours": 24, "rollingLimit": false], "lock": ["lockVersion": sharedVersion, "lockedAtMs": NSNull(), "lockWaitHours": 0]], ts: 10)
+            XCTAssertNil(hub.unlinkGroup(program: "chrome", groupId: "c1"))
+            let saved = try XCTUnwrap((try raw(store)["blockedGroups"] as? [[String: Any]])?.first)
+            XCTAssertEqual(saved["lockVersion"] as? Int, sharedVersion)
+            XCTAssertFalse(WebStoreDocument.isLocked(saved))
+            XCTAssertNil(saved["parentalPasswordHash"] as? String)
+            XCTAssertNil(saved["parentalPasswordSalt"] as? String)
+        }
+    }
+
 }

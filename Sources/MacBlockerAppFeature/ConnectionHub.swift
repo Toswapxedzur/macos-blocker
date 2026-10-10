@@ -1299,6 +1299,10 @@ final class ConnectionHub: ObservableObject {
                 self.lock.lock(); defer { self.lock.unlock() }
                 guard let cluster = self.clusterLocked(program: program, groupId: groupId) else { return "not-linked" }
                 if WebStoreDocument.isLocked(cluster.sharedLock) { return "group-locked" }
+                if let pinned = cluster.memberGroupIds[Self.localProgram],
+                   let native = (document?["blockedGroups"] as? [[String: Any]])?.first(where: { ($0["id"] as? String) == pinned }),
+                   ((native["lockVersion"] as? NSNumber)?.intValue ?? 0) > ((cluster.sharedLock["lockVersion"] as? NSNumber)?.intValue ?? 0),
+                   WebStoreDocument.isLocked(native) { return "group-locked" }
                 try self.preserveDetachedLocalLocked([cluster], removing: program, document: document, save: save)
                 self.removeMemberLocked(cluster, program: program)
                 self.persistClustersLocked()
@@ -1711,8 +1715,14 @@ final class ConnectionHub: ObservableObject {
             if cluster.contributed.contains(Self.localProgram) || ownLinesOnly {
                 for (field, value) in cluster.sharedScalars { groups[index][field] = value }
                 if cluster.members.isSubset(of: cluster.contributed) { groups[index]["scopes"] = cluster.sharedScopes }
-                if !cluster.sharedLock.isEmpty {
-                    for (field, value) in cluster.sharedLock { groups[index][field] = value }
+                // Detaching must not erase an unreported newer local lock
+                // unit. Equal or newer shared versions remain authoritative,
+                // including a shared unlock clearing the previous local PIN.
+                let preserveLocalLock = ownLinesOnly &&
+                    ((groups[index]["lockVersion"] as? NSNumber)?.intValue ?? 0) >
+                    ((cluster.sharedLock["lockVersion"] as? NSNumber)?.intValue ?? 0)
+                if !cluster.sharedLock.isEmpty && !preserveLocalLock {
+                    for field in WebStoreDocument.lockFieldNames { groups[index][field] = cluster.sharedLock[field] ?? NSNull() }
                     groups[index]["lockSyncedVersion"] = cluster.sharedLock["lockVersion"]
                 }
             }
