@@ -1,5 +1,6 @@
 #if os(macOS)
 import Foundation
+import CryptoKit
 import struct VaultClassifierCore.StorageSchemaPolicy
 import MacBlockerCore
 import MacBlockerWebUI
@@ -278,6 +279,8 @@ final class ConnectionHub: ObservableObject {
         var sharedScalars: [String: Any] = [:]
         var sharedTs: Double = 0
         var sharedScopes: [[String: Any]] = []
+        /// Hub-only provenance for stable first-join Website identities; never sent on the wire.
+        var scopeOrigins: [String: String] = [:]
         /// The link's one lock (group-actions.js lockUnit), versioned; empty
         /// until a member contributes one.
         var sharedLock: [String: Any] = [:]
@@ -1350,7 +1353,10 @@ final class ConnectionHub: ObservableObject {
         let scopesPayload = contribution["scopes"] as? [[String: Any]]
         let carriesConfig = scalarsPayload != nil || scopesPayload != nil
         let firstContribution = carriesConfig && !cluster.contributed.contains(program)
-        if carriesConfig {
+        // Timestamp zero is the original-definition handshake, not an edit.
+        // A reconnect can repeat it before the late initiator has advanced the
+        // shared timestamp; replay must not replace other members' originals.
+        if carriesConfig && (firstContribution || ts != 0) {
             // The group whose Link button made the link: its settings win.
             let priority = firstContribution && program == cluster.initiator
             let wins = priority || ts >= cluster.sharedTs
@@ -1399,10 +1405,19 @@ final class ConnectionHub: ObservableObject {
                 let own = scopes.filter { Self.lineOwner(line: $0) == owner }
                 let theirs = cluster.sharedScopes.filter { Self.lineOwner(line: $0) != owner }
                 if firstContribution {
-                    cluster.sharedScopes = theirs + Self.unionOriginalScopes(cluster.sharedScopes.filter { Self.lineOwner(line: $0) == owner }, incoming: own)
+                    cluster.sharedScopes = theirs + Self.unionOriginalScopes(
+                        cluster.sharedScopes.filter { Self.lineOwner(line: $0) == owner }, incoming: own,
+                        origins: &cluster.scopeOrigins, origin: Self.scopeOrigin(program: program, groupID: groupId, entry: ""),
+                        preferIncomingBase: priority, retainedSeed: cluster.id)
                 } else if wins {
                     cluster.sharedScopes = theirs + own
+                    for line in own where (line["surface"] as? String) == "site" {
+                        let key = Self.scopeEntryKey(line)
+                        if cluster.scopeOrigins[key] == nil { cluster.scopeOrigins[key] = Self.scopeOrigin(program: program, groupID: groupId, entry: key) }
+                    }
                 }
+                let surviving = Set(cluster.sharedScopes.filter { ($0["surface"] as? String) == "site" }.map(Self.scopeEntryKey))
+                cluster.scopeOrigins = cluster.scopeOrigins.filter { surviving.contains($0.key) }
             }
 
             // The link's one lock is versioned (group-actions.js): the first
@@ -1516,6 +1531,11 @@ final class ConnectionHub: ObservableObject {
     /// The entry a scope line belongs to: "apps" for the app list, "site" for
     /// the website list, else its platform id.
     static func scopeEntryKey(_ line: [String: Any]) -> String {
+        if (line["surface"] as? String) == "site" {
+            if let entry = line["entryID"] as? String,
+               entry.range(of: "^site:[A-Za-z0-9_-]{1,80}$", options: .regularExpression) != nil { return entry }
+            return "site"
+        }
         if let entry = line["entryID"] as? String, !entry.isEmpty { return entry }
         if (line["surface"] as? String) == "apps" { return "apps" }
         if let platform = line["platform"] as? String, !platform.isEmpty { return platform }
@@ -1549,7 +1569,7 @@ final class ConnectionHub: ObservableObject {
     /// Independent original lists are OR branches at first join. Compatible
     /// include lists for the same entry keep every target; acknowledged edits
     /// still use replacement and can intentionally delete a target.
-    static func unionOriginalScopes(_ existing: [[String: Any]], incoming: [[String: Any]]) -> [[String: Any]] {
+    private static func unionCompatibleOriginalScopes(_ existing: [[String: Any]], incoming: [[String: Any]]) -> [[String: Any]] {
         let adjusted = incoming.map { line -> [String: Any] in
             let key = scopeEntryKey(line)
             let old = existing.filter { scopeEntryKey($0) == key }
@@ -1559,7 +1579,7 @@ final class ConnectionHub: ObservableObject {
             else if (line["surface"] as? String) == "apps", (line["appsExcept"] as? Bool) != true { target = "apps" }
             else { return line }
             var oldShape = old[0]; var newShape = line
-            for field in ["id", target] { oldShape.removeValue(forKey: field); newShape.removeValue(forKey: field) }
+            for field in ["id", "entryID", target] { oldShape.removeValue(forKey: field); newShape.removeValue(forKey: field) }
             let except = target == "sites" ? "sitesExcept" : "appsExcept"
             guard (oldShape[except] as? Bool) != true,
                   (oldShape["action"] as? String ?? "block") == "block",
@@ -1583,6 +1603,111 @@ final class ConnectionHub: ObservableObject {
         }
         return unionScopes(existing, incoming: adjusted)
     }
+
+
+    static func scopeOrigin(program: String, groupID: String, entry: String) -> String {
+        program + "\0" + groupID + "\0" + entry
+    }
+
+    static func originalScopeAlias(origin: String) -> String {
+        "site:linked_" + SHA256.hash(data: Data(origin.utf8)).prefix(12).map { String(format: "%02x", $0) }.joined()
+    }
+
+    private static func entryContent(_ lines: [[String: Any]]) -> [String] {
+        lines.map { line in
+            var copy = line; copy.removeValue(forKey: "id"); copy.removeValue(forKey: "entryID")
+            if (copy["surface"] as? String) == "site" {
+                if copy["platform"] is NSNull { copy.removeValue(forKey: "platform") }
+                if (copy["action"] as? String ?? "block") == "block" { copy.removeValue(forKey: "action") }
+                if (copy["sitesExcept"] as? Bool) != true { copy.removeValue(forKey: "sitesExcept") }
+                // Target order and duplicates do not change a Website branch.
+                // Normalize only comparison, never its stored predicate.
+                copy["sites"] = Array(Set(copy["sites"] as? [String] ?? [])).sorted()
+            }
+            return WebStoreDocument.canonicalJSON(copy)
+        }.sorted()
+    }
+
+    static func unionOriginalScopes(_ existing: [[String: Any]], incoming: [[String: Any]]) -> [[String: Any]] {
+        var origins: [String: String] = [:]
+        return unionOriginalScopes(existing, incoming: incoming, origins: &origins,
+                                   origin: scopeOrigin(program: "", groupID: "", entry: ""))
+    }
+
+    /// Website originals with different predicates/actions stay independent OR
+    /// entries. Existing aliases survive adoption/rejoin unchanged. Only the
+    /// first initiator may claim the unqualified Website entry from an earlier
+    /// original; ordinary acknowledged edits still replace all browser lines.
+    static func unionOriginalScopes(_ existing: [[String: Any]], incoming: [[String: Any]],
+                                    origins: inout [String: String], origin: String,
+                                    preferIncomingBase: Bool = false, retainedSeed: String = "") -> [[String: Any]] {
+        let sites = incoming.filter { ($0["surface"] as? String) == "site" }
+        let nonSites = incoming.filter { ($0["surface"] as? String) != "site" }
+        var result = unionCompatibleOriginalScopes(existing, incoming: nonSites)
+        var reserved = Set((existing + incoming).map(scopeEntryKey))
+        var keys: [String] = []
+        for line in sites { let key = scopeEntryKey(line); if !keys.contains(key) { keys.append(key) } }
+        func lines(_ key: String) -> [[String: Any]] { result.filter { scopeEntryKey($0) == key } }
+        func source(_ key: String) -> String { origin + key }
+        func retag(_ entry: [[String: Any]], _ key: String) -> [[String: Any]] {
+            entry.map { var copy = $0; copy["entryID"] = key; return copy }
+        }
+        func alias(_ seed: String, _ entry: [[String: Any]]) -> String {
+            let stem = originalScopeAlias(origin: seed)
+            var key = stem; var suffix = 2
+            while reserved.contains(key) {
+                if !lines(key).isEmpty && entryContent(lines(key)) == entryContent(entry) { return key }
+                key = stem + "_" + String(suffix); suffix += 1
+            }
+            reserved.insert(key); return key
+        }
+        for key in keys {
+            let added = sites.filter { scopeEntryKey($0) == key }
+            let prior = lines(key)
+            if prior.isEmpty {
+                result += added; origins[key] = source(key); continue
+            }
+            let compatible = unionCompatibleOriginalScopes(prior, incoming: added)
+            // The compatible helper only unions included block lists. Check its
+            // actual result against the incoming shape before using replacement.
+            let oldLine = prior.count == 1 ? prior[0] : [:]
+            let newLine = added.count == 1 ? added[0] : [:]
+            let joinedTargets = compatible.first?["sites"] as? [String] ?? []
+            let oldTargets = oldLine["sites"] as? [String] ?? []
+            let newTargets = newLine["sites"] as? [String] ?? []
+            var oldShape = oldLine, newShape = newLine
+            for field in ["id", "entryID", "sites", "sitesExcept", "action"] {
+                oldShape.removeValue(forKey: field); newShape.removeValue(forKey: field)
+            }
+            if oldShape["platform"] is NSNull { oldShape.removeValue(forKey: "platform") }
+            if newShape["platform"] is NSNull { newShape.removeValue(forKey: "platform") }
+            let canUnion = prior.count == 1 && added.count == 1 &&
+                (oldLine["sitesExcept"] as? Bool) != true && (newLine["sitesExcept"] as? Bool) != true &&
+                (oldLine["action"] as? String ?? "block") == "block" && (newLine["action"] as? String ?? "block") == "block" &&
+                WebStoreDocument.canonicalJSON(oldShape) == WebStoreDocument.canonicalJSON(newShape) &&
+                Set(oldTargets + newTargets).isSubset(of: Set(joinedTargets))
+            if canUnion || entryContent(prior) == entryContent(added) {
+                result.removeAll { scopeEntryKey($0) == key }; result += canUnion ? compatible : prior
+                if origins[key] == nil || preferIncomingBase && key == "site" { origins[key] = source(key) }
+                continue
+            }
+            if preferIncomingBase && key == "site" {
+                let seed = origins[key] ?? "retained\0" + retainedSeed + "\0" + key
+                let retainedKey = alias(seed, prior)
+                result.removeAll { scopeEntryKey($0) == key }
+                if lines(retainedKey).isEmpty { result += retag(prior, retainedKey) }
+                if let priorOrigin = origins.removeValue(forKey: key), origins[retainedKey] == nil { origins[retainedKey] = priorOrigin }
+                result += added; origins[key] = source(key)
+            } else {
+                let addedKey = alias(source(key), added)
+                if lines(addedKey).isEmpty { result += retag(added, addedKey); origins[addedKey] = source(key) }
+            }
+        }
+        let surviving = Set(result.filter { ($0["surface"] as? String) == "site" }.map(scopeEntryKey))
+        origins = origins.filter { surviving.contains($0.key) }
+        return unionScopes([], incoming: result)
+    }
+
 
     /// The policy settings a linked group shares: group-scopes.js
     /// SYNC_SCALAR_FIELDS, the one list (read from the editor's code).
@@ -1906,6 +2031,7 @@ final class ConnectionHub: ObservableObject {
                 "contributed": Array(c.contributed),
                 "sharedScalars": c.sharedScalars,
                 "sharedScopes": c.sharedScopes,
+                "scopeOrigins": c.scopeOrigins,
                 "sharedLock": c.sharedLock,
                 "sharedTs": c.sharedTs,
                 "sharedSnooze": c.sharedSnooze,
@@ -1952,6 +2078,16 @@ final class ConnectionHub: ObservableObject {
             if UserDefaults.standard.data(forKey: ConnectionHub.clustersDefaultsKey) != nil { clusterStorageWritable = false }
             return
         }
+        // Optional old registries need no migration. A malformed present
+        // provenance ledger is preserved read-only, never silently overwritten.
+        for obj in arr where obj["scopeOrigins"] != nil {
+            guard let origins = obj["scopeOrigins"] as? [String: String], origins.allSatisfy({ key, value in
+                let parts = value.split(separator: "\0", omittingEmptySubsequences: false)
+                return (key == "site" || key.range(of: "^site:[A-Za-z0-9_-]{1,80}$", options: .regularExpression) != nil) &&
+                    parts.count == 3 && parts.allSatisfy { !$0.isEmpty && $0.count <= 128 } &&
+                    Self.browserPrograms.contains(String(parts[0]))
+            }) else { clusterStorageWritable = false; return }
+        }
         for obj in arr {
             guard let id = obj["id"] as? String,
                   let groupName = obj["groupName"] as? String else { continue }
@@ -1967,6 +2103,8 @@ final class ConnectionHub: ObservableObject {
                 ?? ((obj["contributions"] as? [String: Any]).map { Array($0.keys) } ?? []))
             if let scalars = obj["sharedScalars"] as? [String: Any] { cluster.sharedScalars = scalars }
             if let scopes = obj["sharedScopes"] as? [[String: Any]] { cluster.sharedScopes = scopes }
+            let surviving = Set(cluster.sharedScopes.filter { ($0["surface"] as? String) == "site" }.map(Self.scopeEntryKey))
+            cluster.scopeOrigins = (obj["scopeOrigins"] as? [String: String] ?? [:]).filter { surviving.contains($0.key) }
             if let lock = obj["sharedLock"] as? [String: Any] { cluster.sharedLock = lock }
             cluster.sharedTs = (obj["sharedTs"] as? Double) ?? 0
             if let snooze = obj["sharedSnooze"] as? [String: Any] { cluster.sharedSnooze = snooze }
