@@ -6,7 +6,7 @@
  * Runs inside JavaScriptCore after rule-core.js. The Swift host
  * (RuleRuntime.swift) calls, with JSON in and JSON out:
  *   MacBlockerRuntime.load(groupId, source, stateJSON)
- *     → { ok, handlers, types, error, logs, quarantine }
+ *     → { ok, handlers, types, error, logs, states: { groupId: stateJSON }, quarantine }
  *   MacBlockerRuntime.unload(groupId)
  *   MacBlockerRuntime.suppress(groupId, on)      // a disabled group's rule hears nothing
  *   MacBlockerRuntime.dispatch(descriptorJSON)   // { type, now, data, targetGroupId? }
@@ -49,12 +49,34 @@ var MacBlockerRuntime = (function () {
     return (list || []).map((entry) => ({ groupId: entry.groupId, level: entry.level, message: message(entry.args) }));
   }
 
+  // Keep the native writer outside user code's global namespace.
+  const nativeCommit = globalThis.__vaultBeforeRuleCommit;
+  delete globalThis.__vaultBeforeRuleCommit;
+  let registering = false;
+  const captureRecovery = globalThis.__vaultCaptureRuleLoadRecovery;
+  delete globalThis.__vaultCaptureRuleLoadRecovery;
+  if (typeof captureRecovery === "function") captureRecovery(() => { registering = false; });
+
+  function stateStrings(states) {
+    const out = {};
+    for (const [groupId, state] of Object.entries(states || {})) out[groupId] = JSON.stringify(state);
+    return out;
+  }
+
   return {
     load(groupId, source, stateJSON) {
-      let state = {};
-      try { state = JSON.parse(stateJSON || "{}"); } catch (_) {}
-      const result = engine.load(String(groupId), source, state);
-      return JSON.stringify({ ...result, logs: logs(result.logs) });
+      if (registering) return JSON.stringify({ ok: false, handlers: 0, types: [], error: "A rule load is already in progress.", logs: [], states: {} });
+      registering = true;
+      try {
+        let state = {};
+        try { state = JSON.parse(stateJSON || "{}"); } catch (_) {}
+        const beforeCommit = typeof nativeCommit === "function" ? (states) => {
+          const error = nativeCommit(JSON.stringify(stateStrings(states)));
+          if (error) throw new Error(error);
+        } : undefined;
+        const result = engine.load(String(groupId), source, state, beforeCommit);
+        return JSON.stringify({ ...result, states: stateStrings(result.states), logs: logs(result.logs) });
+      } finally { registering = false; }
     },
     unload(groupId) {
       engine.unload(String(groupId));

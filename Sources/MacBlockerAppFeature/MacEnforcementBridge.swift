@@ -475,14 +475,21 @@ public final class MacEnforcementBridge: ObservableObject {
     }
 
     /// Registers a group's rule; one that doesn't load leaves the old one.
-    private func loadRule(group: BlockGroup, source: String, stateJSON: String) -> RuleRuntime.LoadResult? {
+    private func loadRule(group: BlockGroup, source: String, stateJSON: String, recordRun: Bool = false) -> RuleRuntime.LoadResult? {
         guard let runtime = ensureRuntime() else { return nil }
         do {
-            let result = try runtime.load(groupID: group.id, source: source, stateJSON: stateJSON)
+            var persisted = false
+            let result = try runtime.load(groupID: group.id, source: source, stateJSON: stateJSON) { states in
+                persisted = try self.webStore.commitRuleLoad(groupID: group.id, source: recordRun ? source : nil, states: states)
+            }
             for log in result.logs { appendLog(groupId: log.groupId, group: group.name, message: log.message) }
             guard result.ok else {
                 NSLog("[Vault rule %@] %@", group.id, result.error ?? "The rule didn't load.")
-                if result.quarantine != nil { quarantineRule(group: group) }
+                // A rejected candidate's instrumented registration deadline
+                // leaves the old rule intact. A true VM termination below
+                // still quarantines the group for runtime safety.
+                let rejectedCandidate = result.quarantine?.reason == "registration-deadline-overrun" && loadedRuleSources[group.id] != nil
+                if result.quarantine != nil && !rejectedCandidate { quarantineRule(group: group) }
                 return result
             }
             loadedRuleSources[group.id] = source
@@ -492,6 +499,7 @@ public final class MacEnforcementBridge: ObservableObject {
             setPanels(result.panels ?? [], groupID: group.id)
             // A fresh load isn't suppressed in the engine: say where it stands.
             setSuppressed(!group.enabled, groupID: group.id, force: true)
+            if persisted { GroupStore.postDidChange() }
             return result
         } catch RuleRuntime.RuleRuntimeError.terminated {
             quarantineRule(group: group)
@@ -516,8 +524,7 @@ public final class MacEnforcementBridge: ObservableObject {
     /// rule, keeping its memory (v.state, owner 2026-09-27). A rule that doesn't load
     /// changes nothing — the one before keeps running. A frozen group is refused.
     public func runRule(groupID: String, source: String) -> [String: Any] {
-        let store = GroupStore()
-        let document = store.load()
+        let document = webStore.ruleDocument
         guard document.group(id: groupID)?["groupType"] as? String == "custom",
               let group = webStore.importedGroups().first(where: { $0.id == groupID }) else {
             return ["ok": false, "error": "group-not-found"]
@@ -526,10 +533,9 @@ public final class MacEnforcementBridge: ObservableObject {
         // Run enables the group (as the editor does).
         var running = group
         running.enabled = true
-        guard let result = loadRule(group: running, source: source, stateJSON: webStore.ruleState(groupID: groupID)) else {
+        guard let result = loadRule(group: running, source: source, stateJSON: webStore.ruleState(groupID: groupID), recordRun: true) else {
             return ["ok": false, "error": quarantinedRuleSources[groupID] != nil ? "sandbox-timeout" : "rules-not-running"]
         }
-        if result.ok { _ = try? store.mutate { try $0.recordRun(id: groupID, source: source) } }
         return ["ok": result.ok, "handlers": result.handlers, "error": result.error ?? NSNull()]
     }
 

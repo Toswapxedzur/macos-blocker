@@ -32,6 +32,8 @@ public final class RuleRuntime {
         /// The panels the rule showed while registering (replacing the old ones).
         public var panels: [PanelSnapshot]?
         public var quarantine: Quarantine?
+        /// Validated registration state, JSON text, exported before commit.
+        public var states: [String: String] = [:]
     }
 
     /// One `v.log` line, or a separate developer diagnostic.
@@ -72,6 +74,9 @@ public final class RuleRuntime {
 
     #if canImport(JavaScriptCore)
     private let context: JSContext
+    private var beforeLoadCommit: (([String: String]) throws -> Void)?
+    private var loading = false
+    private var resetRegistration: JSValue?
     /// The contract's handler time (rule-core.js LIMITS.handlerMs) plus a margin.
     private static let executionTimeLimitSeconds: Double = 1.2
 
@@ -103,6 +108,17 @@ public final class RuleRuntime {
             throw RuleRuntimeError.executionDeadlineUnavailable
         }
         self.context = context
+        let commit: @convention(block) (String) -> String = { [weak self] json in
+            guard let callback = self?.beforeLoadCommit else { return "" }
+            do {
+                let states = try JSONDecoder().decode([String: String].self, from: Data(json.utf8))
+                try callback(states)
+                return ""
+            } catch { return "State persistence failed: " + String(describing: error) }
+        }
+        context.setObject(commit, forKeyedSubscript: "__vaultBeforeRuleCommit" as NSString)
+        let captureReset: @convention(block) (JSValue) -> Void = { [weak self] reset in self?.resetRegistration = reset }
+        context.setObject(captureReset, forKeyedSubscript: "__vaultCaptureRuleLoadRecovery" as NSString)
         for name in ["rule-core", "custom-rule-runtime"] {
             guard let url = RuntimeResources.url(name: name, ext: "js"),
                   let source = try? String(contentsOf: url, encoding: .utf8) else {
@@ -121,8 +137,22 @@ public final class RuleRuntime {
 
     /// Registers a group's rule; one that fails to load leaves the group's old
     /// rule running (`ok` false with its error).
-    public func load(groupID: String, source: String, stateJSON: String) throws -> LoadResult {
-        try call("MacBlockerRuntime.load(\(literal(groupID)), \(literal(source)), \(literal(stateJSON)))")
+    public func load(groupID: String, source: String, stateJSON: String,
+                     beforeCommit: (([String: String]) throws -> Void)? = nil) throws -> LoadResult {
+        #if canImport(JavaScriptCore)
+        guard !loading else { throw RuleRuntimeError.failed("A rule load is already in progress.") }
+        loading = true
+        beforeLoadCommit = beforeCommit
+        defer {
+            beforeLoadCommit = nil
+            loading = false
+            // VM termination can skip JS finally. This trusted constant-time
+            // closure resets only the host registration guard, never user code.
+            resetRegistration?.call(withArguments: [])
+            context.exception = nil
+        }
+        #endif
+        return try call("MacBlockerRuntime.load(\(literal(groupID)), \(literal(source)), \(literal(stateJSON)))")
     }
 
     /// A disabled group's rule stays loaded but hears nothing until resumed.

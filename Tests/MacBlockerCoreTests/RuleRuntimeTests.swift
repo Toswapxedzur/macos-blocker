@@ -18,6 +18,24 @@ final class RuleRuntimeTests: XCTestCase {
         XCTAssertTrue(logged.diagnostics.isEmpty)
     }
 
+    func testRegistrationExportsStateAndCallsCommitOnceBeforeReplacingHandlers() throws {
+        let runtime = try RuleRuntime()
+        var commits = [[String: String]]()
+        let loaded = try runtime.load(groupID: "g", source: #"(on,v)=>{v.state.n=(v.state.n||0)+1;}"#, stateJSON: "{}") { states in commits.append(states) }
+        XCTAssertTrue(loaded.ok)
+        XCTAssertEqual(loaded.states["g"], #"{"n":1}"#)
+        XCTAssertEqual(commits, [loaded.states])
+    }
+
+    func testFailedCommitLeavesPreviousHandlersAndStateInMemory() throws {
+        let runtime = try RuleRuntime()
+        _ = try runtime.load(groupID: "g", source: #"(on,v)=>{on("tick",()=>{v.state.n=(v.state.n||0)+1;});}"#, stateJSON: #"{"n":4}"#)
+        let rejected = try runtime.load(groupID: "g", source: #"(on,v)=>{v.state.n=999;on("tick",()=>{v.state.n=999;});}"#, stateJSON: "{}") { _ in throw RuleRuntime.RuleRuntimeError.failed("fixture write failure") }
+        XCTAssertFalse(rejected.ok)
+        XCTAssertTrue(rejected.states.isEmpty)
+        XCTAssertEqual(try runtime.dispatch(type:"tick",data:[String:Any](),groupID:"g").states["g"], #"{"n":5}"#)
+    }
+
     func testALoadedRuleReportsItsHandlersTypesAndLogs() throws {
         let runtime = try RuleRuntime()
         let result = try runtime.load(groupID: "g", source: """

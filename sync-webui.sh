@@ -13,6 +13,13 @@ ROOT="$(cd "$(dirname "$0")" && pwd)"
 SRC="$(cd "$ROOT/../customBlocker" && pwd)"
 DEST="$ROOT/Sources/MacBlockerWebUI/WebAssets"
 
+# A canonical runtime-contract update need not resync unrelated editor assets.
+if [[ "${1:-}" == "--rule-core-only" && $# -eq 1 ]]; then
+  cp "$SRC/rule-core.js" "$DEST/rule-core.js"
+  cp "$SRC/rule-core.js" "$ROOT/Sources/MacBlockerCore/Resources/rule-core.js"
+  exit 0
+fi
+
 SYNCED_FILES=(
   popup.js
   popup.css
