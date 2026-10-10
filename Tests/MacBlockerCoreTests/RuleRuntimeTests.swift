@@ -142,4 +142,15 @@ final class RuleRuntimeTests: XCTestCase {
         _ = try runtime.load(groupID: "b", source: #"(on, v) => { on("tick", () => v.log("b")); }"#, stateJSON: "{}")
         XCTAssertEqual(try runtime.dispatch(type: "tick", data: [String: Any](), groupID: "b").logs.map(\.message), ["b"])
     }
+    func testUnloadedDeletedRuleProducesNoStateLogPanelsOrActions() throws {
+        let runtime = try RuleRuntime()
+        let loaded = try runtime.load(groupID: "deleted", source: #"(on,v)=>{v.panel("p",{title:"Rule",controls:[]});on("tick",()=>{v.state.events=(v.state.events||0)+1;v.log("event");v.block("com.example.Game",true);v.panel("p",null);});}"#, stateJSON: "{}")
+        XCTAssertTrue(loaded.ok)
+        let before = try runtime.dispatch(type: "tick", data: [String: Any](), groupID: "deleted")
+        XCTAssertFalse(before.states.isEmpty); XCTAssertFalse(before.logs.isEmpty); XCTAssertFalse(before.actions.isEmpty)
+        runtime.unload(groupID: "deleted")
+        let after = try runtime.dispatch(type: "tick", data: [String: Any](), groupID: "deleted")
+        XCTAssertTrue(after.states.isEmpty); XCTAssertTrue(after.logs.isEmpty); XCTAssertTrue(after.panels.isEmpty); XCTAssertTrue(after.actions.isEmpty)
+    }
+
 }

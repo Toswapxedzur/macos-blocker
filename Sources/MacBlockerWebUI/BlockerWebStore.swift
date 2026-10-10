@@ -388,7 +388,10 @@ public final class BlockerWebStore: @unchecked Sendable {
         GroupStore.withFileLock {
             guard var object = loadStoreObject() else { return }
             var stored = object["cbRuleState"] as? [String: Any] ?? [:]
-            for (groupID, json) in states {
+            let current = Set((object["blockedGroups"] as? [[String: Any]] ?? []).compactMap { group in
+                (group["groupType"] as? String) == "custom" ? group["id"] as? String : nil
+            })
+            for (groupID, json) in states where json == nil || current.contains(groupID) {
                 stored[groupID] = json.flatMap { try? JSONSerialization.jsonObject(with: Data($0.utf8)) }
             }
             object["cbRuleState"] = stored

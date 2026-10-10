@@ -196,5 +196,21 @@ final class BlockerWebStoreRoutingTests: XCTestCase {
         webStore.save(rawStore: [1, 2, 3])
         XCTAssertNil(shared.readData(SharedAppGroupStore.webStoreFileName), "no file written for a non-object payload")
     }
+    func testDeletedCustomMemoryCannotBeResurrectedByLateStateCallback() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("deleted-state-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let shared = SharedAppGroupStore(baseDirectory: dir)
+        let store = BlockerWebStore(shared: shared)
+        let native = GroupStore(shared: shared)
+        native.save(WebStoreDocument(raw: ["blockedGroups": [
+            ["id": "gone", "name": "Gone", "groupType": "custom"],
+            ["id": "kept", "name": "Kept", "groupType": "custom"]],
+            "cbRuleState": ["gone": ["events": 3], "kept": ["events": 9]]]))
+        try native.mutate { try $0.deleteGroup(id: "gone") }
+        store.writeRuleStates(["gone": "{\"events\":4}", "kept": "{\"events\":10}"])
+        XCTAssertEqual(store.ruleState(groupID: "gone"), "{}")
+        XCTAssertEqual(store.ruleState(groupID: "kept"), "{\"events\":10}")
+    }
+
 }
 #endif
