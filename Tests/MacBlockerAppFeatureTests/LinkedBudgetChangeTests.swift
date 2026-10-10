@@ -15,6 +15,7 @@ final class LinkedBudgetChangeTests: XCTestCase {
                       contribution: ["scalars": ["mode": "after-minutes", "allowedMinutes": 30, "resetIntervalHours": 24.0,
                                                  "resetAtMidnight": false, "rollingLimit": false]],
                       ts: 1)
+        hub.applySync(program: "macapp", groupId: "m1", contribution: ["scopes": [[String: Any]]()], ts: 0)
         hub.applySync(program: "chrome", groupId: "c1",
                       contribution: ["usageResetAtMs": 1_000.0, "usageDeltaMs": 600_000.0], ts: 0)
         return hub

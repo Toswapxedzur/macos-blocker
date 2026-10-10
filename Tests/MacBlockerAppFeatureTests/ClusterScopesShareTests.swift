@@ -29,8 +29,9 @@ final class ClusterScopesShareTests: XCTestCase {
         let hub = ConnectionHub()
         hub.setRoster(program: "macapp", groups: [["id": "m1", "name": "Focus", "type": "site"]])
         hub.setRoster(program: "chrome", groups: [["id": "c1", "name": "Focus", "type": "youtube"]])
-        XCTAssertNil(hub.linkGroups(program: "macapp", groupId: "m1", targetProgram: "chrome", targetGroupId: "c1"))
+        XCTAssertNil(hub.linkGroups(program: "chrome", groupId: "c1", targetProgram: "macapp", targetGroupId: "m1"))
         hub.applySync(program: "chrome", groupId: "c1", contribution: ["scalars": ["mode": "instant"]], ts: 1)
+        hub.applySync(program: "macapp", groupId: "m1", contribution: ["scopes": [[String: Any]]()], ts: 0)
         let overlaid = hub.overlayShared(onto: ["blockedGroups": [["id": "m1", "name": "Focus", "mode": "after-minutes"]]])
         XCTAssertEqual((overlaid["blockedGroups"] as? [[String: Any]])?.first?["mode"] as? String, "instant",
                        "a cluster formed although the types differ, and the Mac reads its shared policy")

@@ -54,3 +54,5 @@
   `docs/STORAGE-SCHEMAS.md`. The shared policy/codec is in Classifier Core;
   web-store writers retain opaque data and refuse unsupported destinations.
   `sync-webui.sh` generates desktop identity and unbundled version resources.
+
+- **First-link initialization:** the native hub preserves each member's original definition until its first contribution is accepted. The initiating group supplies the initial policy; original scope lines union without restarting the budget. While originals are joining, persisted bounded bookkeeping retains the maximum original usage plus subsequent deltas (per minute for rolling budgets), then clears when the join completes. `ClusterFirstJoinTests` covers delayed/reordered originals, interrupted joins, nested browser joins and real budget edits.
