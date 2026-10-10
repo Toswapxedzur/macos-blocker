@@ -50,12 +50,6 @@ public final class MacEnforcementBridge: ObservableObject {
     private var timer: Timer?
     private let tickInterval: TimeInterval
     private var lastSampleAt: Date?
-    /// Group ids whose current local usage total has already been seeded to the
-    /// web-app bridge cluster. The first report after a group joins a cluster
-    /// carries a delta-free seed (its existing local total) so prior Mac usage
-    /// isn't lost when it links; subsequent reports carry only fresh increments.
-    /// Cleared when a group leaves its cluster so a re-link re-seeds.
-    private var clusterSeededGroups: Set<String> = []
 
     // Custom rules: the loaded source and the event types each handles.
     private var ruleRuntime: RuleRuntime?
@@ -599,13 +593,14 @@ public final class MacEnforcementBridge: ObservableObject {
         return min(max(0, now.timeIntervalSince(lastSampleAt)), tickInterval * 4)
     }
 
-    private func reconcileUsage(
+    func reconcileUsage(
         current: BlockerWebStore.UsageTimers,
         groups: [BlockGroup],
         frontmost: String?,
         elapsed: TimeInterval,
         now: Date,
-        snoozes: [String: SnoozeState] = [:]
+        snoozes: [String: SnoozeState] = [:],
+        hub: ConnectionHub = .shared
     ) -> [String: Double] {
         var timers = current.timersMs
         var resetAt = current.resetAtMs
@@ -647,25 +642,17 @@ public final class MacEnforcementBridge: ObservableObject {
                 if addedMs > 0 {
                     buckets[UsageBudget.bucketStartMs(nowMs), default: 0] += addedMs
                 }
-                if let shared = ConnectionHub.shared.sharedUsage(groupID: gid) {
-                    // Linked group: report this tick's minute (or seed our history
-                    // once), then adopt the hub's shared per-minute usage.
-                    if clusterSeededGroups.contains(gid) {
-                        if addedMs > 0 {
-                            ConnectionHub.shared.reportLocalUsage(
-                                groupID: gid, deltaMs: 0, resetAtMs: 0,
-                                bucketDeltas: [UsageBudget.bucketStartMs(nowMs): addedMs]
-                            )
-                        }
-                    } else {
-                        ConnectionHub.shared.reportLocalUsage(
-                            groupID: gid, deltaMs: 0, resetAtMs: 0, seedBuckets: buckets
+                if let shared = hub.sharedUsage(groupID: gid) {
+                    // The original definition already captured absolute
+                    // history. Every tick, including the first, reports only
+                    // its fresh increment; adoption never echoes a seed.
+                    if addedMs > 0 {
+                        hub.reportLocalUsage(
+                            groupID: gid, deltaMs: 0, resetAtMs: 0,
+                            bucketDeltas: [UsageBudget.bucketStartMs(nowMs): addedMs]
                         )
-                        clusterSeededGroups.insert(gid)
                     }
-                    buckets = ConnectionHub.shared.sharedUsage(groupID: gid)?.buckets ?? shared.buckets
-                } else {
-                    clusterSeededGroups.remove(gid)
+                    buckets = hub.sharedUsage(groupID: gid)?.buckets ?? shared.buckets
                 }
                 buckets = UsageBudget.pruneBuckets(buckets, group: group, nowMs: nowMs)
                 if buckets != stored { bucketWrites[gid] = buckets }
@@ -681,7 +668,7 @@ public final class MacEnforcementBridge: ObservableObject {
             // on the midnight-aligned grid when resetAtMidnight is on. A linked
             // group's period belongs to the hub: it resets there, and we adopt
             // its total and anchor below instead of resetting on our own clock.
-            let linked = ConnectionHub.shared.sharedUsage(groupID: gid) != nil
+            let linked = hub.sharedUsage(groupID: gid) != nil
             var anchor = resetAt[gid] ?? nowMs
             if resetAt[gid] == nil {
                 resetAt[gid] = nowMs
@@ -705,25 +692,14 @@ public final class MacEnforcementBridge: ObservableObject {
             // none) and fold the hub's total + anchor back into the local timer,
             // so enforcement reflects time spent on every member.
             if linked {
-                if clusterSeededGroups.contains(gid) {
-                    ConnectionHub.shared.reportLocalUsage(
+                if addedMs > 0 {
+                    hub.reportLocalUsage(
                         groupID: gid,
                         deltaMs: addedMs,
                         resetAtMs: anchor
                     )
-                } else {
-                    // First report since joining: seed our current local total
-                    // (which already includes this tick's accrual) with no delta,
-                    // so prior Mac usage is preserved on the shared budget.
-                    ConnectionHub.shared.reportLocalUsage(
-                        groupID: gid,
-                        deltaMs: 0,
-                        resetAtMs: anchor,
-                        seedMs: timers[gid] ?? 0
-                    )
-                    clusterSeededGroups.insert(gid)
                 }
-                if let shared = ConnectionHub.shared.sharedUsage(groupID: gid) {
+                if let shared = hub.sharedUsage(groupID: gid) {
                     let total = max(0, shared.ms)
                     if timers[gid] != total {
                         timers[gid] = total
@@ -734,10 +710,6 @@ public final class MacEnforcementBridge: ObservableObject {
                         resetWrites[gid] = shared.resetAtMs
                     }
                 }
-            } else {
-                // Group isn't clustered: forget any seed flag so a future re-link
-                // re-seeds its then-current local total.
-                clusterSeededGroups.remove(gid)
             }
         }
 
