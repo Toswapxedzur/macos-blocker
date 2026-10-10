@@ -1707,7 +1707,9 @@ final class ConnectionHub: ObservableObject {
                 if cluster.joiningUsageBaseMs != nil { cluster.joiningBucketDeltas[minute, default: 0] += delta }
             }
             cluster.bucketsSeeded = true
-        } else if !cluster.bucketsSeeded || firstContribution, let seed = UsageBudget.parseBuckets(contribution["usageBucketsSeed"]) {
+        } else if !cluster.bucketsSeeded || firstContribution,
+                  cluster.joiningSeedFloorMs == 0 || ((contribution["usageResetAtMs"] as? Double) ?? 0) >= cluster.joiningSeedFloorMs,
+                  let seed = UsageBudget.parseBuckets(contribution["usageBucketsSeed"]) {
             for (minute, used) in seed {
                 if cluster.joiningUsageBaseMs != nil {
                     let base = max(used, cluster.joiningBucketsBase[minute] ?? 0)
