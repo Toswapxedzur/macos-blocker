@@ -26,18 +26,44 @@ final class LocalLLMEngineRegistryTests: XCTestCase {
             at: directory.appendingPathComponent("not-a-file.gguf", isDirectory: true),
             withIntermediateDirectories: true
         )
+
+        XCTAssertEqual(
+            VaultLocalLLMEngine.availableModelFiles(in: directory),
+            [catalogFile, "manual.gguf"].sorted()
+        )
+    }
+
+    func testPickerListsSymlinkToRegularGGUFFile() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
         // A symlinked model (e.g. into the Hugging Face cache) must be listed:
         // its target is a regular file.
         let linkTarget = directory.appendingPathComponent("target-store.gguf")
         XCTAssertTrue(FileManager.default.createFile(atPath: linkTarget.path, contents: Data()))
-        try FileManager.default.createSymbolicLink(
-            at: directory.appendingPathComponent("linked.gguf"),
-            withDestinationURL: linkTarget
-        )
+        do {
+            try FileManager.default.createSymbolicLink(
+                at: directory.appendingPathComponent("linked.gguf"),
+                withDestinationURL: linkTarget
+            )
+        } catch {
+            #if os(Windows)
+            let cocoaError = error as NSError
+            if cocoaError.domain == NSCocoaErrorDomain,
+               cocoaError.code == 512,
+               let underlyingError = cocoaError.userInfo[NSUnderlyingErrorKey],
+               String(describing: underlyingError) == "Win32Error(code: 1314)" {
+                throw XCTSkip("Windows symlink creation requires the symbolic-link privilege; ordinary model-picker coverage runs separately.")
+            }
+            #endif
+            throw error
+        }
 
         XCTAssertEqual(
             VaultLocalLLMEngine.availableModelFiles(in: directory),
-            [catalogFile, "manual.gguf", "target-store.gguf", "linked.gguf"].sorted()
+            ["target-store.gguf", "linked.gguf"].sorted()
         )
     }
 
