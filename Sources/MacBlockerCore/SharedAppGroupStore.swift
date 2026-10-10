@@ -19,14 +19,6 @@ public final class SharedAppGroupStore: @unchecked Sendable {
         baseDirectory.appendingPathComponent(fileName, isDirectory: false)
     }
 
-    private func ensureDirectory() {
-        do {
-            try fileManager.createDirectory(at: baseDirectory, withIntermediateDirectories: true)
-        } catch {
-            print("[SharedAppGroupStore] ensureDirectory FAILED for \(baseDirectory.path): \(error)")
-        }
-    }
-
     // MARK: Raw bytes
 
     public func readData(_ fileName: String, silent: Bool = false) -> Data? {
@@ -57,23 +49,27 @@ public final class SharedAppGroupStore: @unchecked Sendable {
     }
 
     public func writeData(_ data: Data, to fileName: String) {
-        queue.sync {
-            ensureDirectory()
+        do { try writeDataThrowing(data, to: fileName) }
+        catch { print("[SharedAppGroupStore] writeData FAILED for \(url(for: fileName).path): \(error)") }
+    }
+
+    /// Membership changes must not discard shared runtime unless the local
+    /// snapshot was actually persisted. Ordinary writers retain their logging
+    /// behavior; transactional writers can refuse the change on failure.
+    public func writeDataThrowing(_ data: Data, to fileName: String) throws {
+        try queue.sync {
+            try fileManager.createDirectory(at: baseDirectory, withIntermediateDirectories: true)
             let target = url(for: fileName)
-            do {
-                var output = data
-                if fileName == Self.webStoreFileName {
-                    if fileManager.fileExists(atPath: target.path) {
-                        guard let existing = try JSONSerialization.jsonObject(with: Data(contentsOf: target)) as? [String: Any] else { throw StorageSchemaError.unsupported("invalid web store") }
-                        try Self.webSchema.validateFlat(existing)
-                    }
-                    guard let root = try JSONSerialization.jsonObject(with: data) as? [String: Any] else { throw StorageSchemaError.unsupported("invalid web store") }
-                    output = try JSONSerialization.data(withJSONObject: Self.webSchema.stampFlat(root), options: [.sortedKeys])
+            var output = data
+            if fileName == Self.webStoreFileName {
+                if fileManager.fileExists(atPath: target.path) {
+                    guard let existing = try JSONSerialization.jsonObject(with: Data(contentsOf: target)) as? [String: Any] else { throw StorageSchemaError.unsupported("invalid web store") }
+                    try Self.webSchema.validateFlat(existing)
                 }
-                try output.write(to: target, options: [.atomic])
-            } catch {
-                print("[SharedAppGroupStore] writeData FAILED for \(target.path): \(error)")
+                guard let root = try JSONSerialization.jsonObject(with: data) as? [String: Any] else { throw StorageSchemaError.unsupported("invalid web store") }
+                output = try JSONSerialization.data(withJSONObject: Self.webSchema.stampFlat(root), options: [.sortedKeys])
             }
+            try output.write(to: target, options: [.atomic])
         }
     }
 

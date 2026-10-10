@@ -21,6 +21,36 @@ public final class BlockerWebStore: @unchecked Sendable {
         shared.url(for: SharedAppGroupStore.webStoreFileName)
     }
 
+    /// Lock the canonical document before a hub membership transaction. The
+    /// caller may then take the hub lock, persist its final snapshot through
+    /// `save`, and detach only after that write succeeds. This keeps the global
+    /// file-lock -> hub-lock order used by all shared reads and adoptions.
+    public func withLockedDocument<T>(_ operation: ([String: Any]?, ([String: Any]) throws -> Void) throws -> T) throws -> T {
+        var wrote = false
+        let result = try GroupStore.withFileLock {
+            var document: [String: Any]?
+            var readError: Error?
+            do {
+                let data = try Data(contentsOf: fileURL)
+                guard let raw = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                    throw GroupStoreError.invalidInput("invalid web store")
+                }
+                try SharedAppGroupStore.webSchema.validateFlat(raw)
+                document = raw
+            } catch { readError = error }
+            // A roster change that does not detach this Mac needs no store
+            // write. Invalid bytes still refuse any required persistence.
+            return try operation(document) { updated in
+                if let readError { throw readError }
+                let data = try JSONSerialization.data(withJSONObject: updated, options: [.sortedKeys])
+                try self.shared.writeDataThrowing(data, to: SharedAppGroupStore.webStoreFileName)
+                wrote = true
+            }
+        }
+        if wrote { GroupStore.postDidChange() }
+        return result
+    }
+
     /// Creates a default `web-store.json` with an empty `blockedGroups` array
     /// if the file does not already exist. Call once at launch so the
     /// enforcement bridge always has a store to read from.
@@ -202,7 +232,7 @@ public final class BlockerWebStore: @unchecked Sendable {
     @discardableResult
     public func adoptShared() -> Bool {
         guard let overlay = GroupStore.sharedOverlay else { return false }
-        let keys = ["blockedGroups", "groupSnoozes", "groupSnoozeTotalsMs"]
+        let keys = ["blockedGroups", "groupSnoozes", "groupSnoozeTotalsMs", "usageTimersMs", "usageResetAtMs", "usageBucketsMs"]
         let wrote: Bool = GroupStore.withFileLock {
             guard let object = loadStoreObject() else { return false }
             let adopted = overlay(object)
@@ -238,15 +268,15 @@ public final class BlockerWebStore: @unchecked Sendable {
         if wrote { GroupStore.postDidChange() }
     }
 
-    /// Groups and snoozes as linked devices share them; usage and settings as
-    /// stored (the engine folds shared usage in itself).
+    /// Policy, snoozes and usage as linked devices share them. Accrual starts
+    /// from the current authoritative allowance rather than a stale local total.
     public static func enforcementView(of document: [String: Any]) -> EnforcementView {
         let overlaid = GroupStore.sharedOverlay?(document) ?? document
         let settings = document["globalSettings"] as? [String: Any]
         return EnforcementView(
             groups: (try? ChromeExtensionImporter.importGroups(fromObject: overlaid))?.groups ?? [],
             snoozes: snoozes(overlaid["groupSnoozes"]),
-            usage: usageTimers(document),
+            usage: usageTimers(overlaid),
             quitRetryMinutes: max(0, (settings?["quitRetryMinutes"] as? NSNumber)?.doubleValue ?? 0)
         )
     }

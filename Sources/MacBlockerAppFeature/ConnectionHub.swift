@@ -2,6 +2,7 @@
 import Foundation
 import struct VaultClassifierCore.StorageSchemaPolicy
 import MacBlockerCore
+import MacBlockerWebUI
 import Network
 import VaultClassifierBridge
 
@@ -68,7 +69,15 @@ final class ConnectionHub: ObservableObject {
     /// Process-wide hub. Owned at the app-delegate level (not by any SwiftUI
     /// view) so the server survives closing the editor window and lives for the
     /// whole app session.
-    static let shared = ConnectionHub()
+    static let shared: ConnectionHub = {
+        let hub = ConnectionHub()
+        hub.localWebStore = BlockerWebStore()
+        return hub
+    }()
+
+    /// The native member's canonical store. Test hubs can inject an isolated
+    /// store; transport-only hubs need no local persistence surface.
+    var localWebStore: BlockerWebStore?
 
     private let queue = DispatchQueue(label: "macosBlocker.ConnectionHub")
     private let lock = NSLock()
@@ -1115,28 +1124,63 @@ final class ConnectionHub: ObservableObject {
                 frozen: ($0["frozen"] as? Bool) ?? false
             )
         }
-        lock.lock()
-        rosters[program] = infos
-        // Snapshot the affected clusters first so we can mutate `clusters` safely
-        // inside the loop (ClusterState is a class, so these are live references).
-        let affected = clusters.values.filter { $0.members.contains(program) }
         var snapshots: [[String: Any]] = []
-        var changed = false
-        for cluster in affected {
-            // Membership is pinned to the group instance the user linked: it
-            // ends when that group is deleted (a rename keeps it — names are
-            // shared across the link). Frozen groups stay.
-            let pinnedId = cluster.memberGroupIds[program] ?? ""
-            if !pinnedId.isEmpty, infos.contains(where: { $0.id == pinnedId }) { continue }
-            removeMemberLocked(cluster, program: program)
-            changed = true
-            snapshots.append(clusterJSONObject(cluster))
+        var rosterSnapshot: [String: Any] = [:]
+        do {
+            try withMembershipDocument { document, save in
+                self.lock.lock(); defer { self.lock.unlock() }
+                let affected = self.clusters.values.filter { cluster in
+                    guard cluster.members.contains(program) else { return false }
+                    let pinned = cluster.memberGroupIds[program] ?? ""
+                    return pinned.isEmpty || !infos.contains(where: { $0.id == pinned })
+                }
+                try self.preserveDetachedLocalLocked(affected, removing: program, document: document, save: save)
+                self.rosters[program] = infos
+                for cluster in affected {
+                    self.removeMemberLocked(cluster, program: program)
+                    snapshots.append(self.clusterJSONObject(cluster))
+                }
+                if !affected.isEmpty { self.persistClustersLocked() }
+                rosterSnapshot = self.rostersJSONObjectLocked()
+            }
+        } catch {
+            // A newer or unwritable local store must not lose its last shared
+            // runtime because a peer disappeared from the roster.
+            return
         }
-        if changed { persistClustersLocked() }
-        let rosterSnapshot = rostersJSONObjectLocked()
-        lock.unlock()
         for snapshot in snapshots { broadcastCluster(snapshot) }
         broadcastToPeers(["kind": "rosters", "rosters": rosterSnapshot])
+    }
+
+    private func withMembershipDocument<T>(_ operation: ([String: Any]?, ([String: Any]) throws -> Void) throws -> T) throws -> T {
+        if let localWebStore {
+            return try localWebStore.withLockedDocument { document, save in
+                try withoutActuallyEscaping(save) { persist in try operation(document, persist) }
+            }
+        }
+        return try operation(nil, { _ in })
+    }
+
+    /// File lock and hub lock are both held. Save the exact current native
+    /// member before it leaves, including when another member's removal
+    /// dissolves a two-member link. Never recreate a deleted local group.
+    private func preserveDetachedLocalLocked(_ affected: [ClusterState], removing program: String,
+                                             document: [String: Any]?, save: ([String: Any]) throws -> Void) throws {
+        let detached = affected.filter {
+            $0.members.contains(Self.localProgram) && (program == Self.localProgram || $0.members.count == 2)
+        }
+        guard !detached.isEmpty else { return }
+        guard let document else {
+            if localWebStore != nil { throw GroupStoreError.invalidInput("local shared runtime cannot be preserved") }
+            return
+        }
+        let nowMs = Date().timeIntervalSince1970 * 1000
+        for cluster in detached {
+            rollBudgetLocked(cluster, nowMs: nowMs)
+            Self.countSnoozeLocked(cluster, nowMs: nowMs)
+        }
+        let retained = overlaySharedLocked(onto: document, clusters: detached, ownLinesOnly: true, nowMs: nowMs)
+        if WebStoreDocument.canonicalJSON(retained) != WebStoreDocument.canonicalJSON(document) { try save(retained) }
     }
 
     /// Caller must hold `lock`. Takes `program` out of the link; a link left
@@ -1249,15 +1293,21 @@ final class ConnectionHub: ObservableObject {
     /// while the link is locked.
     func unlinkGroup(program: String, groupId: String) -> String? {
         guard clusterStorageWritable else { return "unsupported-storage" }
-        lock.lock()
-        guard let cluster = clusterLocked(program: program, groupId: groupId) else { lock.unlock(); return "not-linked" }
-        if WebStoreDocument.isLocked(cluster.sharedLock) { lock.unlock(); return "group-locked" }
-        removeMemberLocked(cluster, program: program)
-        persistClustersLocked()
-        let snapshot = clusterJSONObject(cluster)
-        lock.unlock()
-        broadcastCluster(snapshot)
-        return nil
+        var snapshot: [String: Any]?
+        do {
+            let refusal = try withMembershipDocument { document, save -> String? in
+                self.lock.lock(); defer { self.lock.unlock() }
+                guard let cluster = self.clusterLocked(program: program, groupId: groupId) else { return "not-linked" }
+                if WebStoreDocument.isLocked(cluster.sharedLock) { return "group-locked" }
+                try self.preserveDetachedLocalLocked([cluster], removing: program, document: document, save: save)
+                self.removeMemberLocked(cluster, program: program)
+                self.persistClustersLocked()
+                snapshot = self.clusterJSONObject(cluster)
+                return nil
+            }
+            if let snapshot { broadcastCluster(snapshot) }
+            return refusal
+        } catch { return "local-storage-unavailable" }
     }
 
     /// Caller must hold `lock`.
@@ -1345,7 +1395,7 @@ final class ConnectionHub: ObservableObject {
                 let own = scopes.filter { Self.lineOwner(line: $0) == owner }
                 let theirs = cluster.sharedScopes.filter { Self.lineOwner(line: $0) != owner }
                 if firstContribution {
-                    cluster.sharedScopes = theirs + Self.unionScopes(cluster.sharedScopes.filter { Self.lineOwner(line: $0) == owner }, incoming: own)
+                    cluster.sharedScopes = theirs + Self.unionOriginalScopes(cluster.sharedScopes.filter { Self.lineOwner(line: $0) == owner }, incoming: own)
                 } else if wins {
                     cluster.sharedScopes = theirs + own
                 }
@@ -1492,6 +1542,44 @@ final class ConnectionHub: ObservableObject {
         }
     }
 
+    /// Independent original lists are OR branches at first join. Compatible
+    /// include lists for the same entry keep every target; acknowledged edits
+    /// still use replacement and can intentionally delete a target.
+    static func unionOriginalScopes(_ existing: [[String: Any]], incoming: [[String: Any]]) -> [[String: Any]] {
+        let adjusted = incoming.map { line -> [String: Any] in
+            let key = scopeEntryKey(line)
+            let old = existing.filter { scopeEntryKey($0) == key }
+            guard old.count == 1, incoming.filter({ scopeEntryKey($0) == key }).count == 1 else { return line }
+            let target: String
+            if (line["surface"] as? String) == "site", (line["sitesExcept"] as? Bool) != true { target = "sites" }
+            else if (line["surface"] as? String) == "apps", (line["appsExcept"] as? Bool) != true { target = "apps" }
+            else { return line }
+            var oldShape = old[0]; var newShape = line
+            for field in ["id", target] { oldShape.removeValue(forKey: field); newShape.removeValue(forKey: field) }
+            let except = target == "sites" ? "sitesExcept" : "appsExcept"
+            guard (oldShape[except] as? Bool) != true,
+                  (oldShape["action"] as? String ?? "block") == "block",
+                  (newShape["action"] as? String ?? "block") == "block" else { return line }
+            for field in [except, "action"] { oldShape.removeValue(forKey: field); newShape.removeValue(forKey: field) }
+            if oldShape["platform"] is NSNull { oldShape.removeValue(forKey: "platform") }
+            if newShape["platform"] is NSNull { newShape.removeValue(forKey: "platform") }
+            guard WebStoreDocument.canonicalJSON(oldShape) == WebStoreDocument.canonicalJSON(newShape) else { return line }
+            var merged = line
+            if target == "sites" {
+                var seen = Set<String>()
+                merged[target] = ((old[0][target] as? [String] ?? []) + (line[target] as? [String] ?? [])).filter { seen.insert($0).inserted }
+            } else {
+                var seen = Set<String>()
+                merged[target] = ((old[0][target] as? [[String: Any]] ?? []) + (line[target] as? [[String: Any]] ?? [])).filter {
+                    guard let id = $0["id"] as? String else { return false }
+                    return seen.insert(id).inserted
+                }
+            }
+            return merged
+        }
+        return unionScopes(existing, incoming: adjusted)
+    }
+
     /// The policy settings a linked group shares: group-scopes.js
     /// SYNC_SCALAR_FIELDS, the one list (read from the editor's code).
     static let syncScalarFields: [String] = {
@@ -1596,18 +1684,31 @@ final class ConnectionHub: ObservableObject {
     /// through this, so a closed editor window never leaves the Mac enforcing a
     /// stale definition or missing a snooze started on another device.
     func overlayShared(onto document: [String: Any]) -> [String: Any] {
+        lock.lock(); defer { lock.unlock() }
+        return overlaySharedLocked(onto: document, clusters: Array(clusters.values), ownLinesOnly: false,
+                                   nowMs: Date().timeIntervalSince1970 * 1000)
+    }
+
+    /// Caller holds the hub lock. First-join originals remain intact until
+    /// acknowledged; detaching snapshots preserve their own lines and unknown
+    /// local fields while retaining shared settings and authoritative runtime.
+    private func overlaySharedLocked(onto document: [String: Any], clusters selected: [ClusterState],
+                                     ownLinesOnly: Bool, nowMs: Double) -> [String: Any] {
         var groups = document["blockedGroups"] as? [[String: Any]] ?? []
         guard !groups.isEmpty else { return document }
         var snoozes = document["groupSnoozes"] as? [String: Any] ?? [:]
         var snoozeTotals = document["groupSnoozeTotalsMs"] as? [String: Any] ?? [:]
+        var timers = document["usageTimersMs"] as? [String: Any] ?? [:]
+        var anchors = document["usageResetAtMs"] as? [String: Any] ?? [:]
+        var buckets = document["usageBucketsMs"] as? [String: Any] ?? [:]
         var changed = false
-        lock.lock()
-        for cluster in clusters.values where cluster.members.contains(Self.localProgram) {
+        for cluster in selected where cluster.members.contains(Self.localProgram) {
             let pinned = cluster.memberGroupIds[Self.localProgram] ?? ""
             guard !pinned.isEmpty, let index = groups.firstIndex(where: { ($0["id"] as? String) == pinned }) else { continue }
             // Preserve the local original until its first contribution is
             // accepted, including across a restart during an interrupted join.
-            if cluster.contributed.contains(Self.localProgram) {
+            let originalOwnLines = (groups[index]["scopes"] as? [[String: Any]] ?? []).filter { Self.lineOwner(line: $0) == "desktop" }
+            if cluster.contributed.contains(Self.localProgram) || ownLinesOnly {
                 for (field, value) in cluster.sharedScalars { groups[index][field] = value }
                 if cluster.members.isSubset(of: cluster.contributed) { groups[index]["scopes"] = cluster.sharedScopes }
                 if !cluster.sharedLock.isEmpty {
@@ -1615,23 +1716,45 @@ final class ConnectionHub: ObservableObject {
                     groups[index]["lockSyncedVersion"] = cluster.sharedLock["lockVersion"]
                 }
             }
-            changed = true
-            if cluster.sharedSnoozeTs > 0, !cluster.sharedSnooze.isEmpty,
-               let id = groups[index]["id"] as? String,
-               cluster.sharedSnoozeTs > Self.snoozeChangeTs(snoozes[id] as? [String: Any]) {
-                snoozes[id] = cluster.sharedSnooze
+            if ownLinesOnly {
+                groups[index]["scopes"] = originalOwnLines
             }
-            // The link's snooze total is the hub's count (each snooze once).
-            if cluster.sharedSnoozeTotalMs > 0, let id = groups[index]["id"] as? String {
+            // Ending a snooze is authoritative even before this Mac's first
+            // definition is acknowledged; it must not restart an old break.
+            if cluster.sharedSnoozeTs > 0,
+               cluster.sharedSnoozeTs > Self.snoozeChangeTs(snoozes[pinned] as? [String: Any]) {
+                snoozes[pinned] = cluster.sharedSnooze
+                snoozeTotals[pinned] = cluster.sharedSnoozeTotalMs
+            }
+            if cluster.contributed.contains(Self.localProgram) || ownLinesOnly {
+                // Adoption does not accrue or seed usage. Disabled members
+                // keep the same live budget, anchor, snooze and rolling history
+                // as enabled members; unlinking cannot resurrect an old total.
+                let id = pinned
+                let policy = BlockGroup(id: id, groupType: .site, name: "", enabled: true, mode: .afterMinutes,
+                                        allowedMinutes: 0,
+                                        resetIntervalHours: (cluster.sharedScalars["resetIntervalHours"] as? NSNumber)?.doubleValue ?? 24,
+                                        resetAtMidnight: (cluster.sharedScalars["resetAtMidnight"] as? Bool) == true)
+                let currentBuckets = UsageBudget.pruneBuckets(cluster.sharedBuckets, group: policy, nowMs: nowMs)
+                timers[id] = (cluster.sharedScalars["rollingLimit"] as? Bool) == true
+                    ? UsageBudget.usedMs(currentBuckets) : max(0, cluster.sharedUsageMs)
+                anchors[id] = cluster.sharedUsageResetAtMs > 0 ? cluster.sharedUsageResetAtMs : nil
+                buckets[id] = UsageBudget.bucketJSON(currentBuckets)
+                if ownLinesOnly || cluster.sharedSnoozeTs >= Self.snoozeChangeTs(snoozes[id] as? [String: Any]) {
+                    snoozes[id] = cluster.sharedSnooze
+                }
                 snoozeTotals[id] = cluster.sharedSnoozeTotalMs
             }
+            changed = true
         }
-        lock.unlock()
         guard changed else { return document }
         var overlaid = document
         overlaid["blockedGroups"] = groups
         overlaid["groupSnoozes"] = snoozes
         overlaid["groupSnoozeTotalsMs"] = snoozeTotals
+        overlaid["usageTimersMs"] = timers
+        overlaid["usageResetAtMs"] = anchors
+        overlaid["usageBucketsMs"] = buckets
         return overlaid
     }
 
