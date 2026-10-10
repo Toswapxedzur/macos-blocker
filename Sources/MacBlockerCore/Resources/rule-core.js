@@ -192,10 +192,10 @@
       // Over the size limit it is not kept, and the rule is told.
       takeState() {
         const json = safeJSON(stateObj);
-        if (json === stateJSON) return undefined;
-        if (json === null || json.length > LIMITS.stateBytes) return { error: "v.state must be JSON and at most " + LIMITS.stateBytes + " bytes" };
+        if (typeof json !== "string" || utf8Bytes(json) > LIMITS.stateBytes) return { ok: false, error: "v.state must be JSON and at most " + LIMITS.stateBytes + " bytes" };
+        if (json === stateJSON) return { ok: true, value: undefined };
         stateJSON = json;
-        return JSON.parse(json);
+        return { ok: true, value: JSON.parse(json) };
       }
     };
   }
@@ -228,25 +228,71 @@
     // Registers a group's rule. One that fails to load leaves the group's
     // old rule running; an empty source removes it. A loaded rule's panels
     // (those it showed while registering) replace the group's old ones.
-    function load(groupId, source, state) {
+    // At most one uncommitted candidate per group, with a bounded total.
+    // Hosts can save memory/source before activating a prepared rule.
+    const candidates = new Map();
+    let nextToken = 0;
+    function discardLoad(token) {
+      candidates.delete(token);
+      return { ok: true };
+    }
+    function discardGroup(groupId) {
+      for (const [token, candidate] of candidates) if (candidate.groupId === groupId) candidates.delete(token);
+    }
+    function prepareLoad(groupId, source, state) {
       const compiled = compile(source);
       if (compiled.error) return { ok: false, handlers: 0, types: [], error: compiled.error, logs: [] };
-      if (!compiled.fn) {
-        unload(groupId);
-        return { ok: true, handlers: 0, types: [], error: null, logs: [] };
+      let rule = null;
+      let result = { ok: true, handlers: 0, types: [], error: null, logs: [], panels: [], states: {} };
+      if (compiled.fn) {
+        beacon(groupId);
+        rule = createRule(groupId, compiled.fn, { state: cloneJSON(state), engineActions });
+        if (rule.error) {
+          const budget = /longer than/.test(rule.error);
+          return { ok: false, handlers: 0, types: [], error: rule.error, logs: rule.registrationLogs, quarantine: budget ? { groupId, reason: "registration-deadline-overrun" } : null };
+        }
+        const memory = rule.takeState();
+        if (!memory.ok) return { ok: false, handlers: 0, types: [], error: memory.error, logs: rule.registrationLogs };
+        result = { ok: true, handlers: rule.handlerCount, types: rule.types(), error: null, logs: rule.registrationLogs, panels: rule.takePanels() || [], states: memory.value === undefined ? {} : { [groupId]: memory.value } };
       }
-      beacon(groupId);
-      const rule = createRule(groupId, compiled.fn, { state, engineActions });
-      if (rule.error) {
-        const budget = /longer than/.test(rule.error);
-        return { ok: false, handlers: 0, types: [], error: rule.error, logs: rule.registrationLogs, quarantine: budget ? { groupId, reason: "registration-deadline-overrun" } : null };
+      discardGroup(groupId);
+      while (candidates.size >= 64) candidates.delete(candidates.keys().next().value);
+      const token = String(++nextToken);
+      candidates.set(token, { groupId, rule, result });
+      return { ...result, token };
+    }
+    function commitLoad(token, beforeCommit) {
+      const candidate = candidates.get(token);
+      if (!candidate) return { ok: false, error: "Prepared rule is no longer available.", logs: [] };
+      try {
+        if (typeof beforeCommit === "function") {
+          const saved = beforeCommit(candidate.result.states);
+          if (saved && typeof saved.then === "function") throw new Error("Rule beforeCommit must be synchronous.");
+        }
+      } catch (error) {
+        candidates.delete(token);
+        return { ok: false, handlers: 0, types: [], error: String(error && error.message ? error.message : error), logs: candidate.result.logs };
       }
-      rules.set(groupId, rule);
-      overruns.delete(groupId);
-      return { ok: true, handlers: rule.handlerCount, types: rule.types(), error: null, logs: rule.registrationLogs, panels: rule.takePanels() || [] };
+      // A callback cannot activate a candidate superseded during its save.
+      if (candidates.get(token) !== candidate) return { ok: false, error: "Prepared rule is no longer available.", logs: [] };
+      candidates.delete(token);
+      const { groupId, rule, result } = candidate;
+      if (rule) {
+        rules.set(groupId, rule);
+        overruns.delete(groupId);
+      } else unload(groupId);
+      return result;
+    }
+    // Synchronous hosts may persist through beforeCommit; async hosts use
+    // prepare/commit/discard. A rejected save never re-runs the old initializer.
+    function load(groupId, source, state, beforeCommit) {
+      const prepared = prepareLoad(groupId, source, state);
+      if (!prepared.ok) return prepared;
+      return commitLoad(prepared.token, beforeCommit);
     }
 
     function unload(groupId) {
+      discardGroup(groupId);
       rules.delete(groupId);
       overruns.delete(groupId);
       suppressed.delete(groupId);
@@ -289,18 +335,26 @@
         const panels = rule.takePanels();
         if (panels) out.panels[groupId] = panels;
         const state = rule.takeState();
-        if (state && state.error) out.diagnostics.push({ groupId, level: "error", args: [state.error] });
-        else if (state !== undefined) out.states[groupId] = state;
+        if (!state.ok) out.diagnostics.push({ groupId, level: "error", args: [state.error] });
+        else if (state.value !== undefined) out.states[groupId] = state.value;
       }
       return out;
     }
 
-    return { load, unload, suppress, dispatch, types: (groupId) => (rules.has(groupId) ? rules.get(groupId).types() : []) };
+    return { load, prepareLoad, commitLoad, discardLoad, unload, suppress, dispatch, types: (groupId) => (rules.has(groupId) ? rules.get(groupId).types() : []) };
   }
 
   // ── Values ───────────────────────────────────────────────────────────────
   function isPlainObject(value) {
     return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+  }
+  function utf8Bytes(text) {
+    let bytes = 0;
+    for (const character of text) {
+      const code = character.codePointAt(0);
+      bytes += code <= 0x7f ? 1 : code <= 0x7ff ? 2 : code <= 0xffff ? 3 : 4;
+    }
+    return bytes;
   }
   function safeJSON(value) {
     try { return JSON.stringify(value); } catch (_) { return null; }

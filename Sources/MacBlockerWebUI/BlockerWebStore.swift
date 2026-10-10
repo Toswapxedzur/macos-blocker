@@ -25,7 +25,7 @@ public final class BlockerWebStore: @unchecked Sendable {
     /// caller may then take the hub lock, persist its final snapshot through
     /// `save`, and detach only after that write succeeds. This keeps the global
     /// file-lock -> hub-lock order used by all shared reads and adoptions.
-    public func withLockedDocument<T>(_ operation: ([String: Any]?, ([String: Any]) throws -> Void) throws -> T) throws -> T {
+    public func withLockedDocument<T>(notify: Bool = true, _ operation: ([String: Any]?, ([String: Any]) throws -> Void) throws -> T) throws -> T {
         var wrote = false
         let result = try GroupStore.withFileLock {
             var document: [String: Any]?
@@ -47,7 +47,7 @@ public final class BlockerWebStore: @unchecked Sendable {
                 wrote = true
             }
         }
-        if wrote { GroupStore.postDidChange() }
+        if wrote && notify { GroupStore.postDidChange() }
         return result
     }
 
@@ -336,6 +336,41 @@ public final class BlockerWebStore: @unchecked Sendable {
             write(object)
         }
         GroupStore.postDidChange()
+    }
+
+    /// Uses this editor's canonical store, including the linked lock view.
+    public var ruleDocument: WebStoreDocument { groupStore.load() }
+
+    /// Commit a validated registration before its handlers replace the old rule.
+    /// Explicit Run's source and initialized state share one guarded atomic write.
+    /// Notify only after the runtime and native bookkeeping have committed.
+    @discardableResult
+    public func commitRuleLoad(groupID: String, source: String?, states: [String: String]) throws -> Bool {
+        try withLockedDocument(notify: false) { raw, write in
+            guard let raw else { throw GroupStoreError.invalidInput("Missing or unreadable rule storage") }
+            var document = WebStoreDocument(raw: raw)
+            guard document.group(id: groupID)?["groupType"] as? String == "custom" else { throw GroupStoreError.groupNotFound(groupID) }
+            if let overlay = GroupStore.sharedOverlay {
+                let groups = overlay(raw)["blockedGroups"] as? [[String: Any]] ?? []
+                document.sharedView = Dictionary(groups.compactMap { group in
+                    (group["id"] as? String).map { ($0, group) }
+                }, uniquingKeysWith: { first, _ in first })
+            }
+            if let source { try document.recordRun(id: groupID, source: source) }
+            var updated = document.raw
+            var stored = updated["cbRuleState"] as? [String: Any] ?? [:]
+            for (id, json) in states {
+                guard id == groupID,
+                      let state = try JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any] else {
+                    throw GroupStoreError.invalidInput("Invalid registration state")
+                }
+                stored[id] = state
+            }
+            if !states.isEmpty { updated["cbRuleState"] = stored }
+            if source == nil && states.isEmpty { return false }
+            try write(updated)
+            return true
+        }
     }
 
     /// A custom rule's memory (`v.state`), JSON text: "{}" when it has none.
