@@ -11,6 +11,9 @@ final class DictionaryContributionPrompt {
         checkbox.state = .on; alert.accessoryView = checkbox
         alert.addButton(withTitle: translate("native.dictionary.saveChoice", "Save choice"))
         alert.addButton(withTitle: translate("native.dictionary.decline", "Don't share"))
+        // This optional question must not prevent AppKit from consulting the
+        // normal Quit delegate. Dismissal still does not record a choice.
+        alert.window.preventsApplicationTerminationWhenModal = false
         return alert
     }
     private let translate: (String, String) -> String
