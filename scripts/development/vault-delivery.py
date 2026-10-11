@@ -2,6 +2,7 @@
 """Integrate, verify on mini1, and deliver Mac Vault from one shared checkout."""
 import argparse
 import fcntl
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -13,6 +14,193 @@ import time
 
 ROOT = Path(__file__).resolve().parents[2]
 BRANCH = "integration/local-delivery"
+APPROVED_REMOTE_URL = "git@github.com:Toswapxedzur/macos-blocker.git"
+APPROVED_CHECKOUT = Path("/Users/fengyue.john.zhu/Desktop/agentic/worktrees/vault-delivery/macosBlocker")
+SUPPORTED_RECONCILIATIONS = {
+    ("dc6548d967596df22b3bf6b451ec471ad7093935", "9de26f1db20fe319b7a85dfef1fc44f29afc3bd9"):
+        {"tree": "12a36a90a0871e402369bb279ec908045b11d5f9",
+         "oldCheckout": "ebddc16ad6270ddc8ea56e9b36750715a24a6adf",
+         "oldSource": "7cc1686ccda9bd787125a3686c7905db689b0d27",
+         "candidate": "83724b9239c55c3e0866230cd8126dec0cf06ed2",
+         "sourceTree": "d0a8fe0e6021be3c27393daadafdce0460e1a98b"},
+}
+
+
+def ancestor(old, new):
+    result = subprocess.run(["git", "-C", str(ROOT), "merge-base", "--is-ancestor", old, new],
+                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    if result.returncode not in (0, 1):
+        raise RuntimeError("Cannot validate delivery ancestry.")
+    return result.returncode == 0
+
+
+def remote_identity():
+    if git(ROOT, "remote", "get-url", "origin") != APPROVED_REMOTE_URL:
+        raise RuntimeError("Reconciliation origin is not the approved repository.")
+    if git(ROOT, "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}") != "origin/" + BRANCH:
+        raise RuntimeError("Reconciliation requires the canonical integration upstream.")
+
+
+def live_remote_commit():
+    remote_identity()
+    ref = "refs/heads/" + BRANCH
+    rows = subprocess.check_output(["git", "-C", str(ROOT), "ls-remote", "--exit-code", "origin", ref],
+                                   text=True, timeout=30).strip().splitlines()
+    if len(rows) != 1 or len(rows[0].split()) != 2 or rows[0].split()[1] != ref:
+        raise RuntimeError("Cannot validate the exact remote integration ref.")
+    return rows[0].split()[0]
+
+
+def supported_mapping(old, new):
+    if not isinstance(old, str) or not isinstance(new, str):
+        raise RuntimeError("Unsupported delivered-history reconciliation mapping.")
+    policy = SUPPORTED_RECONCILIATIONS.get((old, new))
+    if policy is None:
+        raise RuntimeError("Unsupported delivered-history reconciliation mapping.")
+    tree = policy["tree"]
+    for sha in (old, new):
+        if git(ROOT, "rev-parse", sha + "^{commit}") != sha or git(ROOT, "rev-parse", sha + "^{tree}") != tree:
+            raise RuntimeError("Reconciliation requires the exact supported equal source trees.")
+    for sha in (policy["oldCheckout"], policy["oldSource"], policy["candidate"]):
+        if git(ROOT, "rev-parse", sha + "^{commit}") != sha:
+            raise RuntimeError("Reconciliation requires exact reviewed checkout/source commits.")
+    for sha in (policy["oldSource"], policy["candidate"]):
+        if git(ROOT, "rev-parse", sha + "^{tree}") != policy["sourceTree"]:
+            raise RuntimeError("Old and rewritten reviewed source trees differ.")
+    if not ancestor(old, policy["oldCheckout"]) or not ancestor(policy["oldCheckout"], policy["oldSource"]) or not ancestor(new, policy["candidate"]):
+        raise RuntimeError("Reviewed source does not preserve the required accepted checkout ancestry.")
+    old_exclusive = set(git(ROOT, "rev-list", policy["oldSource"], "^" + new).splitlines())
+    if old_exclusive.intersection(git(ROOT, "rev-list", policy["candidate"], "^" + new).splitlines()):
+        raise RuntimeError("Reviewed candidate brings old history back into the rewritten lineage.")
+    return policy
+
+
+def ref_prefix(old, new):
+    return "refs/vault-delivery/reconciliation/" + old + "-" + new + "/"
+
+
+def snapshot_path(common, old, new):
+    return common / "vault-history-reconciliation" / (old + "-" + new + ".json")
+
+
+def validate_preserved_record(common, record, delivered):
+    if ROOT != APPROVED_CHECKOUT:
+        raise RuntimeError("History mapping is restricted to the approved canonical checkout.")
+    if record.get("version") != 1 or record.get("stage") != "adopted":
+        raise RuntimeError("History reconciliation is incomplete or unsupported.")
+    old, new = record.get("oldBase"), record.get("newBase")
+    policy = supported_mapping(old, new)
+    if any(record.get(key) != value for key, value in policy.items()):
+        raise RuntimeError("Reconciliation does not match the original delivered receipt.")
+    path = snapshot_path(common, old, new)
+    if path.is_symlink() or not path.is_file():
+        raise RuntimeError("Original reconciliation receipt was not preserved.")
+    raw = path.read_bytes()
+    if hashlib.sha256(raw).hexdigest() != record.get("originalReceiptSHA256"):
+        raise RuntimeError("Original reconciliation receipt bytes changed.")
+    original = json.loads(raw)
+    if original.get("delivered", {}).get("commit") != old:
+        raise RuntimeError("Original receipt is outside the supported delivered mapping.")
+    if delivered.get("commit") == old and original.get("delivered") != delivered:
+        raise RuntimeError("Original delivered receipt fields changed.")
+    prefix = ref_prefix(old, new)
+    for key, sha in (("old-delivered", old), ("old-checkout", record.get("oldCheckout")),
+                     ("old-source", record.get("oldSource")), ("new-base", new), ("candidate", record.get("candidate"))):
+        if not sha or git(ROOT, "rev-parse", prefix + key) != sha:
+            raise RuntimeError("A preserved reconciliation ref changed or is missing.")
+    remote_identity()
+    return new
+
+
+def validate_reconciled_lineage(common, state, sha):
+    previous = state.get("delivered", {})
+    records = state.get("historyReconciliations", [])
+    if not isinstance(records, list) or len(records) != 1 or not isinstance(records[0], dict):
+        raise RuntimeError("History reconciliation is incomplete or unsupported.")
+    record = records[0]
+    new = validate_preserved_record(common, record, previous)
+    if not ancestor(new, sha) or not ancestor(record["candidate"], sha):
+        raise RuntimeError("Delivery is outside the reconciled canonical lineage.")
+    old_exclusive = set(git(ROOT, "rev-list", record["oldSource"], "^" + new).splitlines())
+    if old_exclusive.intersection(git(ROOT, "rev-list", sha, "^" + new).splitlines()):
+        raise RuntimeError("Delivery brings discarded old history into the rewritten lineage.")
+    return record
+
+
+def reconciliation_allows_launch(common, state, sha):
+    if not validate_reconciled_lineage(common, state, sha):
+        return False
+    if live_remote_commit() != sha:
+        raise RuntimeError("The actual remote integration ref does not equal the verified delivery HEAD.")
+    return True
+
+
+def reconcile_history(common, source, old, new):
+    # This explicit owner-approved command is the only history replacement path.
+    # It never pushes, verifies, launches, or substitutes a new delivered receipt.
+    source = Path(source).resolve()
+    if ROOT != APPROVED_CHECKOUT:
+        raise RuntimeError("Reconciliation is restricted to the approved canonical checkout.")
+    clean(ROOT)
+    clean(source)
+    source_common = (source / git(source, "rev-parse", "--git-common-dir")).resolve()
+    if source_common != common:
+        raise RuntimeError("Reconciliation source must be in this same repository.")
+    policy = supported_mapping(old, new)
+    state = read_state(common)
+    if state.get("delivered", {}).get("commit") != old:
+        raise RuntimeError("The original delivered commit does not match the supported mapping.")
+    if state.get("historyReconciliations"):
+        raise RuntimeError("An existing reconciliation must be inspected; it cannot be overwritten or replayed.")
+    before = git(ROOT, "rev-parse", "HEAD")
+    candidate = git(source, "rev-parse", "HEAD")
+    if before != policy["oldCheckout"] or candidate != policy["candidate"]:
+        raise RuntimeError("Checkout/source differs from the exact reviewed commits; preserve and review new work first.")
+    if git(ROOT, "rev-parse", "@{upstream}") != new or live_remote_commit() != new:
+        raise RuntimeError("The tracking and actual remote integration refs must equal the approved rewritten base.")
+    clean(ROOT)
+    clean(source)
+    if git(ROOT, "rev-parse", "HEAD") != before or git(source, "rev-parse", "HEAD") != candidate:
+        raise RuntimeError("Source/delivery changed during preflight; no reconciliation started.")
+    path = snapshot_path(common, old, new)
+    if path.exists() or path.is_symlink():
+        raise RuntimeError("Original receipt archive already exists; inspect partial reconciliation before retrying.")
+    prefix = ref_prefix(old, new)
+    if git(ROOT, "for-each-ref", "--format=%(refname)", prefix):
+        raise RuntimeError("Preservation refs already exist; inspect partial reconciliation before retrying.")
+    raw = (common / "vault-delivery.json").read_bytes()
+    path.parent.mkdir(exist_ok=True)
+    with path.open("xb") as output:
+        output.write(raw)
+        output.flush()
+        os.fsync(output.fileno())
+    commands = "start\n" + "".join("create " + prefix + key + " " + value + "\n" for key, value in
+        (("old-delivered", old), ("old-checkout", before), ("old-source", policy["oldSource"]),
+         ("new-base", new), ("candidate", candidate))) + "prepare\ncommit\n"
+    subprocess.run(["git", "-C", str(ROOT), "update-ref", "--stdin"], input=commands, text=True, check=True)
+    record = {"version": 1, "stage": "prepared", "oldBase": old, "newBase": new, **policy,
+              "originalReceiptSHA256": hashlib.sha256(raw).hexdigest(),
+              "at": time.time()}
+    state["historyReconciliations"] = [record]
+    state.pop("verified", None)  # No verification or launch is carried across rewritten commit identities.
+    write_state(common, state)
+    # Old HEAD and exact original receipt are already preserved. This is the
+    # narrowly authorized replacement of an equal accepted base, never a reset
+    # to an arbitrary task/sibling ref. New work is integrated by a normal merge.
+    clean(ROOT)
+    clean(source)
+    if git(ROOT, "rev-parse", "HEAD") != before or git(source, "rev-parse", "HEAD") != candidate:
+        raise RuntimeError("Source/delivery changed after preservation; reconciliation held before adoption.")
+    subprocess.run(["git", "-C", str(ROOT), "reset", "--keep", new], check=True)
+    subprocess.run(["git", "-C", str(ROOT), "merge", "--ff-only", candidate], check=True)
+    clean(ROOT)
+    if git(ROOT, "rev-parse", "HEAD") != candidate or git(source, "rev-parse", "HEAD") != candidate:
+        raise RuntimeError("Source/delivery changed during reconciliation; no adoption receipt written.")
+    if live_remote_commit() != new:
+        raise RuntimeError("Remote base changed during reconciliation; no adoption receipt written.")
+    record["stage"] = "adopted"
+    write_state(common, state)
+    print(f"Reconciled {old} -> {new}; integrated {candidate}. Original receipt and old refs preserved. Run normal mini1 verify, normal push, then controller launch.")
 
 
 def git(root, *args):
@@ -50,12 +238,20 @@ def check_launch(common):
     clean(ROOT)
     sha = git(ROOT, "rev-parse", "HEAD")
     state = read_state(common)
+    records = state.get("historyReconciliations", [])
+    if not isinstance(records, list) or any(not isinstance(record, dict) or
+           record.get("version") != 1 or record.get("stage") != "adopted" for record in records):
+        raise RuntimeError("History reconciliation is incomplete or unsupported; delivery is held.")
     if state.get("verified", {}).get("commit") != sha:
         raise RuntimeError("This delivery commit has not passed remote verification. Run vault-delivery verify.")
     if git(ROOT, "rev-parse", "@{upstream}") != sha:
         raise RuntimeError("Push the verified delivery branch before launching.")
     previous = state.get("delivered", {}).get("commit")
-    if previous and subprocess.run(["git", "-C", str(ROOT), "merge-base", "--is-ancestor", previous, sha]).returncode:
+    mapped_previous = any(record.get("oldBase") == previous for record in records)
+    if records:
+        if not reconciliation_allows_launch(common, state, sha):
+            raise RuntimeError("Delivery has no valid preserved history reconciliation.")
+    if previous and not mapped_previous and not ancestor(previous, sha):
         raise RuntimeError("Delivery would discard previously delivered history. Integrate it first.")
     return sha, state
 
@@ -68,6 +264,12 @@ def integrate(common, source):
     if source_common != common:
         raise RuntimeError("Source must be a worktree of the same Mac Vault repository.")
     sha = git(source, "rev-parse", "HEAD")
+    state = read_state(common)
+    if state.get("historyReconciliations"):
+        record = validate_reconciled_lineage(common, state, git(ROOT, "rev-parse", "HEAD"))
+        old_exclusive = set(git(ROOT, "rev-list", record["oldSource"], "^" + record["newBase"]).splitlines())
+        if old_exclusive.intersection(git(ROOT, "rev-list", sha, "^" + record["newBase"]).splitlines()):
+            raise RuntimeError("Integration would bring discarded old history into the rewritten lineage.")
     subprocess.run(["git", "-C", str(ROOT), "merge", "--no-edit", sha], check=True)
     print(f"Integrated {sha}; verify the combined delivery commit on mini1 before launch.")
 
@@ -75,6 +277,9 @@ def integrate(common, source):
 def verify(common, host="mini1", runtime_prefix=None):
     clean(ROOT)
     sha = git(ROOT, "rev-parse", "HEAD")
+    state = read_state(common)
+    if state.get("historyReconciliations"):
+        validate_reconciled_lineage(common, state, sha)
     # Only committed files cross hosts. Keep mini1's build cache, but remove
     # retired source files from this dedicated verification copy.
     archive = subprocess.Popen(["git", "-C", str(ROOT), "archive", sha], stdout=subprocess.PIPE)
@@ -86,7 +291,7 @@ def verify(common, host="mini1", runtime_prefix=None):
         if archive.wait():
             raise RuntimeError("Could not export the delivery commit.")
     checks = [
-        "python3 scripts/development/test-vault-delivery.py",
+        "python3 scripts/development/test-vault-delivery.py && python3 scripts/development/test-history-reconciliation.py",
         "bash -n run-mac-vault.sh scripts/development/launch-mac-vault-build.sh",
         "swift build --product MacBlockerPanel",
         "$HOME/.local/node/bin/node classifier/Tests/WebUI/autosave.mjs",
@@ -162,6 +367,7 @@ def launch(common, check_only):
 
 
 def main():
+    global ROOT
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
     merge = commands.add_parser("integrate")
@@ -172,7 +378,22 @@ def main():
     start = commands.add_parser("launch")
     start.add_argument("--check", action="store_true")
     commands.add_parser("status")
+    reconciliation = commands.add_parser("reconcile-history", help="Explicit supported rewrite reconciliation; requires owner approval before use")
+    reconciliation.add_argument("--source", required=True)
+    reconciliation.add_argument("--old-base", required=True)
+    reconciliation.add_argument("--new-base", required=True)
     args = parser.parse_args()
+    if args.command == "reconcile-history":
+        source = Path(args.source).resolve()
+        clean(source)
+        checkout = Path(git(source, "config", "--get", "vault.deliveryCheckout")).resolve()
+        if checkout != APPROVED_CHECKOUT:
+            raise RuntimeError("Reconciliation is restricted to the approved canonical checkout.")
+        source_common = (source / git(source, "rev-parse", "--git-common-dir")).resolve()
+        checkout_common = (checkout / git(checkout, "rev-parse", "--git-common-dir")).resolve()
+        if source_common != checkout_common:
+            raise RuntimeError("Reconciliation cannot route to another repository.")
+        ROOT = checkout  # Only this explicit command may bootstrap from a reviewed offline controller.
     common = context()
     with (common / "vault-delivery.lock").open("a") as lock:
         try:
@@ -185,6 +406,8 @@ def main():
             verify(common, args.host, args.runtime_prefix)
         elif args.command == "launch":
             launch(common, args.check)
+        elif args.command == "reconcile-history":
+            reconcile_history(common, args.source, args.old_base, args.new_base)
         else:
             print(json.dumps({"checkout": str(ROOT), "branch": BRANCH, "head": git(ROOT, "rev-parse", "HEAD"), **read_state(common)}, indent=2))
 

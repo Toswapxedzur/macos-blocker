@@ -28,6 +28,32 @@ matching upstream and inclusion of the previously delivered commit. A new
 merge invalidates the old verification automatically. Do not edit the receipt
 to bypass these gates.
 
+## Explicit supported history reconciliation
+
+An owner-approved rewrite can have equal source trees while changing Git
+ancestry. The controller supports only its pinned, reviewed old/new mapping;
+ordinary integration and launch never infer equivalence from timestamps or
+arbitrary equal trees. `reconcile-history --source <absolute worktree>
+--old-base <exact old SHA> --new-base <exact new SHA>` is an explicit adoption
+operation requiring owner approval of that mapping. Its source must be a clean
+worktree in the same repository, at the exact reviewed candidate; checkout,
+origin, upstream and actual remote base are checked before adoption.
+
+Reconciliation preserves the original receipt bytes and five exact refs,
+retains the original delivered record, and invalidates verification. It does
+not verify, push, launch, publish, or relabel historical evidence. After
+adoption, integrate subsequent verified work through ordinary merges, run
+normal verification for the exact combined commit, push normally, then launch.
+The original archive/ref and rewritten-lineage guards remain active after
+later deliveries; launch also checks the actual remote integration ref.
+
+Existing preparation/adoption records and preservation collisions prevent
+replay. If a partial operation fails, preserve its archive, refs and receipt
+for reviewed recovery; do not delete evidence, edit receipts or reset refs.
+Only the explicit reconciliation command may bootstrap from a reviewed
+standalone controller into the registered canonical checkout. All ordinary
+commands keep the shared-checkout restriction.
+
 When the owner explicitly selects mini2 for a run, use `verify --host mini2`.
 If that host uses a pinned source runtime instead of Homebrew, also pass
 `--runtime-prefix /absolute/remote/runtime/install`. All checks still run on
@@ -42,7 +68,8 @@ for testing normally. Never use the lower-level script to bypass laptop
 delivery.
 
 Regression checks (mini1 only):
-`python3 scripts/development/test-vault-delivery.py` and
+`python3 scripts/development/test-vault-delivery.py`,
+`python3 scripts/development/test-history-reconciliation.py`, and
 `bash -n run-mac-vault.sh scripts/development/launch-mac-vault-build.sh`.
 
 Safari pairing additionally requires a current Apple profile selected with
