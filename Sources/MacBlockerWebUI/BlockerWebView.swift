@@ -382,10 +382,28 @@ public struct BlockerWebView: NSViewRepresentable {
             }
 
             switch kind {
+            case "editor-definition-edit":
+                guard Self.isTrustedEditorFrame(isMainFrame: message.frameInfo.isMainFrame,
+                                                url: message.frameInfo.request.url),
+                      let request = body["message"] as? [String: Any] else {
+                    nativeReply(body, ["ok": false, "error": "invalid-editor-sender"])
+                    return
+                }
+                do {
+                    let groups = try store.applyEditorDefinitionRequest(request)
+                    onStorePersisted?()
+                    nativeReply(body, ["ok": true, "groups": groups])
+                } catch {
+                    nativeReply(body, ["ok": false, "error": Self.editorFailureMessage(error)])
+                }
             case "persist-store":
                 if let changes = body["changes"] as? [String: Any] {
-                    store.merge(changes: changes)
-                    onStorePersisted?()
+                    do {
+                        // A definition-bearing request is refused in full,
+                        // including its accompanying settings/runtime values.
+                        try store.mergeEditorSideEffectChanges(changes)
+                        if !changes.isEmpty { onStorePersisted?() }
+                    } catch { nativeReply(body, ["ok": false, "error": Self.editorFailureMessage(error)]) }
                 }
             case "clear-rule-log":
                 let payload = body["message"] as? [String: Any] ?? [:]
@@ -446,6 +464,17 @@ public struct BlockerWebView: NSViewRepresentable {
             default:
                 break
             }
+        }
+
+        /// Preserve the canonical admission refusal without changing legacy
+        /// tool errors. Real filesystem errors retain Foundation's user text.
+        static func editorFailureMessage(_ error: Error) -> String {
+            if case GroupStoreError.invalidInput(let message) = error { return message }
+            return error.localizedDescription
+        }
+
+        static func isTrustedEditorFrame(isMainFrame: Bool, url: URL?) -> Bool {
+            isMainFrame && url == WebAssetSchemeHandler.indexURL
         }
 
         /// Answers a request the editor made with `nativeRequest` (its requestId).

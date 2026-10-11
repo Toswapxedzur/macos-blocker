@@ -15,10 +15,16 @@ public final class GroupActionsRuntime: @unchecked Sendable {
 
     private let lock = NSLock()
     private let context: JSContext
+    /// The custom handler consumes JSC exceptions; keep only a bounded reason,
+    /// never a JSValue that could retain the context. Context calls are serialized.
+    private var capturedExceptionReason: String?
 
     init() {
         context = JSContext()
-        context.exceptionHandler = { _, exception in
+        context.exceptionHandler = { [weak self] _, exception in
+            let message = exception?.objectForKeyedSubscript("message")
+            let reason = message?.isUndefined == false ? message?.toString() : exception?.toString()
+            self?.capturedExceptionReason = String((reason ?? "editor-admission-failed").prefix(512))
             NSLog("[GroupActionsRuntime] %@", exception?.toString() ?? "unknown error")
         }
         // The two browser APIs the files use: UTF-8 encoding and random salt bytes.
@@ -100,6 +106,28 @@ public final class GroupActionsRuntime: @unchecked Sendable {
               let result = api.invokeMethod(name, withArguments: arguments.map(Self.jsSafe)) else { return nil }
         if result.isUndefined || result.isNull { return nil }
         return result.toObject()
+    }
+
+    /// Admission must distinguish a JavaScript refusal from an unavailable
+    /// result; an editor request is never acknowledged after either failure.
+    public func callThrowing(_ name: String, _ arguments: [Any], module: String) throws -> Any {
+        lock.lock(); defer { lock.unlock() }
+        capturedExceptionReason = nil
+        context.exception = nil
+        guard let api = context.objectForKeyedSubscript(module), !api.isUndefined,
+              let method = api.objectForKeyedSubscript(name), !method.isUndefined else {
+            throw GroupStoreError.invalidInput("editor-admission-unavailable")
+        }
+        let result = api.invokeMethod(name, withArguments: arguments.map(Self.jsSafe))
+        if let reason = capturedExceptionReason {
+            capturedExceptionReason = nil
+            context.exception = nil
+            throw GroupStoreError.invalidInput(reason)
+        }
+        guard let result, !result.isUndefined, !result.isNull, let value = result.toObject() else {
+            throw GroupStoreError.invalidInput("invalid-editor-response")
+        }
+        return value
     }
 
     public func constant(_ name: String, module: String = "CBGroupActions") -> Any? {

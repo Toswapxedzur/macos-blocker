@@ -348,11 +348,21 @@
   // A request Mac Vault answers through window.__cbNativeReply(id, reply).
   var nativeReplies = {};
   var nativeReplySeq = 0;
+  // A late reply from a replaced document must not resolve its fresh r1.
+  // This is request correlation, not an authentication credential.
+  var nativeReplyDocument;
+  try {
+    var random = new Uint32Array(4);
+    window.crypto.getRandomValues(random);
+    nativeReplyDocument = Array.from(random, function (value) { return value.toString(16); }).join("-");
+  } catch (_) {
+    nativeReplyDocument = Date.now().toString(36) + "-" + Math.random().toString(36).slice(2);
+  }
   function nativeRequest(kind, message, fallback) {
     var bridge = nativeBridge();
     if (!bridge) return Promise.resolve(fallback);
     return new Promise(function (resolve) {
-      var id = "r" + (++nativeReplySeq);
+      var id = nativeReplyDocument + "-r" + (++nativeReplySeq);
       nativeReplies[id] = resolve;
       setTimeout(function () {
         if (nativeReplies[id]) { delete nativeReplies[id]; resolve(fallback); }
@@ -390,6 +400,15 @@
   function handleSendMessage(message) {
     var type = message && message.type;
     switch (type) {
+      case "editor-definition-edit":
+        return nativeRequest("editor-definition-edit", message, { ok: false, error: "native-editor-response-unavailable" }).then(function (reply) {
+          if (!reply || reply.ok !== true) return reply || { ok: false, error: "native-editor-response-unavailable" };
+          if (!Array.isArray(reply.groups)) return { ok: false, error: "invalid-editor-response" };
+          // The native backend has durably committed these authoritative groups.
+          // Reconcile only this key, without publishing another full snapshot.
+          window.__cbApplyNativeStore(Object.assign({}, store, { blockedGroups: reply.groups }));
+          return reply;
+        });
       case "get-log-feed":
         pruneRuleLogs();
         return Promise.resolve({ ok: true, entries: (ruleLogs[message.groupId] || []).slice() });
