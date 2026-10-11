@@ -17,6 +17,29 @@ public final class BlockerWebStore: @unchecked Sendable {
         self.groupStore = GroupStore(shared: shared)
     }
 
+    // The linked native member owns capture, contribution and adoption as one
+    // file transaction. This keeps an explicit write between tick calls from
+    // being overwritten by a blind shared snapshot. The owner is weak and an
+    // old owner cannot clear a newer owner's callback on a reassigned store.
+    private let sharedReconciliationLock = NSLock()
+    private weak var sharedReconciliationOwner: AnyObject?
+    private var sharedReconciliation: (() -> Bool)?
+
+    public func setSharedReconciliation(owner: AnyObject, operation: @escaping () -> Bool) {
+        sharedReconciliationLock.lock(); defer { sharedReconciliationLock.unlock() }
+        sharedReconciliationOwner = owner
+        sharedReconciliation = operation
+    }
+
+    public func clearSharedReconciliation(owner: AnyObject) {
+        sharedReconciliationLock.lock(); defer { sharedReconciliationLock.unlock() }
+        guard sharedReconciliationOwner === owner else { return }
+        sharedReconciliation = nil
+        sharedReconciliationOwner = nil
+    }
+
+    public static let sharedAdoptionKeys = ["blockedGroups", "groupSnoozes", "groupSnoozeTotalsMs", "usageTimersMs", "usageResetAtMs", "usageBucketsMs"]
+
     public var fileURL: URL {
         shared.url(for: SharedAppGroupStore.webStoreFileName)
     }
@@ -231,19 +254,24 @@ public final class BlockerWebStore: @unchecked Sendable {
     /// or opened later. Returns whether it wrote (an open editor is told).
     @discardableResult
     public func adoptShared() -> Bool {
+        sharedReconciliationLock.lock()
+        let owned = sharedReconciliationOwner != nil ? sharedReconciliation : nil
+        sharedReconciliationLock.unlock()
+        if let owned { return owned() }
         guard let overlay = GroupStore.sharedOverlay else { return false }
-        let keys = ["blockedGroups", "groupSnoozes", "groupSnoozeTotalsMs", "usageTimersMs", "usageResetAtMs", "usageBucketsMs"]
-        let wrote: Bool = GroupStore.withFileLock {
-            guard let object = loadStoreObject() else { return false }
-            let adopted = overlay(object)
-            guard keys.contains(where: { WebStoreDocument.canonicalJSON(adopted[$0]) != WebStoreDocument.canonicalJSON(object[$0]) }) else { return false }
-            var next = object
-            for key in keys where adopted[key] != nil { next[key] = adopted[key] }
-            write(next)
-            return true
-        }
-        if wrote { GroupStore.postDidChange() }
-        return wrote
+        do {
+            return try withLockedDocument { object, save in
+                guard let object else { return false }
+                let adopted = overlay(object)
+                guard Self.sharedAdoptionKeys.contains(where: {
+                    WebStoreDocument.canonicalJSON(adopted[$0]) != WebStoreDocument.canonicalJSON(object[$0])
+                }) else { return false }
+                var next = object
+                for key in Self.sharedAdoptionKeys where adopted[key] != nil { next[key] = adopted[key] }
+                try save(next)
+                return true
+            }
+        } catch { return false }
     }
 
     /// A Mac group that left a link (Unlink, or its link dissolved) keeps the
