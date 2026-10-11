@@ -6,6 +6,17 @@ import MacBlockerCore
 
 import AppKit
 
+/// SwiftUI attaches the NSView after makeNSView returns. Report that exact
+/// ownership boundary rather than guessing a window from application state.
+@MainActor
+private final class SceneHostingWebView: WKWebView {
+    var onWindowChanged: ((WKWebView, NSWindow?) -> Void)?
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        onWindowChanged?(self, window)
+    }
+}
+
 /// Hosts the ported customBlocker editor (`popup.html`) inside a WKWebView and
 /// bridges its chrome.storage snapshot to a native file via `BlockerWebStore`.
 /// Mac Vault's other scenes (`WebScene`) share this one web view and document.
@@ -97,7 +108,10 @@ public struct BlockerWebView: NSViewRepresentable {
             context.coordinator.schemeHandler = handler
         }
 
-        let webView = WKWebView(frame: .zero, configuration: config)
+        let webView = SceneHostingWebView(frame: .zero, configuration: config)
+        webView.onWindowChanged = { [scenes] view, window in
+            for scene in scenes { scene.windowChanged(view, window) }
+        }
         webView.uiDelegate = context.coordinator
         webView.navigationDelegate = context.coordinator
         // Every scene is designed on the fixed light theme.
