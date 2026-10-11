@@ -1,6 +1,7 @@
 #if canImport(WebKit)
 import Foundation
 import WebKit
+import AppKit
 
 /// Posted (userInfo `["scene": "vault"|"classifier"|"activity"]`) when the page
 /// shows a scene. Mac Vault has one web view and one document; the switch
@@ -22,6 +23,8 @@ public struct WebScene {
     public let assetsDirectory: URL?
     public let install: @MainActor (WKWebViewConfiguration) -> Void
     public let attach: @MainActor (WKWebView) -> Void
+    /// The real window containing the host web view changed (nil when detached).
+    public let windowChanged: @MainActor (WKWebView, NSWindow?) -> Void
     /// The page was reloaded after its web content process died.
     public let reloaded: @MainActor () -> Void
 
@@ -30,13 +33,15 @@ public struct WebScene {
         assetsDirectory: URL? = nil,
         install: @escaping @MainActor (WKWebViewConfiguration) -> Void,
         attach: @escaping @MainActor (WKWebView) -> Void,
-        reloaded: @escaping @MainActor () -> Void = {}
+        reloaded: @escaping @MainActor () -> Void = {},
+        windowChanged: @escaping @MainActor (WKWebView, NSWindow?) -> Void = { _, _ in }
     ) {
         self.assetsPrefix = assetsPrefix
         self.assetsDirectory = assetsDirectory
         self.install = install
         self.attach = attach
         self.reloaded = reloaded
+        self.windowChanged = windowChanged
     }
 }
 #endif

@@ -136,13 +136,16 @@ open class BlockerAppDelegate: NSObject, NSApplicationDelegate {
             let quit = deferredQuit ?? DeferredApplicationQuit()
             deferredQuit = quit
             return quit.request(confirm: {
+                VaultClassifierPage.shared.suspendContributionPromptForQuit()
                 guard ConnectionHub.shared.activeClusterCount() > 0 else { return true }
                 let alert = NSAlert()
                 alert.messageText = VaultNativeLanguage.text("native.quitLinked.title", fallback: "Quit Mac Vault and disconnect linked groups?")
                 alert.informativeText = VaultNativeLanguage.text("native.quitLinked.body", fallback: "You have linked groups. Quitting disconnects Mac Vault, so linked browsers will show this Mac as offline and shared changes won't sync until you reopen the app.")
                 alert.addButton(withTitle: VaultNativeLanguage.text("native.quit", fallback: "Quit"))
                 alert.addButton(withTitle: VaultNativeLanguage.text("native.cancel", fallback: "Cancel"))
-                return alert.runModal() == .alertFirstButtonReturn
+                let accepted = alert.runModal() == .alertFirstButtonReturn
+                if !accepted { VaultClassifierPage.shared.resumeContributionPromptAfterCancelledQuit() }
+                return accepted
             }, shutdown: { [self] in
                 mcpServer?.stop()
                 MacEnforcementBridge.shared.stop()

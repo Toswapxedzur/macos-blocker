@@ -73,7 +73,8 @@ public struct BlockerMainView: View {
                     assetsDirectory: VaultClassifierPage.webAssetsDirectory,
                     install: { VaultClassifierPage.shared.install(in: $0) },
                     attach: { VaultClassifierPage.shared.attach($0) },
-                    reloaded: { VaultClassifierPage.shared.pageReloaded() }
+                    reloaded: { VaultClassifierPage.shared.pageReloaded() },
+                    windowChanged: { VaultClassifierPage.shared.hostWindowChanged($0, window: $1) }
                 ),
                 ActivityPage.shared.scene,
             ]

@@ -54,6 +54,7 @@ final class VaultClassifierViewModel: ObservableObject {
         if let shutdownTask { await shutdownTask.value; return }
         isShuttingDown = true
         onWebStateChange = nil
+        onDictionaryContributionChoiceChanged = nil
         sharedHubClient?.onRequest = nil
         sharedHubClient?.onStateChange = nil
         sharedHubClient?.disconnect()
@@ -88,6 +89,7 @@ final class VaultClassifierViewModel: ObservableObject {
     @Published var dictionaryNotice: String?
     @Published var personalDictionaryJSON: String?
     var contributionPromptNative = false
+    var onDictionaryContributionChoiceChanged: (() -> Void)?
     @Published var researchQueueStatus = GroundedResearchQueueStatus()
     var sharedHubClient: SharedHubClient?
     var collectionDiagnostics: CollectionDiagnosticsStore?
