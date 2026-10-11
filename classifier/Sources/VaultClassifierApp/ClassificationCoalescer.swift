@@ -32,6 +32,7 @@ final class ClassificationCoalescer<Item> {
     private var pending: [(platformID: String, items: [Item])] = []
     private var isDraining = false
     private var arrivalTask: Task<Void, Never>?
+    private var isShuttingDown = false
 
     init(chunkSize: Int, arrivalWindowNanoseconds: UInt64, run: @escaping Run) {
         self.chunkSize = max(1, chunkSize)
@@ -43,7 +44,7 @@ final class ClassificationCoalescer<Item> {
     var pendingCount: Int { pending.reduce(0) { $0 + $1.items.count } }
 
     func enqueue(platformID: String, items: [Item]) {
-        guard !items.isEmpty else { return }
+        guard !isShuttingDown, !items.isEmpty else { return }
         if let index = pending.firstIndex(where: { $0.platformID == platformID }) {
             pending[index].items.append(contentsOf: items)
         } else {
@@ -54,11 +55,22 @@ final class ClassificationCoalescer<Item> {
         guard !isDraining, arrivalTask == nil else { return }
         let window = arrivalWindowNanoseconds
         arrivalTask = Task { [weak self] in
-            if window > 0 { try? await Task.sleep(nanoseconds: window) }
-            guard let self else { return }
-            self.arrivalTask = nil
+            if window > 0 {
+                do { try await Task.sleep(nanoseconds: window) } catch { return }
+            }
+            guard let self, !self.isShuttingDown, !Task.isCancelled else { return }
             await self.drain()
         }
+    }
+
+    func shutdown() async {
+        isShuttingDown = true
+        pending.removeAll()
+        onIdle = nil
+        let active = arrivalTask
+        active?.cancel()
+        await active?.value
+        arrivalTask = nil
     }
 
     /// Up to `chunkSize` of the earliest-seen platform's waiting items.
@@ -79,10 +91,11 @@ final class ClassificationCoalescer<Item> {
         isDraining = true
         // Every pass re-reads the queue, so anything that arrived while the
         // previous chunk ran is batched into this one — "batch all waiting".
-        while let chunk = takeChunk() {
+        while !isShuttingDown, !Task.isCancelled, let chunk = takeChunk() {
             await run(chunk.platformID, chunk.items)
         }
         isDraining = false
-        onIdle?()
+        arrivalTask = nil
+        if !isShuttingDown { onIdle?() }
     }
 }

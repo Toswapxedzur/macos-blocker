@@ -18,6 +18,7 @@ open class BlockerAppDelegate: NSObject, NSApplicationDelegate {
 
     /// Retains the running MCP server for the app session.
     private var mcpServer: VaultMCPHTTPServer?
+    private var deferredQuit: DeferredApplicationQuit?
 
     /// Records app-usage time into the local Activity log (opt-in per category).
     private var activityRecorder: ActivityRecorderService?
@@ -131,14 +132,25 @@ open class BlockerAppDelegate: NSObject, NSApplicationDelegate {
     /// disconnects this client, so linked browsers will see this Mac as offline and shared
     /// changes won't sync until the app is reopened.
     open func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        guard ConnectionHub.shared.activeClusterCount() > 0 else { return .terminateNow }
-        let alert = NSAlert()
-        alert.messageText = VaultNativeLanguage.text("native.quitLinked.title", fallback: "Quit Mac Vault and disconnect linked groups?")
-        alert.informativeText =
-            VaultNativeLanguage.text("native.quitLinked.body", fallback: "You have linked groups. Quitting disconnects Mac Vault, so linked browsers will show this Mac as offline and shared changes won't sync until you reopen the app.")
-        alert.addButton(withTitle: VaultNativeLanguage.text("native.quit", fallback: "Quit"))
-        alert.addButton(withTitle: VaultNativeLanguage.text("native.cancel", fallback: "Cancel"))
-        return alert.runModal() == .alertFirstButtonReturn ? .terminateNow : .terminateCancel
+        MainActor.assumeIsolated {
+            let quit = deferredQuit ?? DeferredApplicationQuit()
+            deferredQuit = quit
+            return quit.request(confirm: {
+                guard ConnectionHub.shared.activeClusterCount() > 0 else { return true }
+                let alert = NSAlert()
+                alert.messageText = VaultNativeLanguage.text("native.quitLinked.title", fallback: "Quit Mac Vault and disconnect linked groups?")
+                alert.informativeText = VaultNativeLanguage.text("native.quitLinked.body", fallback: "You have linked groups. Quitting disconnects Mac Vault, so linked browsers will show this Mac as offline and shared changes won't sync until you reopen the app.")
+                alert.addButton(withTitle: VaultNativeLanguage.text("native.quit", fallback: "Quit"))
+                alert.addButton(withTitle: VaultNativeLanguage.text("native.cancel", fallback: "Cancel"))
+                return alert.runModal() == .alertFirstButtonReturn
+            }, shutdown: { [self] in
+                mcpServer?.stop()
+                MacEnforcementBridge.shared.stop()
+                activityRecorder?.stop()
+                ConnectionHub.shared.stop()
+                await VaultClassifierPage.shared.shutdown()
+            }, reply: { sender.reply(toApplicationShouldTerminate: true) })
+        }
     }
 
     /// DEVELOPMENT BUILDS ONLY (test scaffolding). Posting

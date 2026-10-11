@@ -29,6 +29,7 @@ final class SharedHubClient {
     private(set) var state: State = .off
     private(set) var error = ""
     func connect() { state = .connected; onStateChange?() }
+    func disconnect() { state = .off; onRequest = nil; onStateChange = nil }
     func broadcast(operation: String, body: Any) {
         guard state == .connected, SharedBrowserBridgeProtocol.isValidBody(body),
               SharedBrowserBridgeOperation.relayableBroadcastOperations.contains(operation) else { return }
@@ -77,6 +78,16 @@ final class SharedHubClient {
     func connect() {
         desired = true
         attemptJoin()
+    }
+
+    func disconnect() {
+        desired = false
+        reconnectTimer?.invalidate()
+        reconnectTimer = nil
+        handshakeTimer?.invalidate()
+        handshakeTimer = nil
+        closeSocket()
+        transition(to: .off, error: "")
     }
 
     /// Joins the local hub as a client. The classifier never hosts: it runs only

@@ -20,7 +20,7 @@ extension VaultClassifierViewModel {
         let queue = GroundedResearchQueue(
             executor: executor,
             configurationProvider: { [weak coordinator] task in
-                guard let coordinator else { return nil }
+                guard let coordinator, !coordinator.isShuttingDown else { return nil }
                 return Self.groundedResearchConfiguration(
                     from: coordinator.snapshot(),
                     classifierTypeID: task.classifierTypeID
@@ -38,7 +38,7 @@ extension VaultClassifierViewModel {
         Task {
             await queue.setStatusObserver { [weak self] status in
                 Task { @MainActor [weak self] in
-                    guard let self, self.researchQueueStatus != status else { return }
+                    guard let self, !self.isShuttingDown, self.researchQueueStatus != status else { return }
                     self.researchQueueStatus = status
                     self.onWebStateChange?()
                 }
@@ -46,7 +46,7 @@ extension VaultClassifierViewModel {
         }
         coordinator.setOnVideoReclassified { [weak self] platformID, entryID, projection in
             Task { @MainActor [weak self] in
-                guard let self else { return }
+                guard let self, !self.isShuttingDown else { return }
                 self.broadcastResolvedVideoTags(
                     platformID: platformID,
                     entryID: entryID,
@@ -147,6 +147,7 @@ extension VaultClassifierViewModel {
         }
         Task { @MainActor [weak self] in
             let queued = await coordinator.researchTerm(subject)
+            guard self?.isShuttingDown == false else { return }
             let shown = subject.trimmingCharacters(in: .whitespacesAndNewlines)
             self?.knowledgeNotice = queued ? "Looking up “\(shown)”. It appears under Known terms when the lookup finishes." : nil
             self?.issue = queued ? nil : "Could not look that term up: research is off or not configured, the term is too short or too generic, or it is already queued. You can write the description yourself instead."
@@ -179,6 +180,7 @@ extension VaultClassifierViewModel {
         }
         Task { @MainActor [weak self] in
             let queued = await coordinator.researchCreator(creatorID: creatorID, platformID: platformID)
+            guard self?.isShuttingDown == false else { return }
             self?.knowledgeNotice = queued ? "Looking up this creator. It appears under Known creators when the lookup finishes." : nil
             self?.issue = queued ? nil : "Could not look this creator up: research is off for this platform, or it is already queued. You can write the description yourself instead."
             self?.onWebStateChange?()
@@ -195,6 +197,7 @@ extension VaultClassifierViewModel {
         }
         Task { @MainActor [weak self] in
             let requeued = await queue.retryFailedNow()
+            guard self?.isShuttingDown == false else { return }
             VaultDevLog.shared.log("research", "retry-now", [
                 "cleared": String(cleared),
                 "requeued": String(requeued),

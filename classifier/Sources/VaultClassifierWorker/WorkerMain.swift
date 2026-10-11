@@ -35,8 +35,7 @@ private enum VaultClassifierWorkerMain {
                     output.send(["id": requestID, "ok": false, "error": String(error.localizedDescription.prefix(512))])
                 }
             }
-            _ = try await service.handle(operation: "hostEvent", data: ["kind": "flush"])
-            LocalStateFile.flushAllPendingWrites()
+            await service.shutdown()
         } catch {
             output.send(["event": "fatal", "error": String(error.localizedDescription.prefix(512))])
         }

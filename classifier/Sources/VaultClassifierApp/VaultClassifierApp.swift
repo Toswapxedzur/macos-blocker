@@ -45,6 +45,41 @@ final class VaultClassifierViewModel: ObservableObject {
     /// complete later, so they explicitly use this bounded local callback.
     var onWebStateChange: (() -> Void)?
 
+    private(set) var isShuttingDown = false
+    var localLLMRegistry: LocalLLMEngineRegistry?
+    private var modelWarmupTask: Task<Void, Never>?
+    private var shutdownTask: Task<Void, Never>?
+
+    func shutdown() async {
+        if let shutdownTask { await shutdownTask.value; return }
+        isShuttingDown = true
+        onWebStateChange = nil
+        sharedHubClient?.onRequest = nil
+        sharedHubClient?.onStateChange = nil
+        sharedHubClient?.disconnect()
+        coordinator?.beginShutdown()
+        modelWarmupTask?.cancel()
+        let registry = localLLMRegistry
+        let warmup = modelWarmupTask
+        let task = Task { [self] in
+            // Start native cancellation before waiting for queues that may be
+            // blocked on a synchronous llama call. Never free during that call.
+            let closeModels = Task { await registry?.shutdown() }
+            let closeResearch = Task { await groundedResearchQueue?.shutdown() }
+            await classificationCoalescer.shutdown()
+            await closeResearch.value
+            await warmup?.value
+            await closeModels.value
+            coordinator?.setOnDeviceLLMEngineResolver(nil)
+            localLLMRegistry = nil
+            modelWarmupTask = nil
+            inFlightVideoClassifications.removeAll()
+            LocalStateFile.flushAllPendingWrites()
+        }
+        shutdownTask = task
+        await task.value
+    }
+
     var coordinator: LocalClassifierCoordinator?
     var groundedResearchQueue: GroundedResearchQueue?
     var dictionaryService: OfficialDictionaryService?
@@ -146,22 +181,25 @@ final class VaultClassifierViewModel: ObservableObject {
     /// Each group's selected model loads lazily through the shared registry.
     /// Missing model files produce provisional stub results, never another group's tier.
     func installLocalLLMEngine(coordinator: LocalClassifierCoordinator) {
+        guard !isShuttingDown else { return }
         coordinator.setOnDeviceLLM(StubOnDeviceLLM())
         let registry = LocalLLMEngineRegistry { [weak self] fileName, status in
             Task { @MainActor [weak self] in
-                guard let self, self.modelEngineStatuses[fileName] != status else { return }
+                guard let self, !self.isShuttingDown, self.modelEngineStatuses[fileName] != status else { return }
                 self.modelEngineStatuses[fileName] = status
                 self.onWebStateChange?()
             }
         }
+        localLLMRegistry = registry
         coordinator.setOnDeviceLLMEngineResolver(registry)
         var seen = Set<SpeedQualityDial>()
         let configurations = coordinator.snapshot().workspaceCatalog.classifierTypes
             .map(\.localModel).filter { seen.insert($0.speedQuality).inserted }
             .prefix(LocalLLMSettings.maxResidentModels)
         // Keep the normal first-video path warm without choosing an app-wide tier.
-        Task.detached(priority: .userInitiated) {
+        modelWarmupTask = Task.detached(priority: .userInitiated) {
             for configuration in configurations {
+                guard !Task.isCancelled else { return }
                 _ = try? await registry.engine(forModel: configuration.modelFileName, configuration: configuration)
             }
         }

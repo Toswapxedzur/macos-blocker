@@ -13,6 +13,7 @@ public final class VaultClassifierPage {
     /// The containing app supplies its saved interface language without a module dependency cycle.
     public var nativeText: (String, String) -> String = { _, fallback in fallback }
 
+    private var isShuttingDown = false
     private var model: VaultClassifierViewModel?
     private var webShell: VaultClassifierWebShell?
     private var pageVisible = true
@@ -20,14 +21,14 @@ public final class VaultClassifierPage {
     private init() {}
 
     public func start() {
-        guard model == nil else { return }
+        guard !isShuttingDown, model == nil else { return }
         // A packaged production app registers its browser helper itself (there is
         // no installer); a no-op in development and for un-bundled builds.
         NativeMessagingHostRegistration.registerBundledHost()
         model = VaultClassifierViewModel()
         model?.contributionPromptNative = true
         DispatchQueue.main.async { [weak self] in
-            guard let model = self?.model, model.coordinator?.snapshot().settings.dictionaries.contributionChoiceMade == false else { return }
+            guard self?.isShuttingDown == false, let model = self?.model, model.coordinator?.snapshot().settings.dictionaries.contributionChoiceMade == false else { return }
             model.completeDictionaryOnboarding(enabled: DictionaryContributionPrompt.present(translate: self?.nativeText ?? { _, fallback in fallback }))
         }
     }
@@ -188,6 +189,13 @@ public final class VaultClassifierPage {
 
     /// State writes are coalesced onto a background queue; the host calls this
     /// on a clean quit so the newest write is never dropped.
+    /// Does not start a never-opened component merely to shut it down.
+    public func shutdown() async {
+        isShuttingDown = true
+        await model?.shutdown()
+        LocalStateFile.flushAllPendingWrites()
+    }
+
     public func flushPendingWrites() {
         LocalStateFile.flushAllPendingWrites()
     }
