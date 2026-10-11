@@ -1,7 +1,26 @@
 import Foundation
 import XCTest
 import VaultClassifierCore
+import VaultClassifierBridge
 @testable import VaultClassifierApp
+
+@MainActor
+private final class RecordingHubConnection: SharedHubConnection {
+    var onRequest: ((SharedHubClient.Request) -> SharedHubClient.Reply)?
+    var onStateChange: (() -> Void)?
+    var broadcasts: [(operation: String, body: Any)] = []
+    func disconnect() {}
+    func broadcast(operation: String, body: Any) { broadcasts.append((operation, body)) }
+}
+
+private actor UnexpectedRenameLLM: OnDeviceLLM {
+    nonisolated let modelVersion = "unexpected-rename/v1"
+    private(set) var requests = 0
+    func classify(_ request: LLMClassificationRequest) async throws -> LLMClassificationResult {
+        requests += 1
+        return .init(tags: [])
+    }
+}
 
 /// Characterisation net for the God-object split (CLASSIFIER-INDEPENDENCE §7,
 /// Phase 5). These pin the OBSERVABLE surface of `VaultClassifierViewModel`'s
@@ -70,6 +89,61 @@ final class ViewModelCharacterizationTests: XCTestCase {
             XCTAssertTrue(VaultClassifierViewModel.browserStateChanged(from: changed, to: original), "reverse " + edit)
             XCTAssertEqual(changed.workspaceCatalog.videoClassifications, original.workspaceCatalog.videoClassifications)
         }
+    }
+
+    func testLiveRenameInvalidatesBrowserProjectionOnceWithoutReclassifying() async throws {
+        let vm = try makeViewModel()
+        let coordinator = try XCTUnwrap(vm.coordinator)
+        var catalog = coordinator.snapshot().workspaceCatalog
+        let tree = TagTreeAsset(id: "rename-tree", name: "Topics", nodes: [.init(id: "games", name: "Games")])
+        catalog.trees.append(tree)
+        let dataset = try XCTUnwrap(catalog.datasets.first)
+        catalog.classifierTypes.append(.init(id: "rename-type", name: "YouTube", treeID: tree.id,
+            treeRevision: tree.revision, datasetID: dataset.id, datasetRevision: dataset.revision,
+            applicablePlatformIDs: ["youtube"]))
+        catalog.videoClassifications.append(.init(classifierTypeID: "rename-type", platformID: "youtube",
+            entryID: "youtube:video:rename00001", creatorID: "youtube:handle:@fixture", treeID: tree.id,
+            treeRevision: tree.revision, tags: [.init(tagID: "games", confidence: 5)],
+            source: .humanCorrected, modelVersion: "human"))
+        try coordinator.updateWorkspaceCatalog(catalog)
+        vm.refreshLocalState()
+        let decisions = coordinator.snapshot().workspaceCatalog.videoClassifications
+        let hub = RecordingHubConnection()
+        vm.sharedHubClient = hub
+        let engine = UnexpectedRenameLLM()
+        coordinator.setOnDeviceLLM(engine)
+        var renders = 0
+        vm.onWebStateChange = { renders += 1 }
+
+        func browserPull() throws -> NativeVideoTagsResponse {
+            let request = NativeVideoTagsRequest(platformID: "youtube", entryID: "youtube:video:rename00001",
+                creatorID: "youtube:handle:@fixture", title: "Games highlights")
+            let reply = vm.handleSharedHubRequest(.init(sourcePeerID: "test-browser", requestID: "rename-request",
+                operation: .videoTags, bodyData: try JSONEncoder().encode(request)))
+            XCTAssertNil(reply.error)
+            return try JSONDecoder().decode(NativeVideoTagsResponse.self,
+                from: JSONSerialization.data(withJSONObject: XCTUnwrap(reply.body)))
+        }
+        XCTAssertEqual(try browserPull().tags.map(\.name), ["Games"])
+        XCTAssertTrue(vm.performWebAction("renameTag", data: ["treeID": tree.id, "nodeID": "games", "name": "Renamed Games"]),
+            "Preserve the dispatcher's existing presentation response.")
+        XCTAssertNil(vm.issue)
+        XCTAssertEqual(renders, 0, "The caller owns presentation; the mutation must not invoke it directly.")
+        XCTAssertEqual(hub.broadcasts.map(\.operation), [SharedBrowserBridgeOperation.classifierStateUpdatedBroadcast])
+        XCTAssertEqual((hub.broadcasts.first?.body as? [String: String])?.count, 0)
+        let refreshed = try browserPull()
+        XCTAssertEqual(refreshed.tags.map(\.name), ["Renamed Games"])
+        XCTAssertFalse(refreshed.pending)
+        XCTAssertEqual(coordinator.snapshot().workspaceCatalog.videoClassifications, decisions)
+        XCTAssertEqual(vm.localState?.workspaceCatalog.videoClassifications, decisions)
+        XCTAssertTrue(vm.inFlightVideoClassifications.isEmpty)
+        let requests = await engine.requests
+        XCTAssertEqual(requests, 0)
+
+        vm.refreshLocalState()
+        XCTAssertEqual(hub.broadcasts.count, 1, "A later ordinary refresh must not duplicate the invalidation.")
+        LocalStateFile.flushAllPendingWrites()
+        XCTAssertEqual(try makeViewModel().localState?.workspaceCatalog.videoClassifications, decisions)
     }
 
     func testPersonalDictionaryRoundTripAndInvalidImportFeedbackStayInSettings() throws {

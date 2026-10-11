@@ -134,7 +134,7 @@ extension VaultClassifierViewModel {
         } catch { issue = error.localizedDescription }
     }
 
-    func renameTag(treeID: String, nodeID: String, name: String, refreshState: Bool = true) {
+    func renameTag(treeID: String, nodeID: String, name: String) {
         do {
             guard var catalog = localState?.workspaceCatalog,
                   let treeIndex = catalog.trees.firstIndex(where: { $0.id == treeID }),
@@ -146,13 +146,9 @@ extension VaultClassifierViewModel {
             catalog.trees[treeIndex].nodes[nodeIndex].name = cleaned
             advanceTreeRevision(in: &catalog, treeIndex: treeIndex)
             try coordinator?.updateWorkspaceCatalog(catalog)
-            // Live typing deliberately avoids a full WebKit re-render, but
-            // later tree actions must still start from the renamed catalog.
-            if refreshState {
-                refreshLocalState()
-            } else {
-                localState = coordinator?.snapshot()
-            }
+            // Refresh browser projections independently of the dispatcher's
+            // presentation result. Stored decisions stay intact.
+            refreshLocalState()
         } catch { issue = error.localizedDescription }
     }
 
