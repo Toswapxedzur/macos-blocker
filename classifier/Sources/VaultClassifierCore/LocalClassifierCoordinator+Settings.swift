@@ -39,8 +39,10 @@ extension LocalClassifierCoordinator {
     public func updateSettings(_ settings: ClassifierSettings) throws {
         lock.lock()
         defer { lock.unlock() }
-        state.settings = settings
-        try stateFile.save(state)
+        var next = state
+        next.settings = settings
+        try stateFile.save(next)
+        state = next
     }
 
     public func updateLocalBackupConfiguration(_ configuration: LocalBackupConfiguration?) throws {
