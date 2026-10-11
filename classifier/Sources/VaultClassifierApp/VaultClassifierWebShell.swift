@@ -122,8 +122,10 @@ final class VaultClassifierWebShell {
             occlusionObserver = NotificationCenter.default.addObserver(
                 forName: NSWindow.didChangeOcclusionStateNotification, object: nil, queue: .main
             ) { [weak self] note in
-                guard let self, let window = note.object as? NSWindow, window == self.webView?.window else { return }
-                self.updatePresentationSuspension()
+                MainActor.assumeIsolated {
+                    guard let self, let window = note.object as? NSWindow, window == self.webView?.window else { return }
+                    self.updatePresentationSuspension()
+                }
             }
         }
 
