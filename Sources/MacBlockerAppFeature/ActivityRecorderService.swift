@@ -35,20 +35,26 @@ public final class ActivityRecorderService {
 
     /// One engine tick: credits the time since the last one to the front app.
     public func sample(frontmost app: NSRunningApplication?, now: Date) {
-        settings = store.loadSettings()
-        guard settings.isEnabled(.appUsage) else {
-            // Recording off: never accrue. Close any bucket opened before the
-            // toggle flipped so nothing is silently lost, then stop.
-            emit(accumulator.flush())
-            return
-        }
-        let sample = ActivitySample(
+        sample(ActivitySample(
             monotonic: ProcessInfo.processInfo.systemUptime,
             wall: now,
             appKey: app?.bundleIdentifier,
             appLabel: app?.localizedName ?? app?.bundleIdentifier ?? "Unknown",
             active: true
-        )
+        ))
+    }
+
+    func sample(_ sample: ActivitySample) {
+        let observedSettings = settings
+        settings = store.loadSettings()
+        guard settings.isEnabled(.appUsage) else {
+            // Recording off: never accrue. Close any bucket opened before the
+            // toggle flipped under the settings that observed its usage.
+            if let record = accumulator.flush() {
+                store.record(record, settings: observedSettings)
+            }
+            return
+        }
         emit(accumulator.sample(sample))
     }
 

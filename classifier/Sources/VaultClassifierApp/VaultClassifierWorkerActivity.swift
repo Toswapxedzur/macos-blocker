@@ -17,6 +17,7 @@ final class VaultClassifierWorkerActivity {
     private var refreshRevision: UInt64 = 0
     private let accumulator = ActivityUsageAccumulator(maxStepSeconds: 60)
     private var nativeMonotonic = 0.0
+    private var nativeObservedSettings: ActivitySettings?
     nonisolated private static let historyDays = 365
 
     init(directory: URL, model: VaultClassifierViewModel, emit: @escaping ([String: Any]) -> Void) {
@@ -126,9 +127,13 @@ final class VaultClassifierWorkerActivity {
                   let milliseconds = (body["atMs"] as? NSNumber)?.doubleValue, milliseconds.isFinite else { throw ActivityWorkerError.invalidOperation }
             nativeMonotonic = (body["monotonicMs"] as? NSNumber).map { $0.doubleValue / 1_000 } ?? (nativeMonotonic + elapsed / 1_000)
             let settings = store.loadSettings()
+            let observedSettings = nativeObservedSettings ?? settings
+            nativeObservedSettings = settings
             guard settings.isEnabled(.appUsage) else {
-                if let record = accumulator.flush() { _ = store.record(record, settings: settings) }
-                return ["kind": "recorded", "accepted": 0]
+                var accepted = 0
+                if let record = accumulator.flush(), store.record(record, settings: observedSettings) { accepted = 1 }
+                if accepted > 0 { refresh() }
+                return ["kind": "recorded", "accepted": accepted]
             }
             let sample = ActivitySample(monotonic: nativeMonotonic, wall: Date(timeIntervalSince1970: milliseconds / 1_000),
                 appKey: body["appId"] as? String, appLabel: body["name"] as? String ?? "Unknown", active: body["active"] as? Bool ?? true)
@@ -139,7 +144,7 @@ final class VaultClassifierWorkerActivity {
             return ["kind": "recorded", "accepted": accepted]
         case "native-flush":
             var accepted = 0
-            if let record = accumulator.flush(), store.record(record) { accepted = 1 }
+            if let record = accumulator.flush(), store.record(record, settings: nativeObservedSettings) { accepted = 1 }
             refresh()
             return ["kind": "recorded", "accepted": accepted]
         case "native-record":
