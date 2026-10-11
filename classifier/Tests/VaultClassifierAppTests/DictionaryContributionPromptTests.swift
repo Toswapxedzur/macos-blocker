@@ -23,6 +23,8 @@ final class DictionaryContributionPromptTests: XCTestCase {
         XCTAssertEqual(checkbox.title, strings["native.dictionary.share"])
         XCTAssertEqual(checkbox.state, .on)
         XCTAssertEqual(alert.buttons.map(\.title), ["Auswahl speichern", "Nicht teilen"])
+        XCTAssertFalse(alert.window.preventsApplicationTerminationWhenModal,
+                       "An optional contribution choice must allow normal Quit admission")
     }
     private func window() -> NSWindow {
         if !Self.preparedOwnedApplication {
@@ -149,6 +151,40 @@ final class DictionaryContributionPromptTests: XCTestCase {
         XCTAssertNil(prompt.alert)
         prompt.resume(); prompt.setHostWindow(host)
         XCTAssertNil(prompt.alert)
+        XCTAssertTrue(saved.isEmpty)
+    }
+
+    func testActualAppKitQuitConsultsDelegateWithUndecidedContributionSheet() async throws {
+        let application = NSApplication.shared
+        let originalDelegate = application.delegate
+        let delegate = CancellingOwnedQuitDelegate()
+        let host = window()
+        var pending = true
+        var saved: [Bool] = []
+        let prompt = DictionaryContributionPrompt(choiceIsPending: { pending }, saveChoice: { saved.append($0); pending = false })
+        defer {
+            prompt.shutdown()
+            host.close()
+            application.delegate = originalDelegate
+        }
+        prompt.setHostWindow(host)
+        let question = try XCTUnwrap(prompt.alert)
+        await drain()
+        XCTAssertTrue(question.window.sheetParent === host, "The actual undecided sheet must be attached")
+        application.delegate = delegate
+        // Actual AppKit admission, not a direct delegate invocation. This
+        // isolated test delegate always cancels, so the test host stays alive.
+        application.terminate(nil)
+        await drain()
+        XCTAssertEqual(delegate.requests, 1, "AppKit must consult the normal Quit delegate before cancelling")
+        XCTAssertNil(question.window.sheetParent, "AppKit aborts the optional sheet during normal Quit admission")
+        XCTAssertTrue(pending)
+        XCTAssertTrue(saved.isEmpty, "A normal Quit request must not synthesize a contribution choice")
+        prompt.resume() // The host's normal cancelled linked-Quit path.
+        let resumed = try XCTUnwrap(prompt.alert)
+        XCTAssertFalse(resumed === question)
+        XCTAssertTrue(resumed.window.sheetParent === host)
+        XCTAssertTrue(pending)
         XCTAssertTrue(saved.isEmpty)
     }
 
@@ -279,5 +315,14 @@ final class DictionaryContributionPromptTests: XCTestCase {
         XCTAssertEqual(try Data(contentsOf: file), future)
     }
 
+}
+
+@MainActor
+private final class CancellingOwnedQuitDelegate: NSObject, NSApplicationDelegate {
+    private(set) var requests = 0
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        requests += 1
+        return .terminateCancel
+    }
 }
 #endif
