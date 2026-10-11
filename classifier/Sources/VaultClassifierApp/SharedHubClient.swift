@@ -5,11 +5,21 @@ import FoundationNetworking
 import VaultClassifierCore
 import VaultClassifierBridge
 
+/// The view model owns connection lifetime while mutations only need the
+/// existing broadcast contract. Keep transport separate from local state.
+@MainActor
+protocol SharedHubConnection: AnyObject {
+    var onRequest: ((SharedHubClient.Request) -> SharedHubClient.Reply)? { get set }
+    var onStateChange: (() -> Void)? { get set }
+    func disconnect()
+    func broadcast(operation: String, body: Any)
+}
+
 #if os(Windows)
 /// The owning Windows process already authenticates hub peers. Use its private
 /// stdio pipe rather than opening a second socket or inventing another secret.
 @MainActor
-final class SharedHubClient {
+final class SharedHubClient: SharedHubConnection {
     enum State: String { case off, connecting, connected, disconnected, error }
     struct Request {
         let sourcePeerID: String
@@ -40,7 +50,7 @@ final class SharedHubClient {
 /// The classifier joins the fixed local Vault hub and becomes its lightweight
 /// classifier host when Mac Vault is not open.
 @MainActor
-final class SharedHubClient {
+final class SharedHubClient: SharedHubConnection {
     enum State: String {
         case off
         case connecting

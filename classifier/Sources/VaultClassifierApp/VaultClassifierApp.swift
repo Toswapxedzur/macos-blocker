@@ -91,7 +91,7 @@ final class VaultClassifierViewModel: ObservableObject {
     var contributionPromptNative = false
     var onDictionaryContributionChoiceChanged: (() -> Void)?
     @Published var researchQueueStatus = GroundedResearchQueueStatus()
-    var sharedHubClient: SharedHubClient?
+    var sharedHubClient: (any SharedHubConnection)?
     var collectionDiagnostics: CollectionDiagnosticsStore?
     var providerModelCatalogStore: ProviderModelCatalogStore?
     private(set) var sourceIconCache: SourceIconCache?
