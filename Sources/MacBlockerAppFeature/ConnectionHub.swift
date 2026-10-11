@@ -113,6 +113,12 @@ final class ConnectionHub: ObservableObject {
             guard let self, let store, self.localWebStore === store else { return false }
             return self.reconcileLocalStore(store, nowMs: (Date().timeIntervalSince1970 * 1000).rounded(.down))
         }
+        store.setEditorDefinitionMutation(owner: self) { [weak self, weak store] request in
+            guard let self, let store, self.localWebStore === store else {
+                throw GroupStoreError.invalidInput("native-editor-unavailable")
+            }
+            return try self.applyEditorDefinitionRequest(request, store: store)
+        }
     }
 
     private let queue = DispatchQueue(label: "macosBlocker.ConnectionHub")
@@ -375,12 +381,61 @@ final class ConnectionHub: ObservableObject {
             self.id = id
             self.groupName = groupName
         }
+
+        /// Editor admission runs on distinct state until its canonical file save
+        /// succeeds. Explicitly copy every field, including joining/runtime data.
+        func editorCopy() -> ClusterState {
+            let copy = ClusterState(id: id, groupName: groupName)
+            copy.initiator = initiator
+            copy.members = members
+            copy.memberGroupIds = memberGroupIds
+            copy.contributed = contributed
+            copy.sharedTs = sharedTs
+            copy.scopeOrigins = scopeOrigins
+            copy.sharedUsageMs = sharedUsageMs
+            copy.sharedUsageResetAtMs = sharedUsageResetAtMs
+            copy.usageSeeded = usageSeeded
+            copy.joiningUsageBaseMs = joiningUsageBaseMs
+            copy.joiningUsageDeltaMs = joiningUsageDeltaMs
+            copy.joiningSeedFloorMs = joiningSeedFloorMs
+            copy.joiningBucketsBase = joiningBucketsBase
+            copy.joiningBucketDeltas = joiningBucketDeltas
+            copy.usageTransferReceipts = usageTransferReceipts
+            copy.sharedBuckets = sharedBuckets
+            copy.bucketsSeeded = bucketsSeeded
+            copy.sharedSnoozeTs = sharedSnoozeTs
+            copy.sharedSnoozeTotalMs = sharedSnoozeTotalMs
+            copy.snoozeCountedStartMs = snoozeCountedStartMs
+            copy.sharedScalars = sharedScalars.mapValues(ConnectionHub.copyJSONValue)
+            copy.sharedScopes = sharedScopes.map { $0.mapValues(ConnectionHub.copyJSONValue) }
+            copy.sharedLock = sharedLock.mapValues(ConnectionHub.copyJSONValue)
+            copy.sharedSnooze = sharedSnooze.mapValues(ConnectionHub.copyJSONValue)
+            return copy
+        }
     }
 
     /// Each endpoint's eligible Default/Custom groups, keyed by program id.
     private var rosters: [String: [GroupInfo]] = [:]
     /// Active clusters keyed by cluster id.
     private var clusters: [String: ClusterState] = [:]
+
+    private struct EditorFrame {
+        let data: Data
+        let connections: [NWConnection]
+    }
+    private final class EditorStaging {
+        var frames: [EditorFrame] = []
+        var persistRegistry = false
+    }
+    /// Only set inside the editor's canonical file -> hub transaction. No
+    /// transport or registry write escapes until the canonical save succeeds.
+    private var editorStaging: EditorStaging?
+
+    private static func copyJSONValue(_ value: Any) -> Any {
+        if let dictionary = value as? [String: Any] { return dictionary.mapValues(copyJSONValue) }
+        if let array = value as? [Any] { return array.map(copyJSONValue) }
+        return value
+    }
 
     /// UserDefaults key for the persisted cluster registry. Bumping the suffix
     /// invalidates older on-disk shapes.
@@ -766,6 +821,14 @@ final class ConnectionHub: ObservableObject {
     private func enqueueLocked(_ dict: [String: Any], to connections: [NWConnection]) {
         guard !connections.isEmpty || outboundDelivery != nil,
               let data = try? JSONSerialization.data(withJSONObject: dict) else { return }
+        if let editorStaging {
+            editorStaging.frames.append(EditorFrame(data: data, connections: connections))
+            return
+        }
+        enqueueFrozenLocked(data, to: connections)
+    }
+
+    private func enqueueFrozenLocked(_ data: Data, to connections: [NWConnection]) {
         let deliver = outboundDelivery
         outboundQueue.async { [self] in
             // The producer may still own the lock when async begins. Wait for
@@ -1798,31 +1861,98 @@ final class ConnectionHub: ObservableObject {
                 // nil; never turn the caller's old document into a fallback.
                 guard var document = stored else { return false }
                 self.lock.lock(); defer { self.lock.unlock() }
-                guard self.localWebStoreValue === store,
-                      let groups = Self.canonicalLocalGroups(document) else { return false }
-                let roster = Self.localRoster(groups)
-                let rosterKey = WebStoreDocument.canonicalJSON(roster)
-                if rosterKey != self.lastLocalRoster {
-                    try self.setRosterLocked(program: Self.localProgram, infos: Self.rosterInfos(roster), document: document) { updated in
-                        try save(updated)
-                        document = updated
-                    }
-                    self.lastLocalRoster = rosterKey
-                }
-                self.reconcileDefinitionsLocked(document: document, nowMs: nowMs, updateRoster: false)
-                let adopted = self.overlaySharedLocked(onto: document, clusters: Array(self.clusters.values), ownLinesOnly: false, nowMs: nowMs)
-                var next = document
-                for key in BlockerWebStore.sharedAdoptionKeys where adopted[key] != nil { next[key] = adopted[key] }
-                let changed = BlockerWebStore.sharedAdoptionKeys.contains {
-                    WebStoreDocument.canonicalJSON(next[$0]) != WebStoreDocument.canonicalJSON(document[$0])
-                }
-                if changed { try save(next) }
-                // Only an exact successful saved (or unchanged) document can
-                // advance adoption. First-original definitions remain pending.
-                self.acknowledgeLocalAdoptionLocked(next)
-                return changed
+                guard self.localWebStoreValue === store else { return false }
+                return try self.reconcileLocalDocumentLocked(&document, nowMs: nowMs, save: save)
             }
         } catch { return false }
+    }
+
+    /// Caller owns the canonical file lock and hub lock. A staged editor writer
+    /// captures intermediate documents without touching the file until commit.
+    private func reconcileLocalDocumentLocked(_ document: inout [String: Any], nowMs: Double,
+                                               save: ([String: Any]) throws -> Void) throws -> Bool {
+        guard let groups = Self.canonicalLocalGroups(document) else { return false }
+        let roster = Self.localRoster(groups)
+        let rosterKey = WebStoreDocument.canonicalJSON(roster)
+        if rosterKey != self.lastLocalRoster {
+            try self.setRosterLocked(program: Self.localProgram, infos: Self.rosterInfos(roster), document: document) { updated in
+                try save(updated)
+                document = updated
+            }
+            self.lastLocalRoster = rosterKey
+        }
+        self.reconcileDefinitionsLocked(document: document, nowMs: nowMs, updateRoster: false)
+        let adopted = self.overlaySharedLocked(onto: document, clusters: Array(self.clusters.values), ownLinesOnly: false, nowMs: nowMs)
+        var next = document
+        for key in BlockerWebStore.sharedAdoptionKeys where adopted[key] != nil { next[key] = adopted[key] }
+        let changed = BlockerWebStore.sharedAdoptionKeys.contains {
+            WebStoreDocument.canonicalJSON(next[$0]) != WebStoreDocument.canonicalJSON(document[$0])
+        }
+        if changed { try save(next) }
+        // Only an exact successful saved (or unchanged) document can
+        // advance adoption. First-original definitions remain pending.
+        self.acknowledgeLocalAdoptionLocked(next)
+        document = next
+        return changed
+    }
+
+    /// Synchronous JavaScript admission and all native reconciliation run on
+    /// copied hub state while the canonical file and hub locks are held. A
+    /// refused request/save therefore cannot publish an intermediate snapshot.
+    private func applyEditorDefinitionRequest(_ request: [String: Any], store: BlockerWebStore) throws -> [[String: Any]] {
+        try store.withLockedDocument { raw, save in
+            guard var document = raw, Self.canonicalLocalGroups(document) != nil else {
+                throw GroupStoreError.invalidInput("local-storage-unavailable")
+            }
+            self.lock.lock(); defer { self.lock.unlock() }
+            guard self.localWebStoreValue === store, self.editorStaging == nil else {
+                throw GroupStoreError.invalidInput("native-editor-unavailable")
+            }
+            // A recognizable unsupported registry cannot be overwritten by
+            // an editor transaction. UserDefaults has no physical durability
+            // acknowledgment; successful file commit retains its existing API.
+            let schema = StorageSchemaPolicy(format: "hub.clusters")
+            guard self.clusterStorageWritable,
+                  UserDefaults.standard.data(forKey: Self.clustersDefaultsKey).map({ (try? schema.payload(from: $0)) != nil }) ?? true else {
+                throw GroupStoreError.invalidInput("cluster-storage-unavailable")
+            }
+            let oldClusters = self.clusters
+            let oldRosters = self.rosters
+            let oldSeen = self.localDefinitionSeen
+            let oldRosterKey = self.lastLocalRoster
+            let oldUnlinked = self.unlinkedLocal
+            let staging = EditorStaging()
+            self.clusters = oldClusters.mapValues { $0.editorCopy() }
+            self.editorStaging = staging
+            do {
+                let nowMs = (Date().timeIntervalSince1970 * 1000).rounded(.down)
+                let capture: ([String: Any]) throws -> Void = { updated in
+                    try SharedAppGroupStore.webSchema.validateFlat(updated)
+                    guard JSONSerialization.isValidJSONObject(updated) else { throw GroupStoreError.invalidInput("invalid-web-store") }
+                }
+                _ = try self.reconcileLocalDocumentLocked(&document, nowMs: nowMs, save: capture)
+                let before = document
+                document = try BlockerWebStore.documentApplyingEditorRequest(document, request: request, nowMs: nowMs)
+                let linked = self.clusters.values.compactMap { $0.members.contains(Self.localProgram) ? $0.memberGroupIds[Self.localProgram] : nil }
+                document = BlockerWebStore.finishedEditorMutation(before: before, after: document, nowMs: nowMs, linkedGroupIds: linked)
+                _ = try self.reconcileLocalDocumentLocked(&document, nowMs: nowMs, save: capture)
+                guard Self.canonicalLocalGroups(document) != nil else { throw GroupStoreError.invalidInput("invalid-web-store") }
+                try SharedAppGroupStore.webSchema.validateFlat(document)
+                try save(document)
+                self.editorStaging = nil
+                if staging.persistRegistry { self.persistClustersLocked() }
+                for frame in staging.frames { self.enqueueFrozenLocked(frame.data, to: frame.connections) }
+                return document["blockedGroups"] as? [[String: Any]] ?? []
+            } catch {
+                self.clusters = oldClusters
+                self.rosters = oldRosters
+                self.localDefinitionSeen = oldSeen
+                self.lastLocalRoster = oldRosterKey
+                self.unlinkedLocal = oldUnlinked
+                self.editorStaging = nil
+                throw error
+            }
+        }
     }
 
     /// A malformed scope payload cannot become an explicit empty Apps edit.
@@ -2128,6 +2258,7 @@ final class ConnectionHub: ObservableObject {
     /// link by disconnecting it. Called on config changes and by the 10 s budget
     /// timer (a write only when something changed).
     private func persistClustersLocked() {
+        if let editorStaging { editorStaging.persistRegistry = true; return }
         let arr: [[String: Any]] = clusters.values.map { c in
             [
                 "id": c.id,

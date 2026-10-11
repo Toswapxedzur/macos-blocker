@@ -24,6 +24,7 @@ public final class BlockerWebStore: @unchecked Sendable {
     private let sharedReconciliationLock = NSLock()
     private weak var sharedReconciliationOwner: AnyObject?
     private var sharedReconciliation: (() -> Bool)?
+    private var editorDefinitionMutation: (([String: Any]) throws -> [[String: Any]])?
 
     public func setSharedReconciliation(owner: AnyObject, operation: @escaping () -> Bool) {
         sharedReconciliationLock.lock(); defer { sharedReconciliationLock.unlock() }
@@ -35,7 +36,71 @@ public final class BlockerWebStore: @unchecked Sendable {
         sharedReconciliationLock.lock(); defer { sharedReconciliationLock.unlock() }
         guard sharedReconciliationOwner === owner else { return }
         sharedReconciliation = nil
+        editorDefinitionMutation = nil
         sharedReconciliationOwner = nil
+    }
+
+    public func setEditorDefinitionMutation(owner: AnyObject,
+                                            operation: @escaping ([String: Any]) throws -> [[String: Any]]) {
+        sharedReconciliationLock.lock(); defer { sharedReconciliationLock.unlock() }
+        guard sharedReconciliationOwner === owner else { return }
+        editorDefinitionMutation = operation
+    }
+
+    /// The editor submits changed fields/entries, never its older whole list.
+    /// A successful reply contains exactly the durably saved authoritative list.
+    public func applyEditorDefinitionRequest(_ request: [String: Any]) throws -> [[String: Any]] {
+        sharedReconciliationLock.lock()
+        let hasOwner = sharedReconciliationOwner != nil
+        let owned = hasOwner ? editorDefinitionMutation : nil
+        sharedReconciliationLock.unlock()
+        if let owned { return try owned(request) }
+        guard !hasOwner else { throw GroupStoreError.invalidInput("native-editor-unavailable") }
+        return try withLockedDocument { raw, save in
+            guard let raw else { throw GroupStoreError.invalidInput("local-storage-unavailable") }
+            let nowMs = (Date().timeIntervalSince1970 * 1000).rounded(.down)
+            var next = try Self.documentApplyingEditorRequest(raw, request: request, nowMs: nowMs)
+            next = Self.finishedEditorMutation(before: raw, after: next, nowMs: nowMs, linkedGroupIds: [])
+            try SharedAppGroupStore.webSchema.validateFlat(next)
+            try save(next)
+            return next["blockedGroups"] as? [[String: Any]] ?? []
+        }
+    }
+
+    public static func documentApplyingEditorRequest(_ document: [String: Any], request: [String: Any],
+                                                     nowMs: Double) throws -> [String: Any] {
+        guard let groups = document["blockedGroups"] as? [[String: Any]],
+              groups.allSatisfy({ ($0["id"] as? String)?.isEmpty == false && ($0["scopes"] == nil || $0["scopes"] is [[String: Any]]) }),
+              Set(groups.compactMap { $0["id"] as? String }).count == groups.count else {
+            throw GroupStoreError.invalidInput("invalid-web-store")
+        }
+        let result = try GroupActionsRuntime.shared.callThrowing("applyEditorRequest",
+            [groups, request, "desktop", ["nowMs": nowMs, "readOnlyGroupIds": [String]()]], module: "CBGroupScopes")
+        guard let result = result as? [String: Any], let updated = result["groups"] as? [[String: Any]] else {
+            throw GroupStoreError.invalidInput("invalid-editor-response")
+        }
+        var next = document
+        next["blockedGroups"] = updated
+        return next
+    }
+
+    /// Runtime cleanup uses the existing policy gate. Linked budgets are reset
+    /// by the hub's normal contribution path, then adopted in this transaction.
+    public static func finishedEditorMutation(before: [String: Any], after: [String: Any], nowMs: Double,
+                                              linkedGroupIds: [String]) -> [String: Any] {
+        var next = after
+        let old = Dictionary((before["blockedGroups"] as? [[String: Any]] ?? []).compactMap { group -> (String, [String: Any])? in
+            guard let id = group["id"] as? String else { return nil }; return (id, group)
+        }, uniquingKeysWith: { first, _ in first })
+        let linked = Set(linkedGroupIds)
+        for group in after["blockedGroups"] as? [[String: Any]] ?? [] {
+            guard let id = group["id"] as? String, !linked.contains(id), let previous = old[id],
+                  GroupActionsRuntime.shared.call("budgetRestarts", [previous, group]) as? Bool == true else { continue }
+            var timers = next["usageTimersMs"] as? [String: Any] ?? [:]; timers[id] = 0.0; next["usageTimersMs"] = timers
+            var anchors = next["usageResetAtMs"] as? [String: Any] ?? [:]; anchors[id] = nowMs; next["usageResetAtMs"] = anchors
+            var buckets = next["usageBucketsMs"] as? [String: Any] ?? [:]; buckets.removeValue(forKey: id); next["usageBucketsMs"] = buckets
+        }
+        return tidied(next, nowMs: nowMs, linkedGroupIds: linkedGroupIds) ?? next
     }
 
     public static let sharedAdoptionKeys = ["blockedGroups", "groupSnoozes", "groupSnoozeTotalsMs", "usageTimersMs", "usageResetAtMs", "usageBucketsMs"]
@@ -103,6 +168,15 @@ public final class BlockerWebStore: @unchecked Sendable {
     /// The editor's writes: only the keys it set are merged into the file
     /// (NSNull removes one), under the lock — so a key another writer changed
     /// meanwhile (the engine, a tool) is kept, as chrome.storage does.
+    /// A legacy definition-bearing write is refused as one whole request;
+    /// its accompanying settings/runtime values must not partially persist.
+    public func mergeEditorSideEffectChanges(_ changes: [String: Any]) throws {
+        guard !changes.keys.contains("blockedGroups") else {
+            throw GroupStoreError.invalidInput("precise-editor-request-required")
+        }
+        merge(changes: changes)
+    }
+
     public func merge(changes: [String: Any]) {
         guard !changes.isEmpty else { return }
         GroupStore.withFileLock {
