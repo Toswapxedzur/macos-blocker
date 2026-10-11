@@ -25,6 +25,9 @@ public final class MacEnforcementBridge: ObservableObject {
     /// It reads linked groups through the hub's live shared state.
     public static let shared: MacEnforcementBridge = {
         let bridge = MacEnforcementBridge()
+        // The tick and native editor use this exact store instance; standalone
+        // adoption must enter the same transaction as the hub's contribution.
+        ConnectionHub.shared.localWebStore = bridge.webStore
         GroupStore.sharedOverlay = { ConnectionHub.shared.overlayShared(onto: $0) }
         // A tool's snooze of a custom group is the rule's snooze press, as the editor's.
         VaultMCPTools.snoozePress = { id in Task { @MainActor in MacEnforcementBridge.shared.fireSnoozePress(groupID: id) } }
