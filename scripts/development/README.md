@@ -60,6 +60,36 @@ If that host uses a pinned source runtime instead of Homebrew, also pass
 the selected host, and the receipt records that host, prefix and exact commit.
 The default remains mini1; host selection does not relax the delivery gates.
 
+When the authorized Mini2 test account differs from its SSH login, use
+`verify --host mini2 --account john.zhu.alt1`. Every preflight, committed source
+export and check uses the existing SSH connection followed by noninteractive
+`sudo -n -H -u` for that account. No SSH configuration or account credentials
+are changed. The controller validates a nonroot effective account, UID and its
+actual home directory before copying source, then rechecks that identity before
+each operation. Existing export parent/target paths must be nonsymlink directories
+owned by that UID and contain no Git metadata; unsafe/foreign targets are refused
+before any cleanup or copy. Export/build files stay in the selected account's
+`~/vault-delivery/macosBlocker`; the SSH login's home is not substituted.
+
+If its UI tools are installed at different existing locations, pass absolute
+`--node-executable`, `--playwright-module` and `--browser-executable` paths.
+The controller checks readability/executability as the selected account and
+passes the module/browser through the UI harness's existing supported variables.
+It does not install dependencies, download a browser or launch a visible browser.
+Without overrides, the existing home-based Mini1 runtime paths remain the default.
+Successful receipts record host, effective account/UID/home, export directory,
+UI runtime paths, optional llama runtime prefix and exact tested commit. A failed
+identity/runtime check cannot write a new verification receipt. These checks do
+not prove native Aqua permissions or live app behavior; those remain separate
+acceptance steps. The five verification steps are screen-free builds and isolated
+headless UI suites under the selected effective UID/home. Noninteractive sudo is
+not proof of an Aqua/audit desktop session or actual desktop input. If a future
+suite needs GUI bootstrap, stop for a separately reviewed selected-user route;
+never borrow the SSH login's GUI session. Optional `--jobs 2` bounds Swift build
+parallelism on a constrained host. It must be a positive integer; omission
+preserves the existing Swift default. Only the build command receives this limit,
+and the successful receipt records the actual checks and selected job count. Explicit owner host selections take precedence for a run.
+
 `run-mac-vault.sh` in each local worktree dispatches to this shared controller
 when the Git setting exists. The lower-level build script accepts a laptop
 delivery only from that checkout with the controller's exact commit token.
