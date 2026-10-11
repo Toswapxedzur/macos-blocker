@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
-"""Integrate, verify on mini1, and deliver Mac Vault from one shared checkout."""
+"""Integrate, verify on the selected test host, and deliver from one shared checkout."""
 import argparse
 import fcntl
 import hashlib
+import inspect
 import json
 import os
+import re
 from pathlib import Path
 import signal
 import shlex
@@ -274,48 +276,145 @@ def integrate(common, source):
     print(f"Integrated {sha}; verify the combined delivery commit on mini1 before launch.")
 
 
-def verify(common, host="mini1", runtime_prefix=None):
+def remote_command(host, account, script):
+    if host not in ("mini1", "mini2"):
+        raise RuntimeError("Unsupported verification host.")
+    if account is not None:
+        if host != "mini2" or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_.-]*", account) or account == "root":
+            raise RuntimeError("Selected account must be a nonroot Mini2 account name.")
+        script = shlex.join(["/usr/bin/sudo", "-n", "-H", "-u", account, "/bin/sh", "-c", script])
+    return ["ssh", "mini" if host == "mini1" else host, script]
+
+
+def guarded_remote_script(guard, operation):
+    # Group semicolon-separated operations so a failed guard cannot skip only
+    # their first command and then continue into mkdir/tar/rsync.
+    return guard + " && { " + operation + "; }"
+
+
+def validate_export_target(home, uid):
+    import os
+    import stat
+    from pathlib import Path
+    parent = Path(home) / "vault-delivery"
+    for target in (parent, parent / "macosBlocker"):
+        if os.path.lexists(target):
+            metadata = target.lstat()
+            if not stat.S_ISDIR(metadata.st_mode) or metadata.st_uid != uid:
+                raise RuntimeError("Verification export target must be a nonsymlink directory owned by selected UID: " + str(target))
+        bare_repository = (target / "HEAD").is_file() and (target / "config").is_file() and (target / "objects").is_dir() and (target / "refs").is_dir()
+        if os.path.lexists(target / ".git") or bare_repository:
+            raise RuntimeError("Verification export target contains Git metadata; no operation performed: " + str(target))
+
+
+def remote_preflight_script(account, runtime_prefix, node_executable, playwright_module, browser_executable, expected=None):
+    options = {"account": account, "runtimePrefix": runtime_prefix, "node": node_executable,
+               "playwrightModule": playwright_module, "browser": browser_executable, "expected": expected}
+    # Run this before the archive and again in the same shell as every operation.
+    # sudo -H supplies the selected HOME; never substitute the SSH user's HOME.
+    code = "import json, os, pwd, sys\n" + inspect.getsource(validate_export_target) + """
+options = json.loads(sys.argv[1])
+user = pwd.getpwuid(os.getuid())
+requested = pwd.getpwnam(options['account']) if options['account'] else user
+home = os.environ.get('HOME')
+if user.pw_uid == 0 or user.pw_name != requested.pw_name or user.pw_uid != requested.pw_uid or home != requested.pw_dir:
+    raise SystemExit('Verification account/UID/HOME mismatch; no operation performed.')
+validate_export_target(home, user.pw_uid)
+tools = {
+    'node': options['node'] or home + '/.local/node/bin/node',
+    'playwrightModule': options['playwrightModule'] or home + '/agentic-tooling-test-env/lib/python3.14/site-packages/playwright/driver/package/index.mjs',
+    'browser': options['browser'] or home + '/chrome-testing/chrome-mac-x64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing',
+}
+for key, value in tools.items():
+    mode = os.R_OK if key == 'playwrightModule' else os.R_OK | os.X_OK
+    if not os.path.isabs(value) or not os.path.isfile(value) or not os.access(value, mode):
+        raise SystemExit('Verification runtime is unavailable to selected account: ' + key)
+prefix = options['runtimePrefix']
+if prefix and (not os.path.isabs(prefix) or not os.path.isdir(prefix) or not os.access(prefix, os.R_OK | os.X_OK)):
+    raise SystemExit('Verification runtime prefix is unavailable to selected account.')
+identity = {'account':user.pw_name, 'uid':user.pw_uid, 'home':home, 'uiRuntime':tools}
+if options['expected'] is not None:
+    if identity != options['expected']:
+        raise SystemExit('Verification identity/runtime changed; no operation performed.')
+else:
+    print(json.dumps(identity))
+"""
+    return shlex.join(["/usr/bin/python3", "-c", code, json.dumps(options)])
+
+
+def export_archive(sha):
+    return subprocess.Popen(["git", "-C", str(ROOT), "archive", sha], stdout=subprocess.PIPE)
+
+
+def verify(common, host="mini1", runtime_prefix=None, account=None, node_executable=None,
+           playwright_module=None, browser_executable=None, jobs=None):
+    if jobs is not None and (type(jobs) is not int or jobs < 1):
+        raise RuntimeError("Verification jobs must be a positive integer.")
     clean(ROOT)
     sha = git(ROOT, "rev-parse", "HEAD")
     state = read_state(common)
     if state.get("historyReconciliations"):
         validate_reconciled_lineage(common, state, sha)
-    # Only committed files cross hosts. Keep mini1's build cache, but remove
-    # retired source files from this dedicated verification copy.
-    archive = subprocess.Popen(["git", "-C", str(ROOT), "archive", sha], stdout=subprocess.PIPE)
+    preflight = remote_preflight_script(account, runtime_prefix, node_executable, playwright_module, browser_executable)
+    result = subprocess.run(remote_command(host, account, preflight), check=True, capture_output=True, text=True, timeout=30)
+    try:
+        identity = json.loads(result.stdout)
+        if (not isinstance(identity, dict) or not isinstance(identity.get("account"), str)
+                or type(identity.get("uid")) is not int or identity["uid"] <= 0
+                or not isinstance(identity.get("home"), str) or not Path(identity["home"]).is_absolute()
+                or not identity["account"] or identity["account"] == "root"
+                or account is not None and identity["account"] != account
+                or not isinstance(identity.get("uiRuntime"), dict)
+                or set(identity["uiRuntime"]) != {"node", "playwrightModule", "browser"}
+                or any(not isinstance(value, str) or not Path(value).is_absolute()
+                       for value in identity["uiRuntime"].values())):
+            raise ValueError("Invalid verification identity")
+    except (ValueError, TypeError):
+        raise RuntimeError("Cannot validate selected verification identity; no export performed.")
+    guard = remote_preflight_script(account, runtime_prefix, node_executable, playwright_module, browser_executable, identity)
+    # Only committed files cross hosts. Keep the selected account's build cache,
+    # but remove retired source files from its dedicated verification copy.
+    archive = export_archive(sha)
     transfer = 'set -eu; mkdir -p "$HOME/vault-delivery"; vault_stage=$(mktemp -d "$HOME/vault-delivery/snapshot.XXXXXX"); trap \'rm -rf "$vault_stage"\' EXIT; tar -xf - -C "$vault_stage"; mkdir -p "$HOME/vault-delivery/macosBlocker"; rsync -a --delete --exclude=.build "$vault_stage/" "$HOME/vault-delivery/macosBlocker/"'
     try:
-        subprocess.run(["ssh", "mini" if host == "mini1" else host, transfer], stdin=archive.stdout, check=True)
+        subprocess.run(remote_command(host, account, guarded_remote_script(guard, transfer)), stdin=archive.stdout, check=True)
     finally:
         archive.stdout.close()
         if archive.wait():
             raise RuntimeError("Could not export the delivery commit.")
+    node = shlex.quote(identity["uiRuntime"]["node"])
     checks = [
         "python3 scripts/development/test-vault-delivery.py && python3 scripts/development/test-history-reconciliation.py",
         "bash -n run-mac-vault.sh scripts/development/launch-mac-vault-build.sh",
         "swift build --product MacBlockerPanel",
-        "$HOME/.local/node/bin/node classifier/Tests/WebUI/autosave.mjs",
-        'UI_TEST_SCRIPT=classifier/Tests/WebUI/dropdown-layout.js UI_TEST_EXPRESSION="runDropdownLayoutTests()" $HOME/.local/node/bin/node classifier/Tests/WebUI/autosave.mjs',
+        node + " classifier/Tests/WebUI/autosave.mjs",
+        'UI_TEST_SCRIPT=classifier/Tests/WebUI/dropdown-layout.js UI_TEST_EXPRESSION="runDropdownLayoutTests()" ' + node + ' classifier/Tests/WebUI/autosave.mjs',
     ]
-    environment = ""
+    if jobs is not None:
+        checks[2] += " -j " + str(jobs)
+    values = {"UI_PLAYWRIGHT_MODULE": identity["uiRuntime"]["playwrightModule"],
+              "UI_BROWSER_EXECUTABLE": identity["uiRuntime"]["browser"]}
     if runtime_prefix:
-        environment = "export " + " ".join(shlex.quote(key + "=" + value) for key, value in {
-            "VAULT_LLAMA_PREFIX": runtime_prefix,
-            "HOMEBREW_PREFIX": runtime_prefix,
-            "PKG_CONFIG_PATH": runtime_prefix + "/lib/pkgconfig",
-        }.items()) + " && "
+        values.update({"VAULT_LLAMA_PREFIX": runtime_prefix, "HOMEBREW_PREFIX": runtime_prefix,
+                       "PKG_CONFIG_PATH": runtime_prefix + "/lib/pkgconfig"})
         checks[2] += " -Xlinker -rpath -Xlinker " + shlex.quote(runtime_prefix + "/lib")
+    environment = "export " + " ".join(shlex.quote(key + "=" + value) for key, value in values.items()) + " && "
     for command in checks:
-        subprocess.run(["ssh", "mini" if host == "mini1" else host, 'cd "$HOME/vault-delivery/macosBlocker" && ' + environment + command], check=True)
+        operation = 'cd "$HOME/vault-delivery/macosBlocker" && ' + environment + command
+        subprocess.run(remote_command(host, account, guarded_remote_script(guard, operation)), check=True)
     clean(ROOT)
     if git(ROOT, "rev-parse", "HEAD") != sha:
         raise RuntimeError("Delivery HEAD changed during verification; verify again.")
     state = read_state(common)
-    state["verified"] = {"commit": sha, "host": host, "at": time.time(), "checks": checks}
+    state["verified"] = {"commit": sha, "host": host, "account": identity["account"], "uid": identity["uid"],
+                         "home": identity["home"], "exportPath": identity["home"] + "/vault-delivery/macosBlocker",
+                         "uiRuntime": identity["uiRuntime"], "at": time.time(), "checks": checks}
     if runtime_prefix:
         state["verified"]["runtimePrefix"] = runtime_prefix
+    if jobs is not None:
+        state["verified"]["jobs"] = jobs
     write_state(common, state)
-    print(f"Verified {sha} on {host}.")
+    print(f"Verified {sha} on {host} as {identity['account']} (UID {identity['uid']}).")
 
 
 def app_processes():
@@ -375,6 +474,11 @@ def main():
     verification = commands.add_parser("verify")
     verification.add_argument("--host", choices=["mini1", "mini2"], default="mini1")
     verification.add_argument("--runtime-prefix", help="Absolute pinned llama runtime prefix on the selected test host")
+    verification.add_argument("--jobs", type=int, help="Optional positive Swift build job count; default retains Swift's existing behavior")
+    verification.add_argument("--account", help="Optional Mini2 account selected through existing SSH and noninteractive sudo")
+    verification.add_argument("--node-executable", help="Absolute Node executable readable/executable by the selected remote account")
+    verification.add_argument("--playwright-module", help="Absolute existing Playwright JS module readable by the selected remote account")
+    verification.add_argument("--browser-executable", help="Absolute existing browser executable readable/executable by the selected remote account")
     start = commands.add_parser("launch")
     start.add_argument("--check", action="store_true")
     commands.add_parser("status")
@@ -403,7 +507,8 @@ def main():
         if args.command == "integrate":
             integrate(common, args.source)
         elif args.command == "verify":
-            verify(common, args.host, args.runtime_prefix)
+            verify(common, args.host, args.runtime_prefix, args.account,
+                   args.node_executable, args.playwright_module, args.browser_executable, args.jobs)
         elif args.command == "launch":
             launch(common, args.check)
         elif args.command == "reconcile-history":

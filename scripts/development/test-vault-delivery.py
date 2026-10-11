@@ -1,12 +1,17 @@
 #!/usr/bin/env python3
-"""Run only on mini1; Git and process checks use disposable fixtures."""
+"""Run on the selected remote test host; Git/process checks use disposable fixtures."""
 import fcntl
 import importlib.util
+import json
+import os
+import pwd
+import shlex
 from pathlib import Path
 import subprocess
 import sys
 import tempfile
 import unittest
+from types import SimpleNamespace
 from unittest.mock import patch
 
 spec = importlib.util.spec_from_file_location("delivery", Path(__file__).with_name("vault-delivery.py"))
@@ -38,6 +43,7 @@ class DeliveryTests(unittest.TestCase):
     def tearDown(self):
         self.patch.stop()
         self.temp.cleanup()
+        self.assertFalse(self.base.exists(), "Owned fixture directory was not cleaned up")
 
     def run_git(self, root, *args):
         subprocess.run(["git", "-C", str(root), *args], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -86,8 +92,62 @@ class DeliveryTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "discard previously delivered"):
             delivery.check_launch(self.common)
 
-    def test_selected_host_runs_every_check_and_records_exact_commit(self):
+    def remote_fixture(self, account="john.zhu.alt1", uid=503, home="/Users/john.zhu.alt1"):
+        return {"account":account, "uid":uid, "home":home, "uiRuntime":{
+            "node":home + "/.local/node/bin/node", "playwrightModule":home + "/agentic-tooling-test-env/lib/python3.14/site-packages/playwright/driver/package/index.mjs",
+            "browser":home + "/chrome-testing/chrome-mac-x64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing"}}
+
+    def test_selected_account_routes_export_and_all_checks_and_records_exact_identity(self):
         prefix = "/Users/test/pinned runtime/install"
+        identity = self.remote_fixture()
+        identity["uiRuntime"] = {"node":"/Users/john.zhu/.local/node/bin/node",
+                                 "playwrightModule":"/Library/Application Support/Agentic/Playwright/node_modules/playwright/index.mjs",
+                                 "browser":"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"}
+        original_run = subprocess.run
+        remote = []
+        def run(command, **kwargs):
+            if command[0] == "ssh":
+                remote.append((command, kwargs))
+                if kwargs.get("stdin") is not None:
+                    kwargs["stdin"].read()
+                return subprocess.CompletedProcess(command, 0, stdout=json.dumps(identity))
+            return original_run(command, **kwargs)
+        with patch.object(delivery.subprocess, "run", side_effect=run):
+            delivery.verify(self.common, "mini2", prefix, "john.zhu.alt1",
+                            identity["uiRuntime"]["node"], identity["uiRuntime"]["playwrightModule"], identity["uiRuntime"]["browser"], jobs=2)
+        self.assertEqual(len(remote), 7)  # preflight, archive, five checks
+        scripts = []
+        for command, _ in remote:
+            self.assertEqual(command[:2], ["ssh", "mini2"])
+            selected = shlex.split(command[2])
+            self.assertEqual(len(selected),8)
+            self.assertEqual(selected[:7], ["/usr/bin/sudo", "-n", "-H", "-u", "john.zhu.alt1", "/bin/sh", "-c"])
+            scripts.append(selected[7])
+        self.assertIn('tar -xf -', scripts[1])
+        self.assertIsNotNone(remote[1][1]["stdin"])
+        for script in scripts[1:]:
+            self.assertIn(" && { ",script)
+            self.assertTrue(script.endswith("; }"))
+            guard_options = json.loads(shlex.split(script)[3])
+            self.assertEqual(guard_options["expected"], identity)
+        self.assertIn("'VAULT_LLAMA_PREFIX=" + prefix + "'", scripts[2])
+        self.assertIn('UI_PLAYWRIGHT_MODULE=', scripts[5])
+        self.assertIn('UI_BROWSER_EXECUTABLE=', scripts[5])
+        verified = delivery.read_state(self.common)["verified"]
+        self.assertEqual(verified["host"], "mini2")
+        self.assertEqual(verified["account"], "john.zhu.alt1")
+        self.assertEqual(verified["uid"], 503)
+        self.assertEqual(verified["home"], identity["home"])
+        self.assertEqual(verified["uiRuntime"], identity["uiRuntime"])
+        self.assertEqual(verified["exportPath"], identity["home"] + '/vault-delivery/macosBlocker')
+        self.assertEqual(verified["commit"], self.first)
+        self.assertEqual(verified["runtimePrefix"], prefix)
+        self.assertEqual(verified["jobs"],2)
+        self.assertIn(" -j 2",verified["checks"][2])
+        self.assertTrue(all(" -j " not in command for index,command in enumerate(verified["checks"]) if index != 2))
+
+    def test_default_mini1_preserves_direct_alias_and_home_runtime_defaults(self):
+        identity = self.remote_fixture("johnzhualt", 501, "/Users/johnzhualt")
         original_run = subprocess.run
         remote = []
         def run(command, **kwargs):
@@ -95,18 +155,192 @@ class DeliveryTests(unittest.TestCase):
                 remote.append(command)
                 if kwargs.get("stdin") is not None:
                     kwargs["stdin"].read()
-                return subprocess.CompletedProcess(command, 0)
+                return subprocess.CompletedProcess(command, 0, stdout=json.dumps(identity))
             return original_run(command, **kwargs)
         with patch.object(delivery.subprocess, "run", side_effect=run):
-            delivery.verify(self.common, "mini2", prefix)
-        self.assertEqual(len(remote), 6)
+            delivery.verify(self.common)
+        self.assertEqual(len(remote), 7)
         for command in remote:
-            self.assertEqual(command[:2], ["ssh", "mini2"])
-        self.assertIn("'VAULT_LLAMA_PREFIX=" + prefix + "'", remote[1][2])
+            self.assertEqual(command[:2], ["ssh", "mini"])
+            self.assertNotIn('/usr/bin/sudo', command[2])
+        options = json.loads(shlex.split(remote[0][2])[3])
+        self.assertIsNone(options["account"])
+        self.assertIsNone(options["node"])
+        self.assertIsNone(options["playwrightModule"])
+        self.assertIsNone(options["browser"])
         verified = delivery.read_state(self.common)["verified"]
-        self.assertEqual(verified["host"], "mini2")
-        self.assertEqual(verified["commit"], self.first)
-        self.assertEqual(verified["runtimePrefix"], prefix)
+        self.assertEqual(verified["host"], "mini1")
+        self.assertNotIn('jobs',verified)
+        self.assertTrue(all(' -j ' not in command for command in verified['checks']))
+
+    def test_invalid_jobs_refuse_before_remote_preflight_or_export(self):
+        self.verified()
+        original = (self.common/'vault-delivery.json').read_bytes()
+        for jobs in [0,-1,True,False,'2',2.0]:
+            with self.subTest(jobs=jobs), patch.object(delivery,'remote_command') as remote, patch.object(delivery,'export_archive') as archive:
+                with self.assertRaisesRegex(RuntimeError,'positive integer'):
+                    delivery.verify(self.common,'mini2',account='john.zhu.alt1',jobs=jobs)
+                remote.assert_not_called()
+                archive.assert_not_called()
+        self.assertEqual((self.common/'vault-delivery.json').read_bytes(),original)
+
+    def test_invalid_account_and_host_are_refused_before_ssh(self):
+        for host, account in [("mini1","john.zhu.alt1"),("mini2","root"),("mini2","-u root"),
+                              ("mini2","john;echo x"),("unreviewed-host",None)]:
+            with self.subTest(host=host,account=account), patch.object(delivery.subprocess,"run") as remote:
+                with self.assertRaisesRegex(RuntimeError, "account|host"):
+                    delivery.remote_command(host,account,"true")
+                remote.assert_not_called()
+
+    def test_failed_account_preflight_preserves_receipt_and_never_exports(self):
+        self.verified()
+        original = (self.common/'vault-delivery.json').read_bytes()
+        original_run = subprocess.run
+        def run(command, **kwargs):
+            if command[0] == "ssh": raise subprocess.CalledProcessError(1,command)
+            return original_run(command, **kwargs)
+        with patch.object(delivery.subprocess,"run",side_effect=run), \
+             patch.object(delivery,"export_archive") as archive:
+            with self.assertRaises(subprocess.CalledProcessError):
+                delivery.verify(self.common,"mini2",account="john.zhu.alt1")
+            archive.assert_not_called()
+        self.assertEqual((self.common/'vault-delivery.json').read_bytes(),original)
+
+    def test_mismatched_root_or_malformed_identity_is_refused_before_export(self):
+        identities = [self.remote_fixture("john.zhu",501,"/Users/john.zhu"),self.remote_fixture(uid=0),
+                      self.remote_fixture(home="relative"), {"account":"john.zhu.alt1","uid":503,"home":"/Users/john.zhu.alt1","uiRuntime":{}},
+                      {**self.remote_fixture(),"uiRuntime":dict.fromkeys(['node','playwrightModule','browser'],None)}]
+        original_run = subprocess.run
+        for identity in identities:
+            def run(command, **kwargs):
+                if command[0] == "ssh": return subprocess.CompletedProcess(command,0,stdout=json.dumps(identity))
+                return original_run(command, **kwargs)
+            with self.subTest(identity=identity), patch.object(delivery.subprocess,"run",side_effect=run), \
+                 patch.object(delivery,"export_archive") as archive:
+                with self.assertRaisesRegex(RuntimeError,"verification identity"):
+                    delivery.verify(self.common,"mini2",account="john.zhu.alt1")
+                archive.assert_not_called()
+        self.assertNotIn("verified",delivery.read_state(self.common))
+
+    def test_failed_check_does_not_replace_success_receipt(self):
+        self.verified()
+        original = (self.common/'vault-delivery.json').read_bytes()
+        identity = self.remote_fixture()
+        original_run = subprocess.run
+        count = 0
+        def run(command, **kwargs):
+            nonlocal count
+            if command[0] != "ssh": return original_run(command, **kwargs)
+            count += 1
+            if kwargs.get("stdin") is not None: kwargs["stdin"].read()
+            if count == 4: raise subprocess.CalledProcessError(1,command)
+            return subprocess.CompletedProcess(command,0,stdout=json.dumps(identity))
+        with patch.object(delivery.subprocess,"run",side_effect=run):
+            with self.assertRaises(subprocess.CalledProcessError):
+                delivery.verify(self.common,"mini2",account="john.zhu.alt1")
+        self.assertEqual(count,4)
+        self.assertEqual((self.common/'vault-delivery.json').read_bytes(),original)
+
+    def test_failed_guard_blocks_every_semicolon_operation_before_export_writes(self):
+        target = self.base/'must-not-exist'
+        operation = 'set -eu; mkdir ' + shlex.quote(str(target)) + '; printf changed > ' + shlex.quote(str(target/'marker'))
+        result = subprocess.run(['/bin/sh','-c',delivery.guarded_remote_script('false',operation)])
+        self.assertNotEqual(result.returncode,0)
+        self.assertFalse(target.exists())
+        result = subprocess.run(['/bin/sh','-c',delivery.guarded_remote_script('true',operation)])
+        self.assertEqual(result.returncode,0)
+        self.assertEqual((target/'marker').read_text(),'changed')
+
+    def test_export_target_accepts_absent_and_owned_dedicated_directories_without_changes(self):
+        home = self.base / 'selected-home'
+        home.mkdir()
+        delivery.validate_export_target(str(home),os.getuid())
+        self.assertFalse((home/'vault-delivery').exists())
+        target = home/'vault-delivery/macosBlocker'
+        target.mkdir(parents=True)
+        sentinel = target/'preserve-existing-source'
+        sentinel.write_bytes(b'unchanged')
+        before = sentinel.stat()
+        delivery.validate_export_target(str(home),os.getuid())
+        self.assertEqual(sentinel.read_bytes(),b'unchanged')
+        self.assertEqual(sentinel.stat().st_mtime_ns,before.st_mtime_ns)
+
+    def test_export_target_rejects_symlink_file_git_and_foreign_ownership_without_changes(self):
+        for kind in ['parent-symlink','child-symlink','parent-file','child-file','parent-git','child-git','bare-git','foreign-owner']:
+            with self.subTest(kind=kind):
+                home = self.base / kind
+                home.mkdir()
+                parent = home/'vault-delivery'
+                child = parent/'macosBlocker'
+                if kind=='parent-symlink': parent.symlink_to(self.repo,target_is_directory=True)
+                elif kind=='parent-file': parent.write_bytes(b'foreign file')
+                else:
+                    parent.mkdir()
+                    if kind=='child-symlink': child.symlink_to(self.repo,target_is_directory=True)
+                    elif kind=='child-file': child.write_bytes(b'foreign file')
+                    else:
+                        child.mkdir()
+                        if kind=='parent-git': (parent/'.git').write_bytes(b'repository pointer')
+                        if kind=='child-git': (child/'.git').mkdir()
+                        if kind=='bare-git':
+                            for name in ['HEAD','config']: (child/name).write_bytes(b'bare repository')
+                            for name in ['objects','refs']: (child/name).mkdir()
+                before = {str(p.relative_to(home)):p.read_bytes() for p in home.rglob('*') if p.is_file() and not p.is_symlink()}
+                if kind=='foreign-owner':
+                    actual = Path.lstat
+                    def foreign(path, *args, **kwargs):
+                        metadata = actual(path,*args,**kwargs)
+                        if path == parent: return SimpleNamespace(st_mode=metadata.st_mode,st_uid=os.getuid()+1)
+                        return metadata
+                    with patch.object(Path,'lstat',foreign), self.assertRaisesRegex(RuntimeError,'owned by selected UID'):
+                        delivery.validate_export_target(str(home),os.getuid())
+                else:
+                    with self.assertRaisesRegex(RuntimeError,'export target'):
+                        delivery.validate_export_target(str(home),os.getuid())
+                after = {str(p.relative_to(home)):p.read_bytes() for p in home.rglob('*') if p.is_file() and not p.is_symlink()}
+                self.assertEqual(after,before)
+
+    def preflight_tools(self):
+        paths = {}
+        for name in ['node', 'module', 'browser']:
+            # Literal shell punctuation/spaces verify quoting without execution.
+            path = self.base / (name + " ' literal $ punctuation")
+            path.write_text("fixture runtime; never executed")
+            path.chmod(0o700 if name != 'module' else 0o600)
+            paths[name] = str(path)
+        return paths
+
+    def test_real_preflight_and_guard_validate_current_nonroot_identity_without_tool_execution(self):
+        paths = self.preflight_tools()
+        account = pwd.getpwuid(os.getuid()).pw_name
+        script = delivery.remote_preflight_script(account,str(self.base),paths['node'],paths['module'],paths['browser'])
+        first = subprocess.run(['/bin/sh','-c',script],capture_output=True,text=True,check=True)
+        identity = json.loads(first.stdout)
+        self.assertEqual(identity['uid'],os.getuid())
+        self.assertEqual(identity['account'],account)
+        self.assertEqual(identity['home'],pwd.getpwuid(os.getuid()).pw_dir)
+        self.assertEqual(identity['uiRuntime']['node'],paths['node'])
+        guard = delivery.remote_preflight_script(account,str(self.base),paths['node'],paths['module'],paths['browser'],identity)
+        result = subprocess.run(['/bin/sh','-c',guard],capture_output=True,text=True,check=True)
+        self.assertEqual(result.stdout,'')
+        changed = {**identity,'uid':identity['uid']+1}
+        rejected = delivery.remote_preflight_script(account,str(self.base),paths['node'],paths['module'],paths['browser'],changed)
+        result = subprocess.run(['/bin/sh','-c',rejected],capture_output=True,text=True)
+        self.assertNotEqual(result.returncode,0)
+        self.assertIn('identity/runtime changed',result.stderr)
+
+    def test_real_preflight_rejects_missing_nonexecutable_and_relative_runtime(self):
+        paths = self.preflight_tools()
+        account = pwd.getpwuid(os.getuid()).pw_name
+        for prefix, node, module in [(str(self.base),str(self.base/'missing'),paths['module']),
+                                     (str(self.base),paths['module'],paths['module']),
+                                     ('relative-runtime',paths['node'],paths['module'])]:
+            with self.subTest(prefix=prefix,node=node):
+                script = delivery.remote_preflight_script(account,prefix,node,module,paths['browser'])
+                result = subprocess.run(['/bin/sh','-c',script],capture_output=True,text=True)
+                self.assertNotEqual(result.returncode,0)
+                self.assertIn('unavailable to selected account',result.stderr)
+                self.assertEqual(result.stdout,'')
 
     def test_check_only_never_closes_or_launches_apps(self):
         self.verified()
