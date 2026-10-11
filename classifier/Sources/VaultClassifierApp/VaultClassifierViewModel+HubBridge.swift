@@ -60,6 +60,7 @@ extension VaultClassifierViewModel {
     }
 
     func queueVideoClassification(platformID: String, items: [NativeVideoTagsBatchItem]) {
+        guard !isShuttingDown else { return }
         let fresh = items.filter {
             inFlightVideoClassifications.insert(Self.inFlightKey(platformID, $0.entryID)).inserted
         }
@@ -77,6 +78,7 @@ extension VaultClassifierViewModel {
     func classifyChunk(platformID: String, _ chunk: [NativeVideoTagsBatchItem]) async {
         defer { for item in chunk { inFlightVideoClassifications.remove(Self.inFlightKey(platformID, item.entryID)) } }
         let projections = await resolveClassificationChunk(platformID: platformID, chunk)
+        guard !isShuttingDown, !Task.isCancelled else { return }
         for item in chunk {
             guard let projection = projections[item.entryID] else { continue }
             broadcastResolvedVideoTags(platformID: platformID, entryID: item.entryID, projection: projection)
@@ -86,24 +88,33 @@ extension VaultClassifierViewModel {
     /// Resolves the chunk before delivery; retries and persisted model decisions
     /// still belong to the coordinator, while terminal replies are transient.
     func resolveClassificationChunk(platformID: String, _ chunk: [NativeVideoTagsBatchItem]) async -> [String: VideoTagsProjection] {
-        guard let coordinator else { return [:] }
+        guard !isShuttingDown, !Task.isCancelled, let coordinator else { return [:] }
         let inputs = chunk.map {
             VideoClassificationPipeline.Input(
                 title: $0.title, summary: $0.summary, text: $0.text, entryID: $0.entryID, creatorID: $0.creatorID)
         }
-        var projections = (try? await coordinator.classifyVideos(platformID: platformID, items: inputs)) ?? [:]
+        var projections: [String: VideoTagsProjection]
+        do { projections = try await coordinator.classifyVideos(platformID: platformID, items: inputs) }
+        catch {
+            if error is CancellationError || isShuttingDown || Task.isCancelled { return [:] }
+            projections = [:]
+        }
+        guard !isShuttingDown, !Task.isCancelled else { return [:] }
         if projections.isEmpty {
             // The batch failed as a whole — fall back to one video at a time
             // so a single bad item cannot sink the rest of the screen.
             for input in inputs {
-                if let single = try? await coordinator.classifyVideo(
-                    platformID: platformID, entryID: input.entryID, creatorID: input.creatorID,
-                    title: input.title, summary: input.summary, text: input.text) {
-                    projections[input.entryID] = single
+                guard !isShuttingDown, !Task.isCancelled else { return [:] }
+                do {
+                    projections[input.entryID] = try await coordinator.classifyVideo(
+                        platformID: platformID, entryID: input.entryID, creatorID: input.creatorID,
+                        title: input.title, summary: input.summary, text: input.text)
+                } catch {
+                    if error is CancellationError || isShuttingDown || Task.isCancelled { return [:] }
                 }
             }
         }
-        guard coordinator.enabledClassificationPlatformIDs().contains(platformID) else { return [:] }
+        guard !isShuttingDown, !Task.isCancelled, coordinator.enabledClassificationPlatformIDs().contains(platformID) else { return [:] }
         // A terminal failure must clear the browser's pending state as Untagged.
         // This is only a delivery result: do not save a fabricated model decision,
         // so later requests can retry and replace it with real tags.
@@ -115,7 +126,7 @@ extension VaultClassifierViewModel {
     }
 
     func broadcastResolvedVideoTags(platformID: String, entryID: String, projection: VideoTagsProjection) {
-        guard coordinator?.enabledClassificationPlatformIDs().contains(platformID) == true else { return }
+        guard !isShuttingDown, !Task.isCancelled, coordinator?.enabledClassificationPlatformIDs().contains(platformID) == true else { return }
         // The classifier only tags — it makes no block decision. The verdict is
         // the extension's job (its custom-rule engine reads these tags). So the
         // broadcast carries tags + confidence only; feed/page default to allow.
@@ -141,7 +152,7 @@ extension VaultClassifierViewModel {
 
     func handleSharedHubRequestBody(_ request: SharedHubClient.Request) -> SharedHubClient.Reply {
         do {
-            guard let coordinator else { return .failure("classifier-unavailable") }
+            guard !isShuttingDown, let coordinator else { return .failure("classifier-unavailable") }
             if request.operation != .collect && request.operation != .diagnostic {
                 devLog("hub-op", ["op": request.operation.rawValue])
             }

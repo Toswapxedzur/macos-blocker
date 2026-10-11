@@ -378,6 +378,8 @@ public actor GroundedResearchQueue {
     private var pending: [Pending] = []
     private var pendingKeys = Set<String>()
     private var isDraining = false
+    private var isShuttingDown = false
+    private var drainTask: Task<Void, Never>?
     private var lastRequestStartedAt: Date?
     private var status = GroundedResearchQueueStatus()
     private var statusObserver: (@Sendable (GroundedResearchQueueStatus) -> Void)?
@@ -409,6 +411,7 @@ public actor GroundedResearchQueue {
     /// lane was full. The caller never waits for the drain.
     @discardableResult
     public func enqueue(_ task: ResearchTask) -> Bool {
+        guard !isShuttingDown else { return false }
         var accepted = false
         for subject in task.subjects {
             let pendingKey = "\(task.classifierTypeID)\u{1F}\(subject.key)"
@@ -419,7 +422,7 @@ public actor GroundedResearchQueue {
         }
         if accepted, !isDraining {
             isDraining = true
-            Task { await drain() }
+            drainTask = Task { await drain() }
         }
         publishStatus()
         return accepted
@@ -432,6 +435,7 @@ public actor GroundedResearchQueue {
     /// Observes every status change (pending count, in-flight subject, counters,
     /// last failure). Called on the actor; hop to the main actor for UI.
     public func setStatusObserver(_ observer: (@Sendable (GroundedResearchQueueStatus) -> Void)?) {
+        guard !isShuttingDown else { return }
         statusObserver = observer
         observer?(status)
     }
@@ -457,12 +461,15 @@ public actor GroundedResearchQueue {
     /// store to drop its persisted cooldown. Returns how many were re-queued.
     @discardableResult
     public func retryFailedNow() async -> Int {
+        guard !isShuttingDown else { return 0 }
         let items = retryableFailureOrder.compactMap { retryableFailures[$0] }
         retryableFailures.removeAll()
         retryableFailureOrder.removeAll()
         var requeued = 0
         for item in items {
+            guard !isShuttingDown, !Task.isCancelled else { break }
             await mutationWriter(.retryRequested(task: item.task, subjectKey: item.subject.key))
+            guard !isShuttingDown, !Task.isCancelled else { break }
             let pendingKey = "\(item.task.classifierTypeID)\u{1F}\(item.subject.key)"
             guard pendingKeys.count < Self.maximumPendingSubjects,
                   pendingKeys.insert(pendingKey).inserted else { continue }
@@ -471,10 +478,23 @@ public actor GroundedResearchQueue {
         }
         if requeued > 0, !isDraining {
             isDraining = true
-            Task { await drain() }
+            drainTask = Task { await drain() }
         }
         publishStatus()
         return requeued
+    }
+
+    public func shutdown() async {
+        isShuttingDown = true
+        pending.removeAll()
+        pendingKeys.removeAll()
+        retryableFailures.removeAll()
+        retryableFailureOrder.removeAll()
+        statusObserver = nil
+        let active = drainTask
+        active?.cancel()
+        await active?.value
+        drainTask = nil
     }
 
     public func waitUntilIdle() async {
@@ -484,7 +504,7 @@ public actor GroundedResearchQueue {
     }
 
     private func drain() async {
-        while !pending.isEmpty {
+        while !isShuttingDown, !Task.isCancelled, !pending.isEmpty {
             // Urgency-ordered (RESEARCH-REDESIGN §7): drain the highest-urgency
             // pending subject first; ties keep insertion order (stable — first max).
             var chosen = 0
@@ -533,6 +553,7 @@ public actor GroundedResearchQueue {
                     await sleeper(minimumInterval - elapsed)
                 }
             }
+            guard !isShuttingDown, !Task.isCancelled else { break }
             let requestStart = now()
             lastRequestStartedAt = requestStart
             status.inFlightSubjectKey = item.subject.key
@@ -547,10 +568,12 @@ public actor GroundedResearchQueue {
             var transientRetries = 0
             while true {
                 do {
+                    try Task.checkCancellation()
                     outcome = .success(try await researcher(item.subject, configuration.providers))
                     break
                 } catch {
                     outcome = .failure(error)
+                    if error is CancellationError || isShuttingDown || Task.isCancelled { break }
                     let kind = GroundedResearchFailureKind.classify(error)
                     guard kind.isTransient, transientRetries < Self.maximumTransientRetries else { break }
                     let delay = Self.transientRetryDelays[min(transientRetries, Self.transientRetryDelays.count - 1)]
@@ -565,6 +588,8 @@ public actor GroundedResearchQueue {
                 }
             }
             status.inFlightSubjectKey = nil
+            guard !isShuttingDown, !Task.isCancelled else { break }
+            if case .failure(let error) = outcome, error is CancellationError { continue }
 
             switch outcome {
             case .success(let result):
@@ -625,6 +650,8 @@ public actor GroundedResearchQueue {
             }
         }
         isDraining = false
+        status.inFlightSubjectKey = nil
+        drainTask = nil
         publishStatus()
     }
 

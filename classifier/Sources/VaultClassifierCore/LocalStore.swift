@@ -363,6 +363,7 @@ public final class LocalClassifierCoordinator: @unchecked Sendable {
     let lock = NSLock()
     var activeVerifiedPackage: VerifiedSeedPackage
     var state: LocalClassifierState
+    let shutdownSignal = ClassifierShutdownSignal()
     var onDeviceLLM: any OnDeviceLLM = StubOnDeviceLLM()
     var onDeviceLLMEngineResolver: (any OnDeviceLLMEngineResolving)?
     var groundedResearchQueue: GroundedResearchQueue?
@@ -370,6 +371,16 @@ public final class LocalClassifierCoordinator: @unchecked Sendable {
     /// When the collection Keep was last applied (see `collect`).
     var lastCollectionPrune: Int64 = 0
     var onVideoReclassifiedCallback: (@Sendable (String, String, VideoTagsProjection) -> Void)?
+
+    public var isShuttingDown: Bool { shutdownSignal.isRequested }
+
+    /// Serializes shutdown admission against the final classification save.
+    public func beginShutdown() {
+        lock.withLock {
+            shutdownSignal.request()
+            onVideoReclassifiedCallback = nil
+        }
+    }
 
     public convenience init(
         verifiedPackage: VerifiedSeedPackage,

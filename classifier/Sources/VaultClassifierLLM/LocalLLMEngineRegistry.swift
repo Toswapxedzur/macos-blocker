@@ -38,6 +38,7 @@ public actor LocalLLMEngineRegistry: OnDeviceLLMEngineResolving {
         private var residency = ResidencyIndex()
 
         var count: Int { engines.count }
+        mutating func removeAll() { engines.removeAll(); residency = ResidencyIndex() }
         var pathsInLRUOrder: [String] { residency.pathsInLRUOrder }
 
         mutating func value(for path: String) -> Engine? {
@@ -68,12 +69,84 @@ public actor LocalLLMEngineRegistry: OnDeviceLLMEngineResolving {
     }
 
     private var cache = ResidentEngineCache<VaultLocalLLMEngine>()
-    private var loads: [String: Task<VaultLocalLLMEngine, Error>] = [:]
+    private struct Loading {
+        let id = UUID()
+        let task: Task<VaultLocalLLMEngine, Error>
+        let shutdown: ClassifierShutdownSignal
+    }
+    private final class WeakEngine {
+        weak var value: VaultLocalLLMEngine?
+        init(_ value: VaultLocalLLMEngine) { self.value = value }
+    }
+    private var loads: [String: Loading] = [:]
+    // Eviction removes a cache reference, not necessarily the caller's live use.
+    private var issued: [ObjectIdentifier: WeakEngine] = [:]
+    private var isShuttingDown = false
+    private var pendingLoadWaiters = 0
+    private var shutdownTask: Task<Void, Never>?
+    typealias Loader = @Sendable (String, LocalLLMSettings, ClassifierShutdownSignal) async throws -> VaultLocalLLMEngine
+    private let loader: Loader
+    private let modelPath: @Sendable (String?, LocalLLMSettings) throws -> String
 
     private let onStateChange: @Sendable (String, String) -> Void
 
     public init(onStateChange: @escaping @Sendable (String, String) -> Void = { _, _ in }) {
         self.onStateChange = onStateChange
+        self.loader = { path, configuration, shutdown in
+            try VaultLocalLLMEngine(modelPath: path, configuration: configuration, shutdown: shutdown)
+        }
+        self.modelPath = { try Self.resolvedModelPath(requestedFileName: $0, configuration: $1) }
+    }
+
+    init(loader: @escaping Loader, modelPath: @escaping @Sendable (String?, LocalLLMSettings) throws -> String,
+         onStateChange: @escaping @Sendable (String, String) -> Void = { _, _ in }) {
+        self.loader = loader
+        self.modelPath = modelPath
+        self.onStateChange = onStateChange
+    }
+
+    /// Stop admission first, signal every live/evicted engine and load, then join
+    /// them. A late load is closed even if its initializer ignored cancellation.
+    public func shutdown() async {
+        if let shutdownTask { await shutdownTask.value; return }
+        isShuttingDown = true
+        let loading = Array(loads.values)
+        let engines = issued.values.compactMap(\.value)
+        for load in loading { load.shutdown.request(); load.task.cancel() }
+        for engine in engines { engine.requestShutdown() }
+        let task = Task {
+            for load in loading {
+                if let engine = try? await load.task.value {
+                    engine.requestShutdown()
+                    await engine.shutdown()
+                }
+            }
+            for engine in engines { await engine.shutdown() }
+        }
+        shutdownTask = task
+        await task.value
+        loads.removeAll()
+        cache.removeAll()
+        issued.removeAll()
+    }
+
+    private func register(_ engine: VaultLocalLLMEngine) {
+        // Registration precedes any waiter cancellation/reentrancy. A cancelled
+        // creator cannot hide a loaded engine still retained by another waiter.
+        issued = issued.filter { $0.value.value != nil }
+        issued[ObjectIdentifier(engine)] = WeakEngine(engine)
+    }
+
+    private func removeLoad(at path: String, matching loading: Loading) {
+        if loads[path]?.id == loading.id { loads.removeValue(forKey: path) }
+    }
+
+    private func accept(_ engine: VaultLocalLLMEngine) async throws {
+        if isShuttingDown || Task.isCancelled {
+            // A cancelled waiter must not poison an otherwise shared model load.
+            if isShuttingDown { engine.requestShutdown(); await engine.shutdown() }
+            throw CancellationError()
+        }
     }
 
     /// Loads or reuses a selected model without changing any group settings.
@@ -81,9 +154,11 @@ public actor LocalLLMEngineRegistry: OnDeviceLLMEngineResolving {
         forModel fileName: String?,
         configuration: LocalLLMSettings
     ) async throws -> VaultLocalLLMEngine {
+        guard !isShuttingDown else { throw CancellationError() }
+        try Task.checkCancellation()
         let path: String
         do {
-            path = try Self.resolvedModelPath(requestedFileName: fileName, configuration: configuration)
+            path = try modelPath(fileName, configuration)
         } catch {
             onStateChange(fileName ?? configuration.modelFileName, "no-model")
             throw error
@@ -95,7 +170,12 @@ public actor LocalLLMEngineRegistry: OnDeviceLLMEngineResolving {
             return cached
         }
         if let load = loads[path] {
-            let loaded = try await load.value
+            pendingLoadWaiters += 1
+            defer { pendingLoadWaiters -= 1 }
+            let loaded = try await load.task.value
+            register(loaded)
+            try await accept(loaded)
+            guard !isShuttingDown else { throw CancellationError() }
             if let cached = cache.value(for: path) {
                 return cached
             }
@@ -107,13 +187,21 @@ public actor LocalLLMEngineRegistry: OnDeviceLLMEngineResolving {
         }
 
         onStateChange((path as NSString).lastPathComponent, "loading")
+        let shutdown = ClassifierShutdownSignal()
+        let loader = self.loader
         let load = Task.detached(priority: .userInitiated) {
-            try VaultLocalLLMEngine(modelPath: path, configuration: configuration)
+            try await loader(path, configuration, shutdown)
         }
-        loads[path] = load
+        let loading = Loading(task: load, shutdown: shutdown)
+        loads[path] = loading
+        pendingLoadWaiters += 1
+        defer { pendingLoadWaiters -= 1 }
         do {
             let loaded = try await load.value
-            loads.removeValue(forKey: path)
+            register(loaded)
+            try await accept(loaded)
+            guard !isShuttingDown else { throw CancellationError() }
+            removeLoad(at: path, matching: loading)
             if let cached = cache.value(for: path) {
                 return cached
             }
@@ -123,8 +211,10 @@ public actor LocalLLMEngineRegistry: OnDeviceLLMEngineResolving {
                 capacity: configuration.maxResidentModels
             )
         } catch {
-            loads.removeValue(forKey: path)
-            onStateChange((path as NSString).lastPathComponent, "failed")
+            removeLoad(at: path, matching: loading)
+            if !isShuttingDown, !(error is CancellationError) {
+                onStateChange((path as NSString).lastPathComponent, "failed")
+            }
             throw error
         }
     }
@@ -135,6 +225,9 @@ public actor LocalLLMEngineRegistry: OnDeviceLLMEngineResolving {
     ) async throws -> any OnDeviceLLM {
         try await engine(forModel: fileName, configuration: configuration)
     }
+
+    /// Read-only lifecycle diagnostic; never changes load scheduling.
+    func pendingModelLoadWaiterCount() -> Int { pendingLoadWaiters }
 
     /// Diagnostic/test view only; classification never enumerates the cache.
     public func residentModelFilesInLRUOrder() -> [String] {

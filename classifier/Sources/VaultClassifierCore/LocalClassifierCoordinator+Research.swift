@@ -33,6 +33,7 @@ extension LocalClassifierCoordinator {
     /// it is already queued.
     @discardableResult
     public func researchTerm(_ rawSubject: String) async -> Bool {
+        guard !isShuttingDown else { return false }
         let subject = rawSubject.trimmingCharacters(in: .whitespacesAndNewlines)
         guard KnowledgeEntry.isSpecificTermSubject(subject),
               let researchSubject = ResearchSubject(kind: .term, subject: subject) else { return false }
@@ -59,6 +60,7 @@ extension LocalClassifierCoordinator {
     /// research on. Returns false when there is none, or it is already queued.
     @discardableResult
     public func researchCreator(creatorID: String, platformID: String) async -> Bool {
+        guard !isShuttingDown else { return false }
         guard let researchSubject = ResearchSubject(kind: .creator, subject: creatorID) else { return false }
         let target: (queue: GroundedResearchQueue, type: ClassifierTypeAsset)? = lock.withLock {
             guard let queue = groundedResearchQueue,
@@ -94,14 +96,17 @@ extension LocalClassifierCoordinator {
 
     public func recordResearchMutation(_ mutation: GroundedResearchQueueMutation) async {
         do {
+            try shutdownSignal.checkCancellation()
             switch mutation {
             case .failed(_, let attempt):
                 try lock.withLock {
+                    try shutdownSignal.checkCancellation()
                     state.workspaceCatalog.upsertResearchAttempt(attempt)
                     try stateFile.save(state)
                 }
             case .retryRequested(let task, let subjectKey):
                 try lock.withLock {
+                    try shutdownSignal.checkCancellation()
                     state.workspaceCatalog.removeResearchAttempt(
                         subjectKey: subjectKey,
                         classifierTypeID: task.classifierTypeID
@@ -116,6 +121,7 @@ extension LocalClassifierCoordinator {
                 )
             }
         } catch {
+            if error is CancellationError { return }
             VaultDevLog.shared.log("research", "persist-failed", ["error": String(describing: error)])
         }
     }
@@ -129,6 +135,7 @@ extension LocalClassifierCoordinator {
         triggeringTask: ResearchTask
     ) async throws {
         let affected: [CollectedPlatformEntry] = try lock.withLock {
+            try shutdownSignal.checkCancellation()
             let storedEntry: KnowledgeEntry
             if entry.kind == .creator {
                 storedEntry = KnowledgeEntry(
@@ -167,6 +174,7 @@ extension LocalClassifierCoordinator {
         var seenPlatforms = Set<String>()
         let platformOrder = affected.map(\.platformID).filter { seenPlatforms.insert($0).inserted }
         for platformID in platformOrder {
+            try shutdownSignal.checkCancellation()
             guard let group = byPlatform[platformID] else { continue }
             for start in stride(from: 0, to: group.count, by: Self.reclassificationChunkSize) {
                 let chunk = Array(group[start..<min(start + Self.reclassificationChunkSize, group.count)])
@@ -177,10 +185,12 @@ extension LocalClassifierCoordinator {
                             entryID: $0.entryID, creatorID: $0.creatorID)
                     }
                     var projections = (try? await classifyVideos(platformID: platformID, items: inputs)) ?? [:]
+                    try shutdownSignal.checkCancellation()
                     if projections.isEmpty {
                         // The batch failed as a whole — fall back to one video at a
                         // time so a single bad item cannot sink the rest.
                         for collected in chunk {
+                            try shutdownSignal.checkCancellation()
                             if let single = try? await classifyVideo(
                                 platformID: platformID, entryID: collected.entryID, creatorID: collected.creatorID,
                                 title: collected.title, summary: collected.summary, text: collected.text) {
@@ -190,6 +200,7 @@ extension LocalClassifierCoordinator {
                     }
                     return projections
                 }.value
+                try shutdownSignal.checkCancellation()
                 let callback = lock.withLock { onVideoReclassifiedCallback }
                 for collected in chunk {
                     guard let projection = projections[collected.entryID] else { continue }

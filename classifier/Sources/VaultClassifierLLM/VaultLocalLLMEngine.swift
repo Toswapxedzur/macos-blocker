@@ -53,9 +53,13 @@ public struct LLMCalibrationResult: Sendable, Equatable {
 public actor VaultLocalLLMEngine: OnDeviceBatchLLM {
     public nonisolated let modelVersion: String
 
-    private let model: OpaquePointer
-    private let context: OpaquePointer
-    private let vocab: OpaquePointer
+    private nonisolated let resources: LLMEngineResources
+    private let nativeModel: OpaquePointer?
+    private let nativeContext: OpaquePointer?
+    private let nativeVocab: OpaquePointer?
+    private var model: OpaquePointer { nativeModel! }
+    private var context: OpaquePointer { nativeContext! }
+    private var vocab: OpaquePointer { nativeVocab! }
     private let contextTokenLimit: Int
     private let batchTokenLimit: Int
     /// Videos decoded together in one multi-sequence pass. Generation is
@@ -104,12 +108,23 @@ public actor VaultLocalLLMEngine: OnDeviceBatchLLM {
     }
 
     public init(modelPath: String, configuration: LocalLLMSettings = LocalLLMSettings()) throws {
+        try self.init(modelPath: modelPath, configuration: configuration, shutdown: ClassifierShutdownSignal())
+    }
+
+    init(modelPath: String, configuration: LocalLLMSettings, shutdown: ClassifierShutdownSignal) throws {
+        try shutdown.checkCancellation()
         _ = Self.backendReady
         var modelParams = llama_model_default_params()
         modelParams.n_gpu_layers = configuration.gpuOffload ? 999 : 0
+        try shutdown.checkCancellation()
         guard FileManager.default.fileExists(atPath: modelPath),
               let model = llama_model_load_from_file(modelPath, modelParams) else {
+            try shutdown.checkCancellation()
             throw EngineError.modelLoadFailed(modelPath)
+        }
+        do { try shutdown.checkCancellation() } catch {
+            llama_model_free(model)
+            throw error
         }
         var contextParams = llama_context_default_params()
         contextParams.n_ctx = UInt32(configuration.contextTokens)
@@ -121,20 +136,49 @@ public actor VaultLocalLLMEngine: OnDeviceBatchLLM {
         contextParams.kv_unified = true
         guard let context = llama_init_from_model(model, contextParams) else {
             llama_model_free(model)
+            try shutdown.checkCancellation()
             throw EngineError.contextCreationFailed
         }
-        self.model = model
-        self.context = context
-        self.vocab = llama_model_get_vocab(model)
+        do { try shutdown.checkCancellation() } catch {
+            llama_free(context)
+            llama_model_free(model)
+            throw error
+        }
+        self.resources = LLMEngineResources(shutdown: shutdown) {
+            llama_free(context)
+            llama_model_free(model)
+        }
+        self.nativeModel = model
+        self.nativeContext = context
+        self.nativeVocab = llama_model_get_vocab(model)
         self.contextTokenLimit = configuration.contextTokens
         self.batchTokenLimit = max(32, configuration.batchTokens)
         self.configuration = configuration
         self.modelVersion = "llamacpp/" + (modelPath as NSString).lastPathComponent
     }
 
-    deinit {
-        llama_free(context)
-        llama_model_free(model)
+    /// Signal cancellation without waiting for the actor's current native call.
+    public nonisolated func requestShutdown() { resources.shutdown.request() }
+
+    /// Actor isolation prevents freeing a context while decode/tokenization uses it.
+    public func shutdown() {
+        resources.close()
+        cachedTokens.removeAll()
+    }
+
+    // Resource-boundary fixture: no GGUF, backend, or fake native call is made.
+    init(testingResources resources: LLMEngineResources) {
+        self.resources = resources
+        // No native addresses are fabricated. This engine is permanently
+        // unavailable for inference, but owns the same explicit close boundary.
+        resources.shutdown.request()
+        self.nativeModel = nil
+        self.nativeContext = nil
+        self.nativeVocab = nil
+        self.contextTokenLimit = 32
+        self.batchTokenLimit = 32
+        self.configuration = LocalLLMSettings()
+        self.modelVersion = "test/resource-lifetime"
     }
 
     /// Decode 1 (RESEARCH-REDESIGN Phase 2). The structured decode emits the
@@ -143,6 +187,7 @@ public actor VaultLocalLLMEngine: OnDeviceBatchLLM {
     /// monotone, conf≤2 = 0% correct). The softmax level is still computed and
     /// carried as a cheap cross-check on each `LLMTagScore`.
     public func classify(_ request: LLMClassificationRequest) async throws -> LLMClassificationResult {
+        try resources.shutdown.checkCancellation()
         let decoded = try await structuredDecode(request)
         return LLMClassificationResult(tags: decoded.tags.map {
             LLMTagScore(name: $0.name, confidence: $0.modelConfidence, softmaxConfidence: $0.softmaxConfidence)
@@ -153,6 +198,7 @@ public actor VaultLocalLLMEngine: OnDeviceBatchLLM {
     /// as `classify`, but exposing BOTH raw signals per tag for head-to-head
     /// scoring (`VaultClassifierEval calib`).
     public func classifyWithModelConfidence(_ request: LLMClassificationRequest) async throws -> LLMCalibrationResult {
+        try resources.shutdown.checkCancellation()
         let decoded = try await structuredDecode(request)
         return LLMCalibrationResult(tags: decoded.tags, declined: decoded.declined)
     }
@@ -175,6 +221,7 @@ public actor VaultLocalLLMEngine: OnDeviceBatchLLM {
     /// but the weight-read that dominates every generation step is shared by all
     /// of them. Requests are packed into sub-batches that fit the KV budget.
     public func classifyBatch(_ requests: [LLMClassificationRequest]) async throws -> [LLMClassificationResult] {
+        try resources.shutdown.checkCancellation()
         var results = [LLMClassificationResult](repeating: .init(tags: []), count: requests.count)
         var items: [ParallelItem] = []
         for (index, request) in requests.enumerated() {
@@ -209,6 +256,7 @@ public actor VaultLocalLLMEngine: OnDeviceBatchLLM {
     /// serial and batched paths so they can never diverge. nil = no usable tag
     /// name (nothing to decode).
     private func makeParallelItem(index: Int, request: LLMClassificationRequest) throws -> ParallelItem? {
+        try resources.shutdown.checkCancellation()
         let maximumTags = max(1, request.maximumTags)
         // minimumTags ≥ 1 (Strict↔Broad position 5) forbids declining.
         let allowDecline = configuration.allowDecline && request.minimumTags == 0
@@ -255,7 +303,8 @@ public actor VaultLocalLLMEngine: OnDeviceBatchLLM {
     private typealias BatchEntry = (token: llama_token, position: Int32, sequence: Int32, wantsLogits: Bool)
 
     /// One `llama_decode` over explicit (token, position, sequence) entries.
-    private func decode(_ entries: [BatchEntry], using batch: inout llama_batch) -> Int32 {
+    private func decode(_ entries: [BatchEntry], using batch: inout llama_batch) throws -> Int32 {
+        try resources.shutdown.checkCancellation()
         for (slot, entry) in entries.enumerated() {
             batch.token[slot] = entry.token
             batch.pos[slot] = entry.position
@@ -264,10 +313,13 @@ public actor VaultLocalLLMEngine: OnDeviceBatchLLM {
             batch.logits[slot] = entry.wantsLogits ? 1 : 0
         }
         batch.n_tokens = Int32(entries.count)
-        return llama_decode(context, batch)
+        let status = llama_decode(context, batch)
+        try resources.shutdown.checkCancellation()
+        return status
     }
 
     private func decodeParallel(_ items: [ParallelItem]) throws -> [(tags: [LLMCalibrationTag], declined: Bool)] {
+        try resources.shutdown.checkCancellation()
         let timing = ProcessInfo.processInfo.environment["VAULT_DECODE_TIMING"] == "1"
         let tStart = DispatchTime.now()
         let memory = llama_get_memory(context)
@@ -294,12 +346,12 @@ public actor VaultLocalLLMEngine: OnDeviceBatchLLM {
             var start = 0
             while start < head {
                 let end = min(start + batchTokenLimit, head)
-                let status = decode(Array(entries[start..<end]), using: &batch)
+                let status = try decode(Array(entries[start..<end]), using: &batch)
                 guard status == 0 else { throw fail(label, status) }
                 start = end
             }
             if tail > 0 {
-                let status = decode(Array(entries[head...]), using: &batch)
+                let status = try decode(Array(entries[head...]), using: &batch)
                 guard status == 0 else { throw fail(label, status) }
             }
             return tail
@@ -509,7 +561,7 @@ public actor VaultLocalLLMEngine: OnDeviceBatchLLM {
             }
             guard !next.isEmpty else { break }
             let tSampled = DispatchTime.now()
-            let status = decode(next, using: &batch)
+            let status = try decode(next, using: &batch)
             guard status == 0 else { throw fail("batch-generation-decode-failed", status) }
             if timing {
                 // Sampling reads the previous decode's logits, so without an
@@ -726,9 +778,11 @@ public actor VaultLocalLLMEngine: OnDeviceBatchLLM {
         while index < tokens.count {
             let end = min(index + 512, tokens.count)
             var chunk = Array(tokens[index..<end])
+            try resources.shutdown.checkCancellation()
             let status = chunk.withUnsafeMutableBufferPointer { buffer in
                 llama_decode(context, llama_batch_get_one(buffer.baseAddress, Int32(buffer.count)))
             }
+            try resources.shutdown.checkCancellation()
             guard status == 0 else {
                 cachedTokens = []
                 llama_memory_seq_rm(llama_get_memory(context), 0, 0, -1)

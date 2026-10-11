@@ -10,6 +10,7 @@ public final class VaultClassifierWorkerService {
     private let model: VaultClassifierViewModel
     private let emit: ([String: Any]) -> Void
     private var activity: VaultClassifierWorkerActivity?
+    private var isShuttingDown = false
 
     public init(testingDirectory: URL? = nil, emit: @escaping ([String: Any]) -> Void) throws {
         self.emit = emit
@@ -35,9 +36,10 @@ public final class VaultClassifierWorkerService {
         model.onWebStateChange = { [weak self] in self?.publishState(); self?.activity?.refresh() }
     }
 
-    public func publishState() { emit(["event": "state", "value": remapResources(model.webSnapshot(includeCollections: false))]) }
+    public func publishState() { guard !isShuttingDown else { return }; emit(["event": "state", "value": remapResources(model.webSnapshot(includeCollections: false))]) }
 
     public func handle(operation: String, data: [String: Any]) async throws -> Any {
+        guard !isShuttingDown else { throw CancellationError() }
         switch operation {
         case "snapshot":
             return remapResources(model.webSnapshot(includeCollections: false))
@@ -119,6 +121,16 @@ public final class VaultClassifierWorkerService {
             throw WorkerInputError.invalidOperation
         }
     }
+    public func shutdown() async {
+        isShuttingDown = true
+        await model.shutdown()
+        _ = try? await activity?.handle(["kind": "native-flush"])
+        LocalStateFile.flushAllPendingWrites()
+        #if os(Windows)
+        SharedHubClient.onHostBroadcast = nil
+        #endif
+    }
+
     private func remapResources(_ value: Any) -> Any {
         #if os(Windows)
         if let string = value as? String, string.hasPrefix("vaultclassifiersourceicon://") {

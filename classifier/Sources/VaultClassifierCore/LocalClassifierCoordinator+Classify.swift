@@ -78,6 +78,7 @@ extension LocalClassifierCoordinator {
         platformID: String,
         items: [VideoClassificationPipeline.Input]
     ) async throws -> [String: VideoTagsProjection] {
+        try shutdownSignal.checkCancellation()
         let snapshot = lock.withLock {
             (
                 state.workspaceCatalog,
@@ -121,6 +122,7 @@ extension LocalClassifierCoordinator {
         )] = []
 
         for type in types {
+            try shutdownSignal.checkCancellation()
             guard enabledClassificationPlatformIDs().contains(platformID) else { break }
             guard let tree = catalog.trees.first(where: { $0.id == type.treeID }),
                   type.treeRevision == tree.revision else { continue }
@@ -146,12 +148,13 @@ extension LocalClassifierCoordinator {
             }
             guard !pending.isEmpty else { continue }
 
-            let llm = await Self.resolvedLLM(
+            let llm = try await Self.resolvedLLM(
                 for: type,
                 defaultLLM: defaultLLM,
                 resolver: engineResolver,
                 configuration: settings
             )
+            try shutdownSignal.checkCancellation()
             // Every group owns its Strict↔Broad position.
             let strictness = settings.strictness
             let bounds = settings.tagBounds
@@ -171,6 +174,7 @@ extension LocalClassifierCoordinator {
                 maxKnowledgePerVideo: globalResearchSettings.maxKnowledgePerVideo,
                 dictionaryEvidence: dictionaryEvidence
             )
+            try shutdownSignal.checkCancellation()
             classifications.append(contentsOf: results)
             guard let effectiveResearch = Self.effectiveResearchSettings(
                 global: globalResearchSettings,
@@ -190,6 +194,7 @@ extension LocalClassifierCoordinator {
             }
         }
         let (saved, authorTasks) = try lock.withLock { () -> (WorkspaceCatalog, [ResearchTask]) in
+            try shutdownSignal.checkCancellation()
             let activeIDs = state.settings.classificationEnabled
                 ? Set(state.workspaceCatalog.classifierTypes.filter { !$0.isPaused }.map(\.id)) : []
             for classification in classifications where activeIDs.contains(classification.classifierTypeID) {
@@ -245,7 +250,7 @@ extension LocalClassifierCoordinator {
         defaultLLM: any OnDeviceLLM,
         resolver: (any OnDeviceLLMEngineResolving)?,
         configuration: LocalLLMSettings
-    ) async -> any OnDeviceLLM {
+    ) async throws -> any OnDeviceLLM {
         // Each group requests its exact selected model.
         let fileName = classifierType.modelFileName
         guard let resolver else { return defaultLLM }
@@ -255,6 +260,7 @@ extension LocalClassifierCoordinator {
                 configuration: configuration
             )
         } catch {
+            if error is CancellationError || Task.isCancelled { throw CancellationError() }
             VaultDevLog.shared.log("llm", "group-model-unavailable", [
                 "type": classifierType.id,
                 "requested": fileName,
