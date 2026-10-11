@@ -78,7 +78,42 @@ final class ConnectionHub: ObservableObject {
 
     /// The native member's canonical store. Test hubs can inject an isolated
     /// store; transport-only hubs need no local persistence surface.
-    var localWebStore: BlockerWebStore?
+    private var localWebStoreValue: BlockerWebStore?
+    var localWebStore: BlockerWebStore? {
+        get { lock.lock(); defer { lock.unlock() }; return localWebStoreValue }
+        set {
+            if let store = newValue {
+                // Capture the canonical baseline before exposing ownership.
+                // Production initializes it before the editor/timer/MCP admit
+                // writes. This is observation only, under file -> hub order.
+                try? store.withLockedDocument(notify: false) { document, _ in
+                    self.lock.lock(); defer { self.lock.unlock() }
+                    self.assignLocalWebStoreLocked(store, document: document)
+                }
+            } else {
+                lock.lock(); defer { lock.unlock() }
+                assignLocalWebStoreLocked(nil, document: nil)
+            }
+        }
+    }
+
+    private func assignLocalWebStoreLocked(_ store: BlockerWebStore?, document: [String: Any]?) {
+        guard localWebStoreValue !== store else { return }
+        localWebStoreValue?.clearSharedReconciliation(owner: self)
+        localWebStoreValue = store
+        localDefinitionSeen.removeAll()
+        lastLocalRoster = ""
+        if let document, let groups = Self.canonicalLocalGroups(document) {
+            for group in groups {
+                if let id = group["id"] as? String { localDefinitionSeen[id] = Self.localDefinition(group) }
+            }
+        }
+        guard let store else { return }
+        store.setSharedReconciliation(owner: self) { [weak self, weak store] in
+            guard let self, let store, self.localWebStore === store else { return false }
+            return self.reconcileLocalStore(store, nowMs: (Date().timeIntervalSince1970 * 1000).rounded(.down))
+        }
+    }
 
     private let queue = DispatchQueue(label: "macosBlocker.ConnectionHub")
     private let lock = NSLock()
@@ -1132,35 +1167,34 @@ final class ConnectionHub: ObservableObject {
     /// cluster is gone once it drops below two members.
     func setRoster(program: String, groups: [[String: Any]]) {
         guard !program.isEmpty else { return }
-        let infos = groups.map {
-            GroupInfo(
-                id: ($0["id"] as? String) ?? "",
-                name: ($0["name"] as? String) ?? "",
-                frozen: ($0["frozen"] as? Bool) ?? false
-            )
-        }
+        let infos = Self.rosterInfos(groups)
         do {
             try withMembershipDocument { document, save in
                 self.lock.lock(); defer { self.lock.unlock() }
-                let affected = self.clusters.values.filter { cluster in
-                    guard cluster.members.contains(program) else { return false }
-                    let pinned = cluster.memberGroupIds[program] ?? ""
-                    return pinned.isEmpty || !infos.contains(where: { $0.id == pinned })
-                }
-                try self.preserveDetachedLocalLocked(affected, removing: program, document: document, save: save)
-                self.rosters[program] = infos
-                for cluster in affected {
-                    self.removeMemberLocked(cluster, program: program)
-                }
-                if !affected.isEmpty { self.persistClustersLocked() }
-                for cluster in affected { self.broadcastClusterLocked(self.clusterJSONObject(cluster)) }
-                self.broadcastToPeersLocked(["kind": "rosters", "rosters": self.rostersJSONObjectLocked()])
+                try self.setRosterLocked(program: program, infos: infos, document: document, save: save)
             }
-        } catch {
-            // A newer or unwritable local store must not lose its last shared
-            // runtime because a peer disappeared from the roster.
-            return
+        } catch { return }
+    }
+
+    private static func rosterInfos(_ groups: [[String: Any]]) -> [GroupInfo] {
+        groups.map { GroupInfo(id: ($0["id"] as? String) ?? "", name: ($0["name"] as? String) ?? "",
+                               frozen: ($0["frozen"] as? Bool) ?? false) }
+    }
+
+    /// Caller holds the canonical file lock, if one exists, then the hub lock.
+    private func setRosterLocked(program: String, infos: [GroupInfo], document: [String: Any]?,
+                                 save: ([String: Any]) throws -> Void) throws {
+        let affected = clusters.values.filter { cluster in
+            guard cluster.members.contains(program) else { return false }
+            let pinned = cluster.memberGroupIds[program] ?? ""
+            return pinned.isEmpty || !infos.contains(where: { $0.id == pinned })
         }
+        try preserveDetachedLocalLocked(affected, removing: program, document: document, save: save)
+        rosters[program] = infos
+        for cluster in affected { removeMemberLocked(cluster, program: program) }
+        if !affected.isEmpty { persistClustersLocked() }
+        for cluster in affected { broadcastClusterLocked(clusterJSONObject(cluster)) }
+        broadcastToPeersLocked(["kind": "rosters", "rosters": rostersJSONObjectLocked()])
     }
 
     private func withMembershipDocument<T>(_ operation: ([String: Any]?, ([String: Any]) throws -> Void) throws -> T) throws -> T {
@@ -1182,7 +1216,7 @@ final class ConnectionHub: ObservableObject {
         }
         guard !detached.isEmpty else { return }
         guard let document else {
-            if localWebStore != nil { throw GroupStoreError.invalidInput("local shared runtime cannot be preserved") }
+            if localWebStoreValue != nil { throw GroupStoreError.invalidInput("local shared runtime cannot be preserved") }
             return
         }
         let nowMs = Date().timeIntervalSince1970 * 1000
@@ -1339,10 +1373,16 @@ final class ConnectionHub: ObservableObject {
     /// existed separately keep both sides' entries when they link), and the usage
     /// counter is a delta accumulator (the Mac is the budget authority).
     func applySync(program: String, groupId: String, contribution: [String: Any], ts: Double) {
+        lock.lock(); defer { lock.unlock() }
+        applySyncLocked(program: program, groupId: groupId, contribution: contribution, ts: ts)
+    }
+
+    /// The caller holds the hub lock. Rebase and application of native intent
+    /// use this same critical section, so an intervening browser edit cannot
+    /// be overwritten by a frame prepared against an older shared snapshot.
+    private func applySyncLocked(program: String, groupId: String, contribution: [String: Any], ts: Double) {
         guard !program.isEmpty, !groupId.isEmpty else { return }
-        lock.lock()
         guard let cluster = clusterLocked(program: program, groupId: groupId) else {
-            lock.unlock()
             return
         }
 
@@ -1527,7 +1567,6 @@ final class ConnectionHub: ObservableObject {
         if !NSDictionary(dictionary: before).isEqual(to: after) {
             broadcastClusterLocked(after)
         }
-        lock.unlock()
     }
 
     /// The entry a scope line belongs to: "apps" for the app list, "site" for
@@ -1722,91 +1761,157 @@ final class ConnectionHub: ObservableObject {
     /// The Mac's roster last given to the hub (canonical JSON).
     private var lastLocalRoster = ""
 
-    /// Mac group id -> the stored definition last seen (canonical JSON).
-    private var localDefinitionSeen: [String: String] = [:]
+    private struct LocalDefinition {
+        var scalars: [String: Any]
+        var scopes: [[String: Any]]
+        var lock: [String: Any]
+    }
+    /// Exact stored definitions observed, or successfully adopted. They are
+    /// the common base for pending explicit changes, not a publication clock.
+    private var localDefinitionSeen: [String: LocalDefinition] = [:]
 
-    /// Mac Vault is a member of its links whether or not its editor window is
-    /// open. Joining a link, it contributes its stored definition (merged like
-    /// any first contribution, so its Apps entry joins the shared lines).
-    /// Afterwards it sends a change only when the stored group actually changed
-    /// on the Mac — the editor, quick add, an AI tool — and differs from the
-    /// shared definition; a copy that merely lags behind another device's newer
-    /// edit is never sent over it.
+    private static func localDefinition(_ group: [String: Any]) -> LocalDefinition {
+        var scalars: [String: Any] = [:]
+        for field in syncScalarFields where group[field] != nil { scalars[field] = group[field] }
+        var unit: [String: Any] = [:]
+        if group["lockVersion"] != nil {
+            for field in WebStoreDocument.lockFieldNames { unit[field] = group[field] ?? NSNull() }
+        }
+        return LocalDefinition(scalars: scalars, scopes: group["scopes"] as? [[String: Any]] ?? [], lock: unit)
+    }
+
+    /// An owned canonical store ignores a stale tick snapshot: capture,
+    /// contribution and adoption share the existing file -> hub transaction.
     func contributeLocalDefinitions(document: [String: Any], nowMs: Double) {
-        let groups = document["blockedGroups"] as? [[String: Any]] ?? []
-        // The Mac's own group list comes from its store, every tick — so a
-        // group created, renamed, frozen or deleted with the window closed (by
-        // the "+" or a tool) links or leaves its link like any other.
-        let roster: [[String: Any]] = groups.compactMap { group in
+        if let store = localWebStore { _ = reconcileLocalStore(store, nowMs: nowMs); return }
+        // Explicit transport-only fixtures have no canonical persistence owner.
+        lock.lock(); defer { lock.unlock() }
+        reconcileDefinitionsLocked(document: document, nowMs: nowMs)
+    }
+
+    @discardableResult
+    private func reconcileLocalStore(_ store: BlockerWebStore, nowMs: Double) -> Bool {
+        guard localWebStore === store else { return false }
+        do {
+            return try store.withLockedDocument { stored, save in
+                // withLockedDocument preserves unsupported bytes by presenting
+                // nil; never turn the caller's old document into a fallback.
+                guard var document = stored else { return false }
+                self.lock.lock(); defer { self.lock.unlock() }
+                guard self.localWebStoreValue === store,
+                      let groups = Self.canonicalLocalGroups(document) else { return false }
+                let roster = Self.localRoster(groups)
+                let rosterKey = WebStoreDocument.canonicalJSON(roster)
+                if rosterKey != self.lastLocalRoster {
+                    try self.setRosterLocked(program: Self.localProgram, infos: Self.rosterInfos(roster), document: document) { updated in
+                        try save(updated)
+                        document = updated
+                    }
+                    self.lastLocalRoster = rosterKey
+                }
+                self.reconcileDefinitionsLocked(document: document, nowMs: nowMs, updateRoster: false)
+                let adopted = self.overlaySharedLocked(onto: document, clusters: Array(self.clusters.values), ownLinesOnly: false, nowMs: nowMs)
+                var next = document
+                for key in BlockerWebStore.sharedAdoptionKeys where adopted[key] != nil { next[key] = adopted[key] }
+                let changed = BlockerWebStore.sharedAdoptionKeys.contains {
+                    WebStoreDocument.canonicalJSON(next[$0]) != WebStoreDocument.canonicalJSON(document[$0])
+                }
+                if changed { try save(next) }
+                // Only an exact successful saved (or unchanged) document can
+                // advance adoption. First-original definitions remain pending.
+                self.acknowledgeLocalAdoptionLocked(next)
+                return changed
+            }
+        } catch { return false }
+    }
+
+    /// A malformed scope payload cannot become an explicit empty Apps edit.
+    /// Missing or empty scopes remain compatible original documents.
+    private static func canonicalLocalGroups(_ document: [String: Any]) -> [[String: Any]]? {
+        guard let groups = document["blockedGroups"] as? [[String: Any]] else { return nil }
+        let ids = groups.compactMap { $0["id"] as? String }
+        guard ids.count == groups.count, ids.allSatisfy({ !$0.isEmpty }), Set(ids).count == ids.count else { return nil }
+        guard groups.allSatisfy({ $0["scopes"] == nil || $0["scopes"] is [[String: Any]] }) else { return nil }
+        return groups
+    }
+
+    private static func localRoster(_ groups: [[String: Any]]) -> [[String: Any]] {
+        groups.compactMap { group in
             guard let id = group["id"] as? String else { return nil }
             return ["id": id, "name": (group["name"] as? String) ?? "", "frozen": WebStoreDocument.isLocked(group)]
         }
-        let rosterKey = WebStoreDocument.canonicalJSON(roster)
-        if rosterKey != lastLocalRoster {
-            lastLocalRoster = rosterKey
-            setRoster(program: Self.localProgram, groups: roster)
+    }
+
+    private func acknowledgeLocalAdoptionLocked(_ document: [String: Any]) {
+        let groups = document["blockedGroups"] as? [[String: Any]] ?? []
+        for cluster in clusters.values where cluster.members.contains(Self.localProgram) && cluster.contributed.contains(Self.localProgram) {
+            guard let id = cluster.memberGroupIds[Self.localProgram], let group = groups.first(where: { ($0["id"] as? String) == id }) else { continue }
+            localDefinitionSeen[id] = Self.localDefinition(group)
         }
-        guard !groups.isEmpty else { return }
-        var frames: [[String: Any]] = []
-        lock.lock()
-        for cluster in clusters.values where cluster.members.contains(Self.localProgram) {
-            let pinned = cluster.memberGroupIds[Self.localProgram] ?? ""
-            guard !pinned.isEmpty, let group = groups.first(where: { ($0["id"] as? String) == pinned }),
-                  let groupID = group["id"] as? String else { continue }
-            // A snooze started or ended here (a tool, the engine) reaches the
-            // link as the newest change, editor window or not.
-            if let entry = (document["groupSnoozes"] as? [String: Any])?[groupID] as? [String: Any] {
+    }
+
+    /// Caller holds the hub lock (and the canonical file lock, if present).
+    /// Only fields changed against the exact stored common base are local
+    /// intent; a stale untouched field cannot undo a newer browser edit.
+    private func reconcileDefinitionsLocked(document: [String: Any], nowMs: Double, updateRoster: Bool = true) {
+        let groups = document["blockedGroups"] as? [[String: Any]] ?? []
+        if updateRoster {
+            let roster = Self.localRoster(groups)
+            let key = WebStoreDocument.canonicalJSON(roster)
+            if key != lastLocalRoster {
+                do { try setRosterLocked(program: Self.localProgram, infos: Self.rosterInfos(roster), document: nil, save: { _ in }) }
+                catch { return }
+                lastLocalRoster = key
+            }
+        }
+        for cluster in Array(clusters.values) where cluster.members.contains(Self.localProgram) {
+            guard let id = cluster.memberGroupIds[Self.localProgram], let group = groups.first(where: { ($0["id"] as? String) == id }) else { continue }
+            if let entry = (document["groupSnoozes"] as? [String: Any])?[id] as? [String: Any] {
                 let changedAt = Self.snoozeChangeTs(entry)
                 if changedAt > cluster.sharedSnoozeTs {
-                    frames.append(["kind": "group-sync", "program": Self.localProgram, "groupId": groupID,
-                                   "ts": 0, "snooze": entry, "snoozeTs": changedAt])
+                    applySyncLocked(program: Self.localProgram, groupId: id, contribution: ["snooze": entry, "snoozeTs": changedAt], ts: 0)
                 }
             }
-            var scalars: [String: Any] = [:]
-            for field in Self.syncScalarFields where group[field] != nil { scalars[field] = group[field] }
-            let scopes = group["scopes"] as? [[String: Any]] ?? []
-            // The lock travels as its own versioned unit (group-actions.js).
-            var lockUnit: [String: Any] = [:]
-            if group["lockVersion"] != nil {
-                for field in WebStoreDocument.lockFieldNames { lockUnit[field] = group[field] ?? NSNull() }
-            }
-            let key = WebStoreDocument.canonicalJSON(["scalars": scalars, "scopes": scopes, "lock": lockUnit])
-            let previous = localDefinitionSeen[groupID]
-            if previous == key { continue }
-            localDefinitionSeen[groupID] = key
+            let raw = Self.localDefinition(group)
+            let previous = localDefinitionSeen[id]
             let joined = cluster.contributed.contains(Self.localProgram)
-            var ts: Double
-            if !joined {
-                ts = 0 // joining: its lines are unioned; its settings never beat a newer edit
-            } else if previous == nil {
-                continue // first sight in this process of an already-contributed group: not an edit
-            } else if WebStoreDocument.canonicalJSON(Self.syncScalarFields.reduce(into: [String: Any]()) { $0[$1] = cluster.sharedScalars[$1] })
-                        == WebStoreDocument.canonicalJSON(Self.syncScalarFields.reduce(into: [String: Any]()) { $0[$1] = scalars[$1] })
-                        && WebStoreDocument.canonicalJSON(cluster.sharedScopes) == WebStoreDocument.canonicalJSON(scopes)
-                        && (lockUnit.isEmpty || WebStoreDocument.canonicalJSON(lockUnit) == WebStoreDocument.canonicalJSON(WebStoreDocument.lockFieldNames.reduce(into: [String: Any]()) { $0[$1] = cluster.sharedLock[$1] ?? NSNull() })) {
-                continue // the file caught up with the shared definition (adopted), not an edit
-            } else {
-                ts = nowMs
+            // The file actually contains this definition, even if a later
+            // adoption save is refused. Do not republish the same accepted edit.
+            localDefinitionSeen[id] = raw
+            var scalars = raw.scalars
+            let own = raw.scopes.filter { Self.lineOwner(line: $0) == "desktop" }
+            var scopes = own
+            var lockUnit = raw.lock
+            if joined {
+                guard let previous else { continue } // restart: first sight is no edit
+                let scalarChanges = Self.syncScalarFields.filter {
+                    WebStoreDocument.canonicalJSON(raw.scalars[$0]) != WebStoreDocument.canonicalJSON(previous.scalars[$0])
+                }
+                let oldOwn = previous.scopes.filter { Self.lineOwner(line: $0) == "desktop" }
+                let appsChanged = WebStoreDocument.canonicalJSON(own) != WebStoreDocument.canonicalJSON(oldOwn)
+                let lockChanged = WebStoreDocument.canonicalJSON(raw.lock) != WebStoreDocument.canonicalJSON(previous.lock)
+                guard !scalarChanges.isEmpty || appsChanged || lockChanged else { continue }
+                scalars = cluster.sharedScalars
+                for field in scalarChanges { scalars[field] = raw.scalars[field] }
+                if !appsChanged { scopes = cluster.sharedScopes.filter { Self.lineOwner(line: $0) == "desktop" } }
+                if !lockChanged { lockUnit = [:] }
+                let unchanged = WebStoreDocument.canonicalJSON(scalars) == WebStoreDocument.canonicalJSON(cluster.sharedScalars)
+                    && WebStoreDocument.canonicalJSON(scopes) == WebStoreDocument.canonicalJSON(cluster.sharedScopes.filter { Self.lineOwner(line: $0) == "desktop" })
+                    && (lockUnit.isEmpty || WebStoreDocument.canonicalJSON(lockUnit) == WebStoreDocument.canonicalJSON(cluster.sharedLock))
+                if unchanged { continue }
             }
-            var frame: [String: Any] = ["kind": "group-sync", "program": Self.localProgram, "groupId": groupID, "ts": ts,
-                                        "scalars": scalars]
-            // Only Mac Vault's own lines, even none (an emptied list is shared too).
-            frame["scopes"] = scopes.filter { Self.lineOwner(line: $0) == "desktop" }
+            var contribution: [String: Any] = ["scalars": scalars, "scopes": scopes]
             if !joined {
-                // Capture usage atomically with the original definition before
-                // any shared adoption or live increment can rebase it.
-                frame["usageMs"] = (document["usageTimersMs"] as? [String: Any])?[groupID] ?? 0
-                if let anchor = (document["usageResetAtMs"] as? [String: Any])?[groupID] { frame["usageResetAtMs"] = anchor }
-                if let buckets = (document["usageBucketsMs"] as? [String: Any])?[groupID] { frame["usageBucketsSeed"] = buckets }
+                contribution["usageMs"] = (document["usageTimersMs"] as? [String: Any])?[id] ?? 0
+                if let anchor = (document["usageResetAtMs"] as? [String: Any])?[id] { contribution["usageResetAtMs"] = anchor }
+                if let buckets = (document["usageBucketsMs"] as? [String: Any])?[id] { contribution["usageBucketsSeed"] = buckets }
             }
             if !lockUnit.isEmpty {
-                frame["lock"] = lockUnit
-                frame["lockBase"] = (group["lockSyncedVersion"] as? NSNumber)?.intValue ?? 0
+                contribution["lock"] = lockUnit
+                contribution["lockBase"] = (group["lockSyncedVersion"] as? NSNumber)?.intValue ?? 0
             }
-            frames.append(frame)
+            applySyncLocked(program: Self.localProgram, groupId: id, contribution: contribution, ts: joined ? nowMs : 0)
         }
-        lock.unlock()
-        for frame in frames { submitBridgeFrame(frame) }
     }
 
     /// The stored document with each linked group's live shared definition
