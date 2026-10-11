@@ -195,7 +195,9 @@ final class ClusterDetachedRuntimeTests: XCTestCase {
         store.save(rawStore: ["blockedGroups": [["id": "m1", "name": "Original", "allowedMinutes": 10, "enabled": false, "scopes": apps]],
                              "usageTimersMs": ["m1": 5_000.0], "usageResetAtMs": ["m1": now],
                              "groupSnoozes": ["m1": ["startsAtMs": now - 1000, "untilMs": now + 600_000, "changedAtMs": now - 1000]]])
-        let hub = ConnectionHub(); hub.hostingLocalHub = true; hub.localWebStore = store
+        // Exercise the overlay before this Mac has submitted its original definition.
+        // An owned store reconciles that contribution before adoption.
+        let hub = ConnectionHub(); hub.hostingLocalHub = true
         hub.setRoster(program: "macapp", groups: [["id": "m1", "name": "Original"]])
         hub.setRoster(program: "chrome", groups: [["id": "c1", "name": "Foreign"]])
         XCTAssertNil(hub.linkGroups(program: "chrome", groupId: "c1", targetProgram: "macapp", targetGroupId: "m1"))
@@ -203,8 +205,16 @@ final class ClusterDetachedRuntimeTests: XCTestCase {
             "scalars": ["name": "Foreign", "allowedMinutes": 20], "usageMs": 240_000.0, "usageResetAtMs": now,
             "snooze": ["startsAtMs": now - 1000, "untilMs": now, "cooldownUntilMs": now + 300_000, "changedAtMs": now], "snoozeTs": now
         ], ts: 0)
+        func assertUnacknowledgedMac() throws {
+            let snapshot = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(hub.clustersJSON().utf8)) as? [String: Any])
+            let cluster = try XCTUnwrap((snapshot["clusters"] as? [[String: Any]])?.first)
+            let member = try XCTUnwrap((cluster["members"] as? [[String: Any]])?.first { ($0["program"] as? String) == "macapp" })
+            XCTAssertEqual(member["contributed"] as? Bool, false)
+        }
+        try assertUnacknowledgedMac()
         GroupStore.sharedOverlay = { hub.overlayShared(onto: $0) }
         XCTAssertTrue(store.adoptShared())
+        try assertUnacknowledgedMac()
         let document = try raw(store)
         XCTAssertEqual((document["blockedGroups"] as? [[String: Any]])?.first?["name"] as? String, "Original")
         XCTAssertEqual(number(document, "usageTimersMs"), 5_000)
