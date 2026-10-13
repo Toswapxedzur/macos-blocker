@@ -38,6 +38,51 @@ final class ActivityRecordingStopWorkerTests: XCTestCase {
         XCTAssertTrue(records().isEmpty)
     }
 
+    func testSettingsCommitWithoutLoadedDashboardAndGetReturnsSameMetadata() async throws {
+        var events: [[String: Any]] = []
+        let service = try VaultClassifierWorkerService(testingDirectory: directory, emit: { events.append($0) })
+        let initial = try await send(service, ["kind": "settings"])
+        XCTAssertEqual(initial["revision"] as? Int, 0)
+        XCTAssertEqual(initial["changedAtMs"] as? Double, 0)
+        XCTAssertTrue(events.isEmpty)
+        let answer = try await send(service, ["kind": "settings", "settings": ["byCategory": ["web-visit": ["enabled": true]]]])
+        let event = try XCTUnwrap(events.first)
+        XCTAssertEqual(event["event"] as? String, "activity-settings-committed")
+        let committed = try XCTUnwrap(event["value"] as? [String: Any])
+        XCTAssertEqual(committed["epoch"] as? String, initial["epoch"] as? String)
+        XCTAssertEqual(committed["revision"] as? Int, 1)
+        XCTAssertGreaterThan(try XCTUnwrap(committed["changedAtMs"] as? Double), 0)
+        var expected = committed; expected["kind"] = "settings"
+        XCTAssertEqual(try JSONSerialization.data(withJSONObject: answer, options: [.sortedKeys]), try JSONSerialization.data(withJSONObject: expected, options: [.sortedKeys]))
+        _ = try await send(service, ["kind": "setSettings", "category": "web-visit", "enabled": false])
+        let commits = events.filter { $0["event"] as? String == "activity-settings-committed" }
+        XCTAssertEqual((commits.last?["value"] as? [String: Any])?["revision"] as? Int, 2)
+        let next = try await send(service, ["kind": "settings"])
+        XCTAssertEqual(next["revision"] as? Int, 2)
+        XCTAssertEqual(commits.count, 2)
+        XCTAssertFalse(store.loadSettings().isEnabled(.webVisit))
+    }
+
+    func testSettingsWriteFailureReturnsErrorAndEmitsNoCommit() async throws {
+        var events: [[String: Any]] = []
+        let service = try VaultClassifierWorkerService(testingDirectory: directory, emit: { events.append($0) })
+        let destination = directory.appendingPathComponent("Activity/settings.json")
+        try FileManager.default.createDirectory(at: destination, withIntermediateDirectories: true)
+        let marker = destination.appendingPathComponent("retained")
+        let bytes = Data("preserve".utf8); try bytes.write(to: marker)
+        for body: [String: Any] in [
+            ["kind": "settings", "settings": ["byCategory": ["web-visit": ["enabled": true]]]],
+            ["kind": "setSettings", "category": "web-visit", "enabled": true]
+        ] {
+            do { _ = try await send(service, body); XCTFail("Expected failed settings write") }
+            catch { XCTAssertEqual(error.localizedDescription, "activity-storage-unavailable") }
+        }
+        XCTAssertTrue(events.isEmpty)
+        let unchanged = try await send(service, ["kind": "settings"])
+        XCTAssertEqual(unchanged["revision"] as? Int, 0)
+        XCTAssertEqual(try Data(contentsOf: marker), bytes)
+    }
+
     func testCategoryOffSavesObservedUsageOnceAndLateDisabledRecordsStayRefused() async throws {
         let service = try worker()
         try await startObservedBucket(service)

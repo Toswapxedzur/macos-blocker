@@ -35,6 +35,80 @@ final class ActivityStoreTests: XCTestCase {
         return s
     }
 
+    private final class SettingsEvents: @unchecked Sendable {
+        private let lock = NSLock()
+        private var values: [ActivitySettingsSnapshot] = []
+        func append(_ value: ActivitySettingsSnapshot) { lock.lock(); values.append(value); lock.unlock() }
+        var snapshots: [ActivitySettingsSnapshot] { lock.lock(); defer { lock.unlock() }; return values }
+    }
+
+    func testCommittedSnapshotAllowsObserverReentryAndReturnsExactEarlierCommit() throws {
+        let wall = day("2026-10-13T12:00:00Z"), s = store(now: day("2026-10-13T12:00:00Z"))
+        let initial = s.settingsSnapshot(), events = SettingsEvents()
+        XCTAssertEqual(initial.revision, 0)
+        XCTAssertEqual(initial.changedAtMs, 0)
+        XCTAssertNotNil(UUID(uuidString: initial.epoch))
+        let token = s.observeSettings { snapshot in
+            events.append(snapshot)
+            _ = s.settingsSnapshot() // Must not run beneath the store lock.
+            if snapshot.revision == 1 { s.updateSettings { $0.setEnabled(false, for: .webVisit) } }
+        }
+        let first = try XCTUnwrap(s.updateSettings { $0.setEnabled(true, for: .webVisit) })
+        XCTAssertEqual(first.revision, 1)
+        XCTAssertTrue(first.settings.isEnabled(.webVisit))
+        XCTAssertEqual(first.changedAtMs, wall.timeIntervalSince1970 * 1000)
+        XCTAssertEqual(events.snapshots.map(\.revision), [1, 2])
+        XCTAssertEqual(s.settingsSnapshot().revision, 2)
+        XCTAssertFalse(s.loadSettings().isEnabled(.webVisit))
+        s.removeSettingsObserver(token)
+        XCTAssertNotNil(s.saveSettings(first.settings))
+        XCTAssertEqual(events.snapshots.count, 2)
+        let restarted = ActivityStore(directory: root).settingsSnapshot()
+        XCTAssertNotEqual(restarted.epoch, first.epoch)
+        XCTAssertEqual(restarted.revision, 0)
+        XCTAssertEqual(restarted.settings, first.settings)
+        let file = try JSONSerialization.jsonObject(with: Data(contentsOf: root.appendingPathComponent("settings.json"))) as! [String: Any]
+        XCTAssertNil(file["epoch"])
+        XCTAssertNil(file["revision"])
+        XCTAssertNil(file["changedAtMs"])
+        let payload = try XCTUnwrap(file["value"] as? [String: Any])
+        XCTAssertNil(payload["epoch"])
+        XCTAssertNil(payload["revision"])
+        XCTAssertNil(payload["changedAtMs"])
+    }
+
+    func testFailedSettingsWriteNeitherNotifiesNorAdvancesRevision() throws {
+        let s = store(now: day("2026-10-13T12:00:00Z")), events = SettingsEvents()
+        let initial = s.settingsSnapshot(), token = s.observeSettings { events.append($0) }
+        defer { s.removeSettingsObserver(token) }
+        let destination = root.appendingPathComponent("settings.json")
+        try FileManager.default.createDirectory(at: destination, withIntermediateDirectories: true)
+        let marker = destination.appendingPathComponent("retained")
+        let bytes = Data("preserve".utf8); try bytes.write(to: marker)
+        XCTAssertNil(s.updateSettings { $0.setEnabled(true, for: .webVisit) })
+        XCTAssertNil(s.saveSettings(allEnabled()))
+        XCTAssertTrue(events.snapshots.isEmpty)
+        XCTAssertEqual(s.settingsSnapshot().revision, initial.revision)
+        XCTAssertEqual(s.settingsSnapshot().epoch, initial.epoch)
+        XCTAssertEqual(try Data(contentsOf: marker), bytes)
+        XCTAssertNotNil(s.storageIssue)
+    }
+
+    func testConcurrentSettingsUpdatesCaptureEveryCommitAndLoseNoFields() throws {
+        let s = store(now: day("2026-10-13T12:00:00Z")), events = SettingsEvents()
+        let before = s.settingsSnapshot(), token = s.observeSettings { events.append($0) }
+        defer { s.removeSettingsObserver(token) }
+        DispatchQueue.concurrentPerform(iterations: 20) { _ in
+            _ = s.updateSettings { $0.idleThresholdSeconds += 1 }
+        }
+        let captured = events.snapshots.sorted { $0.revision < $1.revision }
+        XCTAssertEqual(captured.map(\.revision), Array(1...20))
+        XCTAssertEqual(Set(captured.map(\.epoch)), [before.epoch])
+        XCTAssertEqual(captured.map { $0.settings.idleThresholdSeconds }, (1...20).map { before.settings.idleThresholdSeconds + $0 })
+        XCTAssertEqual(s.settingsSnapshot(), try XCTUnwrap(captured.last))
+        XCTAssertLessThanOrEqual(s.settingsSnapshot().revision, ActivitySettingsSnapshot.maxRevision)
+    }
+
     // MARK: privacy invariant
 
     func testWatchedFactsSaveAuthorsOnceAndFreezeTags() throws {
