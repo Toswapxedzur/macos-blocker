@@ -83,6 +83,39 @@ final class ActivityRecordingStopWorkerTests: XCTestCase {
         XCTAssertEqual(try Data(contentsOf: marker), bytes)
     }
 
+    func testAuthorizedBrowserPreOffFlushAndDuplicateHaveExplicitAcknowledgements() async throws {
+        let service = try worker()
+        let enabled = try await send(service, ["kind": "settings", "settings": ["byCategory": ["web-visit": ["enabled": true]]]])
+        let start = try XCTUnwrap(enabled["changedAtMs"] as? Double)
+        let epoch = try XCTUnwrap(enabled["epoch"] as? String), revision = try XCTUnwrap(enabled["revision"] as? Int)
+        try await Task.sleep(nanoseconds: 10_000_000)
+        let end = Date().timeIntervalSince1970 * 1000
+        let raw: [String: Any] = ["id": "authorized", "category": "web-visit", "key": "example.test", "label": "Example",
+            "startedAtMs": start, "observedEndedAtMs": end, "seconds": (end - start) / 1000,
+            "authorization": ["epoch": epoch, "revision": revision]]
+        _ = try await send(service, ["kind": "setSettings", "category": "web-visit", "enabled": false])
+        var conflicting = raw; conflicting["key"] = "another.test"
+        var invalid = raw; invalid["authorization"] = false
+        for rows in [[raw, raw], [raw, conflicting], [raw, invalid]] {
+            let duplicate = try await send(service, ["kind": "browser-record", "records": rows])
+            XCTAssertEqual(duplicate["acceptedIDs"] as? [String], [])
+            XCTAssertEqual(duplicate["rejectedIDs"] as? [String], ["authorized"])
+            XCTAssertEqual(duplicate["pendingIDs"] as? [String], [])
+            XCTAssertTrue(store.records(category: .webVisit, from: Date(timeIntervalSince1970: start/1000).addingTimeInterval(-1), to: Date().addingTimeInterval(1)).isEmpty)
+        }
+        let first = try await send(service, ["kind": "browser-record", "records": [raw]])
+        XCTAssertEqual(first["accepted"] as? Int, 1)
+        XCTAssertEqual(first["acceptedIDs"] as? [String], ["authorized"])
+        let replay = try await send(service, ["kind": "browser-record", "records": [raw]])
+        XCTAssertEqual(replay["accepted"] as? Int, 0)
+        XCTAssertEqual(replay["acceptedIDs"] as? [String], ["authorized"])
+        var malformed = raw; malformed["id"] = "invalid"; malformed["authorization"] = ["epoch": epoch, "revision": true]
+        let rejected = try await send(service, ["kind": "browser-record", "records": [malformed]])
+        XCTAssertEqual(rejected["rejectedIDs"] as? [String], ["invalid"])
+        XCTAssertEqual(rejected["pendingIDs"] as? [String], [])
+        XCTAssertFalse(store.loadSettings().isEnabled(.webVisit))
+    }
+
     func testCategoryOffSavesObservedUsageOnceAndLateDisabledRecordsStayRefused() async throws {
         let service = try worker()
         try await startObservedBucket(service)
@@ -130,14 +163,14 @@ final class ActivityRecordingStopWorkerTests: XCTestCase {
         XCTAssertEqual(records().map(\.seconds), [10, 5])
     }
 
-    func testBrowserCategoryOffStillRefusesLateBrowserWritesWithoutChangingApps() async throws {
+    func testUncredentialedBrowserWritesAreRefusedAcrossToggleWithoutChangingApps() async throws {
         let service = try worker()
         try await startObservedBucket(service)
         _ = try await send(service, ["kind": "settings", "settings": ["byCategory": ["web-visit": ["enabled": true]]]])
         var web: [String: Any] = ["id": "web-first", "category": "web-visit", "key": "example.test", "label": "Example",
             "seconds": 3, "startedAtMs": wall.timeIntervalSince1970 * 1000]
         let accepted = try await send(service, ["kind": "browser-record", "records": [web]])
-        XCTAssertEqual(accepted["accepted"] as? Int, 1)
+        XCTAssertEqual(accepted["accepted"] as? Int, 0)
         _ = try await send(service, ["kind": "setSettings", "category": "web-visit", "enabled": false])
         web["id"] = "web-late"
         let refused = try await send(service, ["kind": "browser-record", "records": [web]])
@@ -146,6 +179,6 @@ final class ActivityRecordingStopWorkerTests: XCTestCase {
         try await sample(service, 15)
         _ = try await send(service, ["kind": "native-flush"])
         XCTAssertEqual(records().map(\.seconds), [15])
-        XCTAssertEqual(store.records(category: .webVisit, from: wall.addingTimeInterval(-1), to: wall.addingTimeInterval(100)).map(\.seconds), [3])
+        XCTAssertTrue(store.records(category: .webVisit, from: wall.addingTimeInterval(-1), to: wall.addingTimeInterval(100)).isEmpty)
     }
 }
