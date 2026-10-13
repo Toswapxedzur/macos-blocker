@@ -16,6 +16,15 @@ public final class ActivityStore: @unchecked Sendable {
     private let settingsEpoch = UUID().uuidString
     private var settingsRevision = 0
     private var settingsChangedAtMs = 0.0
+    private let authorizationStartedAtMs: Double
+    private var authorizationSettings: ActivitySettings?
+    private struct BrowserGrant {
+        let issuedAtMs: Double
+        var endedAtMs: Double?
+    }
+    private var browserGrants: [Int: [ActivityCategory: BrowserGrant]] = [:]
+    private var browserGrantOrder: [Int] = []
+    private static let maximumBrowserGrantRevisions = 256
     private var settingsObservers: [UUID: @Sendable (ActivitySettingsSnapshot) -> Void] = [:]
     public private(set) var storageIssue: String?
 
@@ -36,6 +45,7 @@ public final class ActivityStore: @unchecked Sendable {
         self.rootDirectory = directory
         self.now = now
         self.calendar = calendar
+        self.authorizationStartedAtMs = now().timeIntervalSince1970 * 1_000
     }
 
     // MARK: - Settings
@@ -49,7 +59,9 @@ public final class ActivityStore: @unchecked Sendable {
     /// metadata. Revision zero represents the loaded state before any commit.
     public func settingsSnapshot() -> ActivitySettingsSnapshot {
         lock.lock(); defer { lock.unlock() }
-        return snapshotLocked(loadSettingsLocked())
+        let settings = loadSettingsLocked()
+        if authorizationSettings == nil { initializeBrowserGrantsLocked(settings) }
+        return snapshotLocked(settings)
     }
 
     /// Observers receive successful commits only. Delivery is outside the store
@@ -72,6 +84,7 @@ public final class ActivityStore: @unchecked Sendable {
     @discardableResult
     public func saveSettings(_ settings: ActivitySettings) -> ActivitySettingsSnapshot? {
         lock.lock()
+        reconcileBrowserGrantsForCommitLocked(loadSettingsLocked())
         let committed = commitSettingsLocked(settings)
         let observers = committed == nil ? [] : Array(settingsObservers.values)
         lock.unlock()
@@ -85,6 +98,7 @@ public final class ActivityStore: @unchecked Sendable {
     public func updateSettings(_ mutate: (inout ActivitySettings) -> Void) -> ActivitySettingsSnapshot? {
         lock.lock()
         var settings = loadSettingsLocked()
+        reconcileBrowserGrantsForCommitLocked(settings)
         mutate(&settings)
         let committed = commitSettingsLocked(settings)
         let observers = committed == nil ? [] : Array(settingsObservers.values)
@@ -106,7 +120,81 @@ public final class ActivityStore: @unchecked Sendable {
         guard write(encode(settings), to: rootDirectory.appendingPathComponent(Self.settingsFileName)) else { return nil }
         settingsRevision += 1
         settingsChangedAtMs = now().timeIntervalSince1970 * 1_000
+        for revision in browserGrantOrder {
+            for category in ActivityWire.browserCategories where !settings.isEnabled(category) {
+                if var grant = browserGrants[revision]?[category], grant.endedAtMs == nil {
+                    grant.endedAtMs = settingsChangedAtMs
+                    browserGrants[revision]?[category] = grant
+                }
+            }
+        }
+        authorizationSettings = settings
+        addBrowserGrantsLocked(settings, revision: settingsRevision, issuedAtMs: settingsChangedAtMs)
         return snapshotLocked(settings)
+    }
+
+    private func initializeBrowserGrantsLocked(_ settings: ActivitySettings) {
+        authorizationSettings = settings
+        addBrowserGrantsLocked(settings, revision: settingsRevision, issuedAtMs: authorizationStartedAtMs)
+    }
+
+    private func reconcileBrowserGrantsForCommitLocked(_ settings: ActivitySettings) {
+        if authorizationSettings == nil { initializeBrowserGrantsLocked(settings) }
+        else if authorizationSettings != settings {
+            // An external writer has no known OFF cutoff. Retire all prior
+            // grants; only this store's next successful commit can grant again.
+            browserGrants.removeAll(); browserGrantOrder.removeAll()
+            authorizationSettings = settings
+        }
+    }
+
+    private func addBrowserGrantsLocked(_ settings: ActivitySettings, revision: Int, issuedAtMs: Double) {
+        var grants: [ActivityCategory: BrowserGrant] = [:]
+        for category in ActivityWire.browserCategories where settings.isEnabled(category) {
+            grants[category] = BrowserGrant(issuedAtMs: issuedAtMs)
+        }
+        browserGrants[revision] = grants
+        browserGrantOrder.append(revision)
+        while browserGrantOrder.count > Self.maximumBrowserGrantRevisions {
+            browserGrants.removeValue(forKey: browserGrantOrder.removeFirst())
+        }
+    }
+
+    /// Admits a contiguous observed browser interval under one native-known
+    /// grant. Missing/malformed grants never fall back to the native API below.
+    /// OFF seals old grants; its exact wall-time cutoff excludes later usage.
+    public func recordBrowser(_ entry: ActivityBrowserRecord) -> ActivityBrowserRecordResult {
+        lock.lock(); defer { lock.unlock() }
+        let record = entry.record
+        let startedAtMs = record.startedAt.timeIntervalSince1970 * 1_000
+        guard ActivityWire.browserCategories.contains(record.category), !record.id.isEmpty, record.id.count <= 256,
+              !record.key.isEmpty,
+              let authorization = entry.authorization,
+              UUID(uuidString: authorization.epoch) == UUID(uuidString: settingsEpoch),
+              authorization.revision >= 0, authorization.revision <= ActivitySettingsSnapshot.maxRevision,
+              let grant = browserGrants[authorization.revision]?[record.category],
+              let endedAtMs = entry.observedEndedAtMs,
+              startedAtMs.isFinite, endedAtMs.isFinite, startedAtMs >= 0,
+              record.seconds.isFinite, record.seconds > 0, endedAtMs > startedAtMs,
+              abs((endedAtMs - startedAtMs) - record.seconds * 1_000) <= 1,
+              startedAtMs >= grant.issuedAtMs - 1,
+              endedAtMs <= now().timeIntervalSince1970 * 1_000,
+              authorizationSettings == loadSettingsLocked() else { return .rejected }
+        let clippedStart = max(startedAtMs, grant.issuedAtMs)
+        let clippedEnd = min(endedAtMs, grant.endedAtMs ?? endedAtMs)
+        guard clippedEnd > clippedStart else { return .rejected }
+        var clipped = record
+        clipped.startedAt = Date(timeIntervalSince1970: clippedStart / 1_000)
+        clipped.seconds = (clippedEnd - clippedStart) / 1_000
+        let url = dayFileURL(category: clipped.category, day: dayString(for: clipped.startedAt))
+        var records = readRecords(at: url)
+        if let saved = records.first(where: { $0.id == clipped.id }) {
+            // Compare the persisted representation: ISO8601 dates intentionally
+            // omit fractions, including for the original Activity record format.
+            return encode(saved) == encode(clipped) ? .alreadyStored : .rejected
+        }
+        records.append(clipped)
+        return write(encode(records), to: url) ? .stored : .pending
     }
 
     // MARK: - Website icons (favicons, supplied by the extension as data URIs)

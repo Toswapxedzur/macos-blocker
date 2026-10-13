@@ -109,6 +109,88 @@ final class ActivityStoreTests: XCTestCase {
         XCTAssertLessThanOrEqual(s.settingsSnapshot().revision, ActivitySettingsSnapshot.maxRevision)
     }
 
+    func testLoadedEnabledBrowserGrantStartsAtThisStoreLifetime() throws {
+        let base = day("2026-10-13T12:00:00Z")
+        ActivityStore(directory: root).updateSettings { $0.setEnabled(true, for: .webVisit) }
+        var wall = base.addingTimeInterval(100)
+        let s = ActivityStore(directory: root, now: { wall }, calendar: calendar)
+        let loaded = s.settingsSnapshot()
+        XCTAssertEqual(loaded.revision, 0)
+        let authorization = ActivityRecordAuthorization(epoch: loaded.epoch, revision: loaded.revision)
+        let within = ActivityBrowserRecord(record: record("within", .webVisit, at: base.addingTimeInterval(101), seconds: 1), authorization: authorization, observedEndedAtMs: base.addingTimeInterval(102).timeIntervalSince1970 * 1000)
+        let before = ActivityBrowserRecord(record: record("before", .webVisit, at: base.addingTimeInterval(99), seconds: 3), authorization: authorization, observedEndedAtMs: base.addingTimeInterval(102).timeIntervalSince1970 * 1000)
+        wall = base.addingTimeInterval(110)
+        XCTAssertEqual(s.recordBrowser(within), .stored)
+        XCTAssertEqual(s.recordBrowser(before), .rejected)
+    }
+
+    func testAuthorizedLateBrowserUsageClipsAtOffAndCannotCreditLaterOrGappedTime() throws {
+        let base = day("2026-10-13T12:00:00Z")
+        var wall = base
+        let s = ActivityStore(directory: root, now: { wall }, calendar: calendar)
+        let enabled = try XCTUnwrap(s.updateSettings { $0.setEnabled(true, for: .webVisit) })
+        let authorization = ActivityRecordAuthorization(epoch: enabled.epoch.lowercased(), revision: enabled.revision)
+        func entry(_ id: String, _ start: Double, _ end: Double, seconds: Double? = nil,
+                   auth: ActivityRecordAuthorization? = authorization, category: ActivityCategory = .webVisit) -> ActivityBrowserRecord {
+            .init(record: record(id, category, at: base.addingTimeInterval(start), seconds: seconds ?? (end - start)),
+                  authorization: auth, observedEndedAtMs: base.addingTimeInterval(end).timeIntervalSince1970 * 1000)
+        }
+        wall = base.addingTimeInterval(20)
+        let off = try XCTUnwrap(s.updateSettings { $0.setEnabled(false, for: .webVisit) })
+        wall = base.addingTimeInterval(40)
+        let late = entry("late", 10, 30)
+        XCTAssertEqual(s.recordBrowser(late), .stored)
+        XCTAssertEqual(s.recordBrowser(late), .alreadyStored)
+        XCTAssertEqual(s.records(category: .webVisit, from: base, to: wall).map(\.seconds), [10])
+        XCTAssertFalse(s.record(record("legacy", .webVisit, at: base, seconds: 3)))
+        XCTAssertEqual(s.recordBrowser(entry("after", 21, 30)), .rejected)
+        XCTAssertEqual(s.recordBrowser(entry("off-auth", 10, 15, auth: .init(epoch: off.epoch, revision: off.revision))), .rejected)
+        XCTAssertEqual(s.recordBrowser(entry("unknown", 10, 15, auth: .init(epoch: enabled.epoch, revision: 999))), .rejected)
+        XCTAssertEqual(s.recordBrowser(entry("epoch", 10, 15, auth: .init(epoch: UUID().uuidString, revision: enabled.revision))), .rejected)
+        XCTAssertEqual(s.recordBrowser(entry("gap", 10, 30, seconds: 1)), .rejected)
+        XCTAssertEqual(s.recordBrowser(entry("future", 10, 50)), .rejected)
+        XCTAssertEqual(s.recordBrowser(entry("before", -2, 10)), .rejected)
+        XCTAssertEqual(s.recordBrowser(entry("missing", 10, 15, auth: nil)), .rejected)
+        XCTAssertEqual(s.recordBrowser(entry("app", 10, 15, category: .appUsage)), .rejected)
+        XCTAssertEqual(s.recordBrowser(entry("late", 10, 19)), .rejected, "An ID cannot acknowledge a different payload")
+    }
+
+    func testBrowserGrantsSurviveContinuousOnEditsButAreBoundedAndExternalOffFailsClosed() throws {
+        let base = day("2026-10-13T12:00:00Z")
+        var wall = base
+        let s = ActivityStore(directory: root, now: { wall }, calendar: calendar)
+        let enabled = try XCTUnwrap(s.updateSettings { $0.setEnabled(true, for: .contentWatched) })
+        let old = ActivityRecordAuthorization(epoch: enabled.epoch, revision: enabled.revision)
+        wall = base.addingTimeInterval(10)
+        s.updateSettings { $0.retentionDays = 100 }
+        wall = base.addingTimeInterval(30)
+        let interval = ActivityBrowserRecord(record: record("continuous", .contentWatched, at: base.addingTimeInterval(1), seconds: 19), authorization: old, observedEndedAtMs: base.addingTimeInterval(20).timeIntervalSince1970 * 1000)
+        XCTAssertEqual(s.recordBrowser(interval), .stored)
+        for _ in 0..<256 { s.updateSettings { $0.idleThresholdSeconds += 1 } }
+        XCTAssertEqual(s.recordBrowser(interval), .rejected, "Expired grants are not reconstructed from saved flags")
+        let fresh = s.settingsSnapshot()
+        let freshEntry = ActivityBrowserRecord(record: record("fresh", .contentWatched, at: wall.addingTimeInterval(1), seconds: 1), authorization: .init(epoch: fresh.epoch, revision: fresh.revision), observedEndedAtMs: wall.addingTimeInterval(2).timeIntervalSince1970 * 1000)
+        wall = wall.addingTimeInterval(5)
+        XCTAssertEqual(s.recordBrowser(freshEntry), .stored)
+        ActivityStore(directory: root).updateSettings { $0.setEnabled(false, for: .contentWatched) }
+        XCTAssertEqual(s.recordBrowser(freshEntry), .rejected, "External OFF has no authoritative known cutoff")
+    }
+
+    func testAuthorizedBrowserDestinationFailureRemainsPendingWithoutReplacingData() throws {
+        let base = day("2026-10-13T12:00:00Z")
+        var wall = base
+        let s = ActivityStore(directory: root, now: { wall }, calendar: calendar)
+        let on = try XCTUnwrap(s.updateSettings { $0.setEnabled(true, for: .webVisit) })
+        let destination = root.appendingPathComponent("web-visit/2026-10-13.json")
+        try FileManager.default.createDirectory(at: destination, withIntermediateDirectories: true)
+        let marker = destination.appendingPathComponent("retained"), bytes = Data("preserved".utf8)
+        try bytes.write(to: marker)
+        wall = base.addingTimeInterval(10)
+        let entry = ActivityBrowserRecord(record: record("pending", .webVisit, at: base.addingTimeInterval(1), seconds: 3), authorization: .init(epoch: on.epoch, revision: on.revision), observedEndedAtMs: base.addingTimeInterval(4).timeIntervalSince1970 * 1000)
+        XCTAssertEqual(s.recordBrowser(entry), .pending)
+        XCTAssertEqual(try Data(contentsOf: marker), bytes)
+    }
+
     // MARK: privacy invariant
 
     func testWatchedFactsSaveAuthorsOnceAndFreezeTags() throws {
