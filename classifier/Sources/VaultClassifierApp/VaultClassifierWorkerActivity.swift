@@ -119,14 +119,24 @@ final class VaultClassifierWorkerActivity {
             return answer
         case "browser-record":
             let payload = body["body"] as? [String: Any] ?? body
-            let settings = store.loadSettings()
-            let records = ActivityWire.records(from: payload)
-            var accepted = 0
-            for record in records where store.record(record, settings: settings) { accepted += 1 }
-            if let icons = payload["icons"] as? [String: String] { store.mergeWebIcons(icons) }
-            recordWatchedFacts(keys: records.filter { $0.category == .contentWatched }.map(\.key))
+            let entries = ActivityWire.browserRecords(from: payload)
+            let duplicateIDs = ActivityWire.duplicateBrowserRecordIDs(from: payload)
+            var accepted = 0, acceptedIDs = Set<String>(), storedIDs = Set<String>(), pendingIDs = Set<String>()
+            for entry in entries where !duplicateIDs.contains(entry.record.id) {
+                let result = store.recordBrowser(entry)
+                if result.accepted { acceptedIDs.insert(entry.record.id) }
+                if result == .stored { accepted += 1; storedIDs.insert(entry.record.id) }
+                if result == .pending { pendingIDs.insert(entry.record.id) }
+            }
+            let ids = ActivityWire.browserRecordIDs(from: payload)
+            let acceptedDomains = Set(entries.filter { storedIDs.contains($0.record.id) && $0.record.category == .webVisit }.map { $0.record.key })
+            if let icons = payload["icons"] as? [String: String] { store.mergeWebIcons(icons.filter { acceptedDomains.contains($0.key) }) }
+            recordWatchedFacts(keys: entries.filter { storedIDs.contains($0.record.id) && $0.record.category == .contentWatched }.map { $0.record.key })
             refresh()
-            return ["kind": "recorded", "accepted": accepted]
+            return ["kind": "recorded", "accepted": accepted,
+                    "acceptedIDs": ids.filter { acceptedIDs.contains($0) },
+                    "rejectedIDs": ids.filter { !acceptedIDs.contains($0) && !pendingIDs.contains($0) },
+                    "pendingIDs": ids.filter { pendingIDs.contains($0) }]
         case "native-sample":
             guard let elapsed = (body["elapsedMs"] as? NSNumber)?.doubleValue, elapsed.isFinite, elapsed >= 0,
                   let milliseconds = (body["atMs"] as? NSNumber)?.doubleValue, milliseconds.isFinite else { throw ActivityWorkerError.invalidOperation }
