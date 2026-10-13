@@ -16,6 +16,15 @@ final class WorkerServiceTests: XCTestCase {
     private func worker() throws -> VaultClassifierWorkerService { try .init(testingDirectory: directory, emit: { _ in }) }
     private func object(_ value: Any) throws -> [String: Any] { try XCTUnwrap(value as? [String: Any]) }
 
+    func testReadyEventAdvertisesCurrentActivityNotificationSupport() throws {
+        let frame = VaultClassifierWorkerWire.encoded(VaultClassifierWorkerWire.readyEvent())
+        let ready = try object(JSONSerialization.jsonObject(with: frame))
+        XCTAssertEqual(ready["event"] as? String, "ready")
+        XCTAssertEqual(ready["protocol"] as? Int, 1)
+        XCTAssertEqual(ready["activitySettingsNotifications"] as? Bool, true)
+        XCTAssertEqual(frame.last, 0x0a)
+    }
+
     func testOversizedWorkerResponseIsRefusedWithItsRequestIDAndNoPartialState() throws {
         let frame = VaultClassifierWorkerWire.encoded(["id": "large", "ok": true,
             "value": ["large": String(repeating: "x", count: VaultClassifierWorkerWire.maximumFrameBytes)]])
