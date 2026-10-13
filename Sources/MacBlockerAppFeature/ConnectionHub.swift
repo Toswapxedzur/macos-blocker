@@ -944,9 +944,14 @@ final class ConnectionHub: ObservableObject {
         // The Activity ops are handled by the hub host itself (it owns the store)
         // rather than relayed to the classifier peer.
         if Self.activityRequestOperations.contains(operation) {
-            lock.lock(); let source = peers[key]?.connection; lock.unlock()
-            guard let source else { return }
-            handleActivityRequest(source: source, requestID: requestID, operation: operation, body: body)
+            // Capture both the authenticated peer and its current authority in
+            // one admission step. Replacement cannot make an old session's
+            // in-flight request write the newly assigned store.
+            lock.lock()
+            guard let peer = peers[key], peer.connected, Self.browserPrograms.contains(peer.program) else { lock.unlock(); return }
+            let source = peer.connection, store = activityStoreValue
+            lock.unlock()
+            handleActivityRequest(source: source, store: store, requestID: requestID, operation: operation, body: body)
             return
         }
 
@@ -992,8 +997,8 @@ final class ConnectionHub: ObservableObject {
     /// extension already awaits. `activity-record` stores browser records (the
     /// store is the privacy backstop — a disabled category writes nothing);
     /// `activity-settings` gets, or merges-and-sets, the recording settings.
-    private func handleActivityRequest(source: NWConnection, requestID: String, operation: String, body: [String: Any]) {
-        guard let store = activityStore else {
+    private func handleActivityRequest(source: NWConnection, store: ActivityStore?, requestID: String, operation: String, body: [String: Any]) {
+        guard let store else {
             send(source, dict: ["kind": "classifier-response", "requestID": requestID, "operation": operation, "error": "activity-unavailable"])
             return
         }
