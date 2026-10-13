@@ -2,6 +2,28 @@ import XCTest
 @testable import MacBlockerCore
 
 final class ActivityWireTests: XCTestCase {
+    func testBrowserAuthorizationMetadataIsStrictAndSeparateFromSavedRecord() throws {
+        let epoch = UUID().uuidString
+        var raw: [String: Any] = ["id": "one", "category": "web-visit", "startedAtMs": 1000,
+            "observedEndedAtMs": 2000, "seconds": 1, "key": "example.test", "label": "Example",
+            "authorization": ["epoch": epoch, "revision": 2]]
+        let valid = try XCTUnwrap(ActivityWire.browserRecords(from: ["records": [raw]]).first)
+        XCTAssertEqual(valid.authorization, .init(epoch: epoch, revision: 2))
+        XCTAssertEqual(valid.observedEndedAtMs, 2000)
+        let decoded = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONSerialization.data(withJSONObject: raw)) as? [String: Any])
+        XCTAssertEqual(ActivityWire.browserRecords(from: ["records": [decoded]]).first?.authorization, valid.authorization)
+        let saved = try JSONEncoder().encode(valid.record)
+        let object = try XCTUnwrap(JSONSerialization.jsonObject(with: saved) as? [String: Any])
+        XCTAssertNil(object["authorization"])
+        XCTAssertNil(object["observedEndedAtMs"])
+        raw["authorization"] = ["epoch": epoch, "revision": true]
+        XCTAssertNil(ActivityWire.browserRecords(from: ["records": [raw]]).first?.authorization)
+        raw["seconds"] = true
+        XCTAssertTrue(ActivityWire.browserRecords(from: ["records": [raw]]).isEmpty)
+        XCTAssertEqual(ActivityWire.browserRecordIDs(from: ["records": [raw, raw]]), ["one"])
+        XCTAssertEqual(ActivityWire.duplicateBrowserRecordIDs(from: ["records": [raw, raw]]), ["one"])
+    }
+
     func testParsesBrowserRecords() {
         let body: [String: Any] = ["records": [
             ["id": "1", "category": "web-visit", "startedAtMs": 1_600_000_000_000, "seconds": 30, "key": "youtube.com", "label": "youtube.com"],

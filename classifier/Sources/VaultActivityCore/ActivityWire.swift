@@ -48,6 +48,55 @@ public enum ActivityWire {
         return out
     }
 
+    /// Strict browser metadata is consumed by admission, never persisted. The
+    /// legacy pure record parser remains separate from this authenticated path.
+    public static func browserRecords(from body: [String: Any]) -> [ActivityBrowserRecord] {
+        guard let raw = body["records"] as? [[String: Any]] else { return [] }
+        return raw.prefix(maxRecordsPerFlush).compactMap { entry in
+            guard let id = entry["id"] as? String, !id.isEmpty, id.count <= 256,
+                  let rawCategory = entry["category"] as? String,
+                  let category = ActivityCategory(rawValue: rawCategory), browserCategories.contains(category),
+                  let start = browserNumber(entry["startedAtMs"]), start.isFinite, start >= 0,
+                  let seconds = browserNumber(entry["seconds"]), seconds.isFinite, seconds > 0,
+                  let key = entry["key"] as? String, !key.isEmpty,
+                  let label = entry["label"] as? String else { return nil }
+            var authorization: ActivityRecordAuthorization?
+            if let value = entry["authorization"] as? [String: Any],
+               let epoch = value["epoch"] as? String, UUID(uuidString: epoch) != nil,
+               let n = value["revision"] as? NSNumber, !["c", "B"].contains(String(cString: n.objCType)),
+               n.doubleValue.isFinite, n.doubleValue >= 0,
+               n.doubleValue <= Double(ActivitySettingsSnapshot.maxRevision),
+               n.doubleValue.rounded(.towardZero) == n.doubleValue {
+                authorization = .init(epoch: epoch, revision: n.intValue)
+            }
+            return ActivityBrowserRecord(record: ActivityRecord(id: id, category: category,
+                startedAt: Date(timeIntervalSince1970: start / 1_000), seconds: seconds,
+                key: key, label: label, platform: entry["platform"] as? String, creator: entry["creator"] as? String),
+                authorization: authorization, observedEndedAtMs: browserNumber(entry["observedEndedAtMs"]))
+        }
+    }
+
+    public static func browserRecordIDs(from body: [String: Any]) -> [String] {
+        guard let raw = body["records"] as? [[String: Any]] else { return [] }
+        var seen = Set<String>()
+        return raw.prefix(maxRecordsPerFlush).compactMap {
+            guard let id = $0["id"] as? String, !id.isEmpty, id.count <= 256, seen.insert(id).inserted else { return nil }
+            return id
+        }
+    }
+
+    /// Refuse all rows for IDs repeated within a submitted batch, including an
+    /// invalid row paired with a valid one. Later-batch replay is independent.
+    public static func duplicateBrowserRecordIDs(from body: [String: Any]) -> Set<String> {
+        guard let raw = body["records"] as? [[String: Any]] else { return [] }
+        var seen = Set<String>(), duplicate = Set<String>()
+        for entry in raw.prefix(maxRecordsPerFlush) {
+            guard let id = entry["id"] as? String, !id.isEmpty, id.count <= 256 else { continue }
+            if !seen.insert(id).inserted { duplicate.insert(id) }
+        }
+        return duplicate
+    }
+
     /// The settings payload sent back for an `activity-settings` get.
     public static func settingsPayload(_ settings: ActivitySettings) -> [String: Any] {
         var byCategory: [String: [String: Any]] = [:]
@@ -86,6 +135,11 @@ public enum ActivityWire {
             next.idleThresholdSeconds = idle
         }
         return next
+    }
+
+    private static func browserNumber(_ value: Any?) -> Double? {
+        guard let n = value as? NSNumber, !["c", "B"].contains(String(cString: n.objCType)) else { return nil }
+        return n.doubleValue
     }
 
     private static func number(_ value: Any?) -> Double? {
