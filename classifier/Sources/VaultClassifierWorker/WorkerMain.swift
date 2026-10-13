@@ -18,7 +18,7 @@ private enum VaultClassifierWorkerMain {
         let output = WorkerOutput()
         do {
             let service = try VaultClassifierWorkerService(emit: output.send)
-            output.send(["event": "ready", "protocol": 1])
+            output.send(VaultClassifierWorkerWire.readyEvent())
             service.publishState()
             for await bytes in inputLines() {
                 var requestID = ""

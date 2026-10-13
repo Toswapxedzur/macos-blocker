@@ -5,6 +5,12 @@ import Foundation
 public enum VaultClassifierWorkerWire {
     public static let maximumFrameBytes = 16 * 1024 * 1024
 
+    /// This capability describes the current worker implementation, rather
+    /// than a host assumption based on an installed source manifest.
+    public static func readyEvent() -> [String: Any] {
+        ["event": "ready", "protocol": 1, "activitySettingsNotifications": true]
+    }
+
     public static func encoded(_ object: [String: Any]) -> Data {
         let candidate = JSONSerialization.isValidJSONObject(object)
             ? try? JSONSerialization.data(withJSONObject: object, options: [.sortedKeys]) : nil
