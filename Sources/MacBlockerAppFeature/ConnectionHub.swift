@@ -143,7 +143,78 @@ final class ConnectionHub: ObservableObject {
     /// The Activity log store. When set, the hub handles the activity ops locally
     /// (writing this store) instead of relaying them to the classifier peer. Set
     /// once at launch; shared with the native app-usage recorder.
-    var activityStore: ActivityStore?
+    private let activityAssignmentLock = NSLock()
+    private var activityStoreValue: ActivityStore?
+    private var activityObserver: UUID?
+    private var publishedActivitySnapshot: ActivitySettingsSnapshot?
+    var activityStore: ActivityStore? {
+        get { lock.lock(); defer { lock.unlock() }; return activityStoreValue }
+        set {
+            // Never call into the store under the hub lock: successful store
+            // commits publish outside its own lock and may enter this hub.
+            activityAssignmentLock.lock(); defer { activityAssignmentLock.unlock() }
+            lock.lock()
+            guard activityStoreValue !== newValue else { lock.unlock(); return }
+            let oldStore = activityStoreValue, oldObserver = activityObserver
+            activityStoreValue = newValue
+            activityObserver = nil
+            publishedActivitySnapshot = nil
+            let retiring = peers.values.filter { $0.connected && Self.browserPrograms.contains($0.program) }.map(\.connection)
+            for connection in retiring { peers[ObjectIdentifier(connection)]?.connected = false }
+            lock.unlock()
+            if let oldObserver { oldStore?.removeSettingsObserver(oldObserver) }
+            // A replacement is a new authority epoch. Existing browser sessions
+            // must authenticate again; the classifier/listener stay running.
+            retiring.forEach { $0.cancel() }
+            guard let store = newValue else { return }
+            let token = store.observeSettings { [weak self, weak store] snapshot in
+                guard let self, let store else { return }
+                self.publishActivitySettings(snapshot, from: store)
+            }
+            lock.lock(); activityObserver = token; lock.unlock()
+            // Subscribing first closes the read/subscribe race. If a commit
+            // callback wins, this older initial read cannot replace its state.
+            publishActivitySettings(store.settingsSnapshot(), from: store)
+        }
+    }
+
+    deinit {
+        // Destruction owns the last reference; no hub lock is needed here.
+        if let activityObserver { activityStoreValue?.removeSettingsObserver(activityObserver) }
+    }
+
+    /// Successful commits carry their exact snapshot, never a later reread.
+    /// An already captured callback from a retired store has no authority.
+    func publishActivitySettings(_ snapshot: ActivitySettingsSnapshot, from store: ActivityStore) {
+        lock.lock(); defer { lock.unlock() }
+        guard activityStoreValue === store else { return }
+        if let previous = publishedActivitySnapshot {
+            guard previous.epoch == snapshot.epoch, snapshot.revision > previous.revision else { return }
+        }
+        publishedActivitySnapshot = snapshot
+        let destinations = peers.values.filter { $0.connected && Self.browserPrograms.contains($0.program) }.map(\.connection)
+        enqueueLocked(Self.activitySettingsNotification(snapshot), to: destinations)
+    }
+
+    static func activitySettingsNotification(_ snapshot: ActivitySettingsSnapshot) -> [String: Any] {
+        ["kind": "activity-settings-updated", "body": ActivityWire.settingsSnapshotPayload(snapshot)]
+    }
+
+    /// The caller has already verified the hello proof. Welcome and the cached
+    /// initial settings snapshot are enqueued together under the hub lock.
+    private func welcomeAuthenticatedPeerLocked(_ connection: NWConnection, program: String) {
+        enqueueLocked([
+            "kind": "welcome", "v": Self.protocolVersion,
+            "usageTransferReceipts": true,
+            "activitySettingsNotifications": activityStoreValue != nil && publishedActivitySnapshot != nil,
+            "hubProgram": Self.localProgram, "peers": peerListJSONLocked()
+        ], to: [connection])
+        if Self.browserPrograms.contains(program), let snapshot = publishedActivitySnapshot {
+            // Sending one peer its initial state never advances the global
+            // publication marker or suppresses another peer's commit delivery.
+            enqueueLocked(Self.activitySettingsNotification(snapshot), to: [connection])
+        }
+    }
     // Kept in sync with SharedBrowserBridgeOperation.activityRecord/.activitySettings
     // (the enum is the cross-repo source of truth; the extension parity test checks
     // the extension side against it). These are handled locally, not relayed.
@@ -636,9 +707,7 @@ final class ConnectionHub: ObservableObject {
             return
         }
         let key = ObjectIdentifier(conn)
-        lock.lock()
-        peers[key] = Peer(id: UUID().uuidString, program: "", connected: false, challenge: challenge, connection: conn)
-        lock.unlock()
+        registerPendingPeer(conn, challenge: challenge)
 
         conn.stateUpdateHandler = { [weak self] state in
             switch state {
@@ -696,7 +765,36 @@ final class ConnectionHub: ObservableObject {
         }
     }
 
-    private func handleIncoming(_ conn: NWConnection, key: ObjectIdentifier, data: Data) {
+    // Common peer-state entry points, also exercised by isolated transport
+    // tests. Admission is called only after handleIncoming verifies the proof.
+    func registerPendingPeer(_ connection: NWConnection, challenge: String) {
+        lock.lock(); defer { lock.unlock() }
+        peers[ObjectIdentifier(connection)] = Peer(id: UUID().uuidString, program: "", connected: false,
+                                                  challenge: challenge, connection: connection)
+    }
+
+    func admitAuthenticatedPeer(_ connection: NWConnection, program: String) -> String? {
+        lock.lock(); defer { lock.unlock() }
+        let key = ObjectIdentifier(connection)
+        guard peers[key] != nil, Self.remotePrograms.contains(program) else { return "invalid-program" }
+        guard peers[key]?.connected == false else { return "already-authenticated" }
+        if activityStoreValue != nil && publishedActivitySnapshot == nil { return "activity-initializing" }
+        let connectedPrograms = peers.values.filter { $0.connected }.map(\.program)
+        guard !Self.isDuplicateBrowser(program, connectedPrograms: connectedPrograms) else { return "duplicate-program" }
+        peers[key]?.program = program
+        peers[key]?.connected = true
+        welcomeAuthenticatedPeerLocked(connection, program: program)
+        broadcastPeersLocked()
+        sendClustersSnapshotLocked(connection)
+        return nil
+    }
+
+    var activityNotificationRecipients: [String] {
+        lock.lock(); defer { lock.unlock() }
+        return peers.values.filter { $0.connected && Self.browserPrograms.contains($0.program) }.map(\.program).sorted()
+    }
+
+    func handleIncoming(_ conn: NWConnection, key: ObjectIdentifier, data: Data) {
         guard let obj = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
               let kind = obj["kind"] as? String else {
             rejectAndClose(conn, reason: "invalid-message")
@@ -732,26 +830,7 @@ final class ConnectionHub: ObservableObject {
                 return
             }
             let program = (obj["program"] as? String) ?? "browser"
-            lock.lock()
-            let connectedPrograms = peers.values.filter { $0.connected }.map(\.program)
-            let duplicate = Self.isDuplicateBrowser(program, connectedPrograms: connectedPrograms)
-            if !duplicate {
-                peers[key]?.program = program
-                peers[key]?.connected = true
-                // A newly authenticated peer must receive welcome before any
-                // cluster frame. State publication and enqueue are one unit.
-                enqueueLocked([
-                    "kind": "welcome",
-                    "v": Self.protocolVersion,
-                    "usageTransferReceipts": true,
-                    "hubProgram": Self.localProgram,
-                    "peers": peerListJSONLocked()
-                ], to: [conn])
-                broadcastPeersLocked()
-                sendClustersSnapshotLocked(conn)
-            }
-            lock.unlock()
-            if duplicate { rejectAndClose(conn, reason: "duplicate-program") }
+            if let reason = admitAuthenticatedPeer(conn, program: program) { rejectAndClose(conn, reason: reason) }
         case "groups-announce":
             lock.lock()
             let prog = peers[key]?.program ?? ((obj["program"] as? String) ?? "")
@@ -933,10 +1012,15 @@ final class ConnectionHub: ObservableObject {
             if let icons = body["icons"] as? [String: String] { store.mergeWebIcons(icons) }
             send(source, dict: ["kind": "classifier-response", "requestID": requestID, "operation": operation, "body": ["stored": stored]])
         case "activity-settings":
+            let snapshot: ActivitySettingsSnapshot
             if let settingsBody = body["settings"] as? [String: Any] {
-                store.updateSettings { $0 = ActivityWire.merged($0, with: settingsBody) }
-            }
-            send(source, dict: ["kind": "classifier-response", "requestID": requestID, "operation": operation, "body": ["settings": ActivityWire.settingsPayload(store.loadSettings())]])
+                guard let committed = store.updateSettings({ $0 = ActivityWire.merged($0, with: settingsBody) }) else {
+                    send(source, dict: ["kind": "classifier-response", "requestID": requestID, "operation": operation, "error": "activity-storage-unavailable"])
+                    return
+                }
+                snapshot = committed
+            } else { snapshot = store.settingsSnapshot() }
+            send(source, dict: ["kind": "classifier-response", "requestID": requestID, "operation": operation, "body": ActivityWire.settingsSnapshotPayload(snapshot)])
         default:
             send(source, dict: ["kind": "classifier-response", "requestID": requestID, "operation": operation, "error": "unsupported-activity-op"])
         }
