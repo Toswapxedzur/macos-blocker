@@ -109,6 +109,77 @@ final class ActivitySettingsNotificationTests: XCTestCase {
         XCTAssertEqual((notifications(frames).last?["body"] as? [String: Any])?["revision"] as? Int, 2)
     }
 
+    private func browserRow(_ id: String, grant: ActivitySettingsSnapshot, start: Double, end: Double) -> [String: Any] {
+        ["id": id, "category": "web-visit", "key": "accepted.example", "label": "Accepted",
+         "startedAtMs": start, "observedEndedAtMs": end, "seconds": (end - start) / 1000,
+         "authorization": ["epoch": grant.epoch, "revision": grant.revision]]
+    }
+
+    func testBrowserRecordsSaveOnlyObservedPreOffTimeAndReportMalformedRows() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        var clock = Date(timeIntervalSince1970: 1000)
+        var calendar = Calendar(identifier: .gregorian); calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+        let store = ActivityStore(directory: directory, now: { clock }, calendar: calendar)
+        let queue = DispatchQueue(label: "test.activity.pre-off"), hubFrames = NSMutableArray()
+        let hub = ConnectionHub(testOutboundQueue: queue) { hubFrames.add($0) }
+        hub.activityStore = store
+        let chrome = connection(hub, program: "chrome")
+        let grant = try XCTUnwrap(store.updateSettings { $0.setEnabled(true, for: .webVisit) })
+        clock = Date(timeIntervalSince1970: 1002)
+        store.updateSettings { $0.setEnabled(false, for: .webVisit) }
+        clock = Date(timeIntervalSince1970: 1004)
+        queue.sync {}; hubFrames.removeAllObjects()
+        let before = browserRow("before", grant: grant, start: 1001000, end: 1003000)
+        let after = browserRow("after", grant: grant, start: 1002500, end: 1003500)
+        try incoming(hub, chrome, ["kind": "classifier-request", "requestID": "records", "operation": "activity-record", "body": [
+            "records": [before, after, ["id": "malformed", "startedAtMs": true]],
+            "settings": ["byCategory": ["web-visit": ["enabled": true]]],
+            "icons": ["accepted.example": "data:image/png;base64,YQ==", "unrelated.example": "data:image/png;base64,Yg=="]
+        ]])
+        queue.sync {}
+        let response = try XCTUnwrap(decoded(hubFrames.compactMap { $0 as? Data }).last?["body"] as? [String: Any])
+        XCTAssertEqual(response["stored"] as? Int, 1)
+        XCTAssertEqual(response["acceptedIDs"] as? [String], ["before"])
+        XCTAssertEqual(Set(response["rejectedIDs"] as? [String] ?? []), ["after", "malformed"])
+        XCTAssertEqual(response["pendingIDs"] as? [String], [])
+        let rows = store.records(category: .webVisit, from: Date(timeIntervalSince1970: 0), to: clock)
+        XCTAssertEqual(rows.count, 1); XCTAssertEqual(rows.first?.seconds, 1)
+        XCTAssertFalse(store.loadSettings().isEnabled(.webVisit))
+        XCTAssertEqual(Set(store.webIcons().keys), ["accepted.example"])
+    }
+
+    func testDuplicateBatchRejectsBeforeWritesAndFailedWriteRemainsPending() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        var clock = Date(timeIntervalSince1970: 1000)
+        var calendar = Calendar(identifier: .gregorian); calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+        let store = ActivityStore(directory: directory, now: { clock }, calendar: calendar), queue = DispatchQueue(label: "test.activity.receipts")
+        var frames: [Data] = []
+        let hub = ConnectionHub(testOutboundQueue: queue) { frames.append($0) }
+        hub.activityStore = store
+        let chrome = connection(hub, program: "chrome")
+        let grant = try XCTUnwrap(store.updateSettings { $0.setEnabled(true, for: .webVisit) })
+        clock = Date(timeIntervalSince1970: 1004)
+        let row = browserRow("duplicate", grant: grant, start: 1001000, end: 1002000)
+        queue.sync {}; frames.removeAll()
+        try incoming(hub, chrome, ["kind": "classifier-request", "requestID": "duplicate", "operation": "activity-record", "body": ["records": [row, row]]])
+        queue.sync {}
+        let duplicate = try XCTUnwrap(decoded(frames).last?["body"] as? [String: Any])
+        XCTAssertEqual(duplicate["rejectedIDs"] as? [String], ["duplicate"])
+        XCTAssertEqual(duplicate["stored"] as? Int, 0)
+        XCTAssertTrue(store.records(category: .webVisit, from: Date(timeIntervalSince1970: 0), to: clock).isEmpty)
+        try FileManager.default.createDirectory(at: directory.appendingPathComponent("web-visit/1970-01-01.json"), withIntermediateDirectories: true)
+        queue.sync {}; frames.removeAll()
+        try incoming(hub, chrome, ["kind": "classifier-request", "requestID": "pending", "operation": "activity-record", "body": ["records": [row]]])
+        queue.sync {}
+        let pending = try XCTUnwrap(decoded(frames).last?["body"] as? [String: Any])
+        XCTAssertEqual(pending["pendingIDs"] as? [String], ["duplicate"])
+        XCTAssertEqual(pending["acceptedIDs"] as? [String], [])
+        XCTAssertEqual(pending["rejectedIDs"] as? [String], [])
+        XCTAssertEqual(pending["stored"] as? Int, 0)
+    }
+
     func testClassifierAndBrowserCannotForgeNativeSettingsNotification() throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: directory) }

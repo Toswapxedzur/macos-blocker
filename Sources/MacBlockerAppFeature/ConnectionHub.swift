@@ -995,7 +995,7 @@ final class ConnectionHub: ObservableObject {
     /// Handles an Activity op locally (the hub host owns the store; see
     /// ACTIVITY-LOG.md §5) and replies on the same classifier-response channel the
     /// extension already awaits. `activity-record` stores browser records (the
-    /// store is the privacy backstop — a disabled category writes nothing);
+    /// store admits only native-known grants and clips intervals at OFF);
     /// `activity-settings` gets, or merges-and-sets, the recording settings.
     private func handleActivityRequest(source: NWConnection, store: ActivityStore?, requestID: String, operation: String, body: [String: Any]) {
         guard let store else {
@@ -1004,18 +1004,29 @@ final class ConnectionHub: ObservableObject {
         }
         switch operation {
         case "activity-record":
-            let settings = store.loadSettings()
-            var stored = 0
-            var watchedKeys: [String] = []
-            for record in ActivityWire.records(from: body) where store.record(record, settings: settings) {
-                stored += 1
-                if record.category == .contentWatched { watchedKeys.append(record.key) }
+            let entries = ActivityWire.browserRecords(from: body)
+            let duplicateIDs = ActivityWire.duplicateBrowserRecordIDs(from: body)
+            var stored = 0, acceptedIDs = Set<String>(), storedIDs = Set<String>(), pendingIDs = Set<String>()
+            for entry in entries where !duplicateIDs.contains(entry.record.id) {
+                let result = store.recordBrowser(entry)
+                if result.accepted { acceptedIDs.insert(entry.record.id) }
+                if result == .stored { stored += 1; storedIDs.insert(entry.record.id) }
+                if result == .pending { pendingIDs.insert(entry.record.id) }
             }
+            let ids = ActivityWire.browserRecordIDs(from: body)
+            let fresh = entries.filter { storedIDs.contains($0.record.id) }
+            let watchedKeys = fresh.filter { $0.record.category == .contentWatched }.map { $0.record.key }
             if !watchedKeys.isEmpty {
                 DispatchQueue.main.async { MainActor.assumeIsolated { WatchedFactsRecorder.record(keys: watchedKeys, in: store) } }
             }
-            if let icons = body["icons"] as? [String: String] { store.mergeWebIcons(icons) }
-            send(source, dict: ["kind": "classifier-response", "requestID": requestID, "operation": operation, "body": ["stored": stored]])
+            let domains = Set(fresh.filter { $0.record.category == .webVisit }.map { $0.record.key })
+            if let icons = body["icons"] as? [String: String] { store.mergeWebIcons(icons.filter { domains.contains($0.key) }) }
+            send(source, dict: ["kind": "classifier-response", "requestID": requestID, "operation": operation, "body": [
+                "stored": stored,
+                "acceptedIDs": ids.filter { acceptedIDs.contains($0) },
+                "rejectedIDs": ids.filter { !acceptedIDs.contains($0) && !pendingIDs.contains($0) },
+                "pendingIDs": ids.filter { pendingIDs.contains($0) }
+            ]])
         case "activity-settings":
             let snapshot: ActivitySettingsSnapshot
             if let settingsBody = body["settings"] as? [String: Any] {

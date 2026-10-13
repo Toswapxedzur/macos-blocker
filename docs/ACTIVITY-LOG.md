@@ -48,9 +48,11 @@ screen lock.
   on. Existing screen-time enforcement and classifier collection are separate
   pre-existing pipelines with their own settings; an Activity toggle governs the
   **Activity log only** (UI copy: "record to your Activity log").
-- **Disabled ⇒ never captured.** Enforced at the capture site *and* backstopped in
-  `ActivityStore.record` (a disabled category writes nothing). A toggle takes
-  effect immediately, mid-session.
+- **Disabled ⇒ no new observation.** Enforced at the capture site, with native
+  sample writes backstopped by `ActivityStore.record`. Authenticated browser
+  intervals carry a native-known recording grant; `recordBrowser` clips a late
+  interval at its committed OFF cutoff, retaining observed pre-OFF time and
+  excluding all time afterward. A toggle takes effect immediately, mid-session.
 - **Local-only, no egress.** No network sink exists. Cross-device merge would need
   outward sync, which is precluded; timelines are per-machine (the native app plus
   the browsers on that machine, merged over the loopback HMAC hub).
@@ -105,8 +107,13 @@ Activity/
   go to connected authenticated browsers, including the initiating browser;
   classifier pushes cannot originate this message. Replacing the store closes
   browser sessions for fresh authentication, while the classifier and listener
-  remain available. Browser capture/pause and pre-OFF record admission are
-  coordinated changes and require their own acceptance beyond this producer.
+  remain available. Browser record admission consumes grant metadata without
+  persisting it, and replies with disjoint `acceptedIDs`, `rejectedIDs` and
+  `pendingIDs`. Exact persisted replays are accepted without another stored count;
+  duplicate IDs within one submitted batch are all rejected before writes.
+  Write failures remain pending. Icons and watched facts are updated only for
+  newly stored authorized rows. Browser capture/pause and live integration
+  require coordinated acceptance beyond these native paths.
 - Same definitions (idle threshold, day boundary, "watched") hold identically
   across macOS, Windows, and the extension.
 
