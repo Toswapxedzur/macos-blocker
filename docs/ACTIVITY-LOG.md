@@ -94,6 +94,19 @@ Activity/
   which Mac Vault's `ConnectionHub` — the hub's only host — answers itself (it is
   in the extension's `operations` list and the hub's allowlists). Flush is
   idempotent and the buffer is bounded (cap + drop-oldest).
+- **Native settings notifications (held next-version source):** authenticated
+  browser peers receive `activitySettingsNotifications: true` in `welcome`,
+  followed by `activity-settings-updated` with body
+  `{settings, epoch, revision, changedAtMs}`. The same atomic body is returned
+  by `activity-settings` GET/SET. The epoch belongs to the store lifetime and
+  revisions order successful commits; these fields never enter saved settings.
+  Native UI and browser SET commits use the same store observer. A failed save
+  returns `activity-storage-unavailable` without publishing a commit. Notifications
+  go to connected authenticated browsers, including the initiating browser;
+  classifier pushes cannot originate this message. Replacing the store closes
+  browser sessions for fresh authentication, while the classifier and listener
+  remain available. Browser capture/pause and pre-OFF record admission are
+  coordinated changes and require their own acceptance beyond this producer.
 - Same definitions (idle threshold, day boundary, "watched") hold identically
   across macOS, Windows, and the extension.
 
