@@ -106,12 +106,17 @@ final class VaultClassifierWorkerActivity {
         case "collection-clear":
             if let platform = body["platformID"] as? String { model.clearCollectedData(platformID: platform); model.onWebStateChange?() }
         case "setSettings":
-            applySettings(body)
+            try applySettings(body)
         case "settings":
+            let settings: ActivitySettingsSnapshot
             if let update = body["settings"] as? [String: Any] {
-                store.updateSettings { $0 = ActivityWire.merged($0, with: update) }
+                settings = try commitSettings { $0 = ActivityWire.merged($0, with: update) }
+            } else {
+                settings = store.settingsSnapshot()
             }
-            return ["kind": "settings", "settings": ActivityWire.settingsPayload(store.loadSettings())]
+            var answer = ActivityWire.settingsSnapshotPayload(settings)
+            answer["kind"] = "settings"
+            return answer
         case "browser-record":
             let payload = body["body"] as? [String: Any] ?? body
             let settings = store.loadSettings()
@@ -197,20 +202,31 @@ final class VaultClassifierWorkerActivity {
         return try await snapshot()
     }
 
-    private func applySettings(_ body: [String: Any]) {
+    private func applySettings(_ body: [String: Any]) throws {
         guard let raw = body["category"] as? String, let category = ActivityCategory(rawValue: raw) else {
             if let days = body["retentionDays"] as? Int {
-                store.updateSettings { $0.retentionDays = max(0, days) }
+                try commitSettings { $0.retentionDays = max(0, days) }
                 model.setCollectionKeep(platformID: nil, days: max(0, days))
             }
             return
         }
-        store.updateSettings {
+        try commitSettings {
             var value = $0.settings(for: category)
             if let enabled = body["enabled"] as? Bool { value.enabled = enabled }
             if let retention = body["retentionDays"] as? Int { value.retentionDays = retention < 0 ? nil : retention }
             $0.set(value, for: category)
         }
+    }
+
+    /// Publish the captured successful commit before any dashboard work yields.
+    /// A failed destination write must not masquerade as a successful toggle.
+    @discardableResult
+    private func commitSettings(_ mutate: (inout ActivitySettings) -> Void) throws -> ActivitySettingsSnapshot {
+        guard let committed = store.updateSettings(mutate) else {
+            throw ActivityWorkerError.storageUnavailable
+        }
+        emit(["event": "activity-settings-committed", "value": ActivityWire.settingsSnapshotPayload(committed)])
+        return committed
     }
 
     private func snapshot() async throws -> [String: Any] {
@@ -329,6 +345,7 @@ final class VaultClassifierWorkerActivity {
 
 private enum ActivityWorkerError: String, Error, LocalizedError {
     case invalidOperation = "invalid-activity-operation"
+    case storageUnavailable = "activity-storage-unavailable"
     var errorDescription: String? { rawValue }
 }
 

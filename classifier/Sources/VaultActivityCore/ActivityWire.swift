@@ -60,6 +60,13 @@ public enum ActivityWire {
         return ["byCategory": byCategory, "idleThresholdSeconds": settings.idleThresholdSeconds]
     }
 
+    /// Native-authoritative ordering metadata is ephemeral, never part of the
+    /// settings file or accepted from a browser settings update.
+    public static func settingsSnapshotPayload(_ snapshot: ActivitySettingsSnapshot) -> [String: Any] {
+        ["settings": settingsPayload(snapshot.settings), "epoch": snapshot.epoch,
+         "revision": snapshot.revision, "changedAtMs": snapshot.changedAtMs]
+    }
+
     /// Merges an `activity-settings` set body into the current settings. Only the
     /// categories and fields the caller includes are changed, so the extension
     /// (which shows only browser categories) never clobbers the native

@@ -13,6 +13,10 @@ public final class ActivityStore: @unchecked Sendable {
     private let calendar: Calendar
     private let lock = NSLock()
     private let fileManager = FileManager.default
+    private let settingsEpoch = UUID().uuidString
+    private var settingsRevision = 0
+    private var settingsChangedAtMs = 0.0
+    private var settingsObservers: [UUID: @Sendable (ActivitySettingsSnapshot) -> Void] = [:]
     public private(set) var storageIssue: String?
 
     private static let settingsFileName = "settings.json"
@@ -41,18 +45,68 @@ public final class ActivityStore: @unchecked Sendable {
         return loadSettingsLocked()
     }
 
-    public func saveSettings(_ settings: ActivitySettings) {
+    /// Atomically reads both the loaded settings and their in-process ordering
+    /// metadata. Revision zero represents the loaded state before any commit.
+    public func settingsSnapshot() -> ActivitySettingsSnapshot {
         lock.lock(); defer { lock.unlock() }
-        write(encode(settings), to: rootDirectory.appendingPathComponent(Self.settingsFileName))
+        return snapshotLocked(loadSettingsLocked())
     }
 
-    /// Atomic read-modify-write of the settings, so a toggle from the dashboard
-    /// cannot race the hub's own settings writes.
-    public func updateSettings(_ mutate: (inout ActivitySettings) -> Void) {
+    /// Observers receive successful commits only. Delivery is outside the store
+    /// lock, so callbacks may read or update the store. Concurrent commits can
+    /// deliver out of order; consumers must compare epoch and revision.
+    public func observeSettings(_ observer: @escaping @Sendable (ActivitySettingsSnapshot) -> Void) -> UUID {
         lock.lock(); defer { lock.unlock() }
+        let token = UUID()
+        settingsObservers[token] = observer
+        return token
+    }
+
+    /// Removal prevents capture by future commits; an already captured callback
+    /// may still arrive and must be ignored by a retired consumer.
+    public func removeSettingsObserver(_ token: UUID) {
+        lock.lock(); defer { lock.unlock() }
+        settingsObservers.removeValue(forKey: token)
+    }
+
+    @discardableResult
+    public func saveSettings(_ settings: ActivitySettings) -> ActivitySettingsSnapshot? {
+        lock.lock()
+        let committed = commitSettingsLocked(settings)
+        let observers = committed == nil ? [] : Array(settingsObservers.values)
+        lock.unlock()
+        if let committed { observers.forEach { $0(committed) } }
+        return committed
+    }
+
+    /// Atomic read-modify-write, with the exact successful commit returned and
+    /// published rather than a later reread that could include another edit.
+    @discardableResult
+    public func updateSettings(_ mutate: (inout ActivitySettings) -> Void) -> ActivitySettingsSnapshot? {
+        lock.lock()
         var settings = loadSettingsLocked()
         mutate(&settings)
-        write(encode(settings), to: rootDirectory.appendingPathComponent(Self.settingsFileName))
+        let committed = commitSettingsLocked(settings)
+        let observers = committed == nil ? [] : Array(settingsObservers.values)
+        lock.unlock()
+        if let committed { observers.forEach { $0(committed) } }
+        return committed
+    }
+
+    private func snapshotLocked(_ settings: ActivitySettings) -> ActivitySettingsSnapshot {
+        ActivitySettingsSnapshot(settings: settings, epoch: settingsEpoch,
+                                 revision: settingsRevision, changedAtMs: settingsChangedAtMs)
+    }
+
+    private func commitSettingsLocked(_ settings: ActivitySettings) -> ActivitySettingsSnapshot? {
+        guard settingsRevision < ActivitySettingsSnapshot.maxRevision else {
+            storageIssue = "Activity settings revision limit reached; saved data is preserved."
+            return nil
+        }
+        guard write(encode(settings), to: rootDirectory.appendingPathComponent(Self.settingsFileName)) else { return nil }
+        settingsRevision += 1
+        settingsChangedAtMs = now().timeIntervalSince1970 * 1_000
+        return snapshotLocked(settings)
     }
 
     // MARK: - Website icons (favicons, supplied by the extension as data URIs)
