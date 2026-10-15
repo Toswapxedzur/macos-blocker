@@ -1475,12 +1475,12 @@
 
   function usageSection(s) {
     var section = el("section", "panel act-section");
+    var data = usageData();
     var head = el("div", "section-head");
     head.appendChild(el("h2", null, at("usage", "Usage")));
     head.appendChild(usageFocusSelect());
     head.appendChild(rangeTabs("usage"));
     var appsOn = s.appUsage && s.appUsage.enabled, webOn = s.webVisit && s.webVisit.enabled;
-    var data = usageData();
     // Recording controls future collection; saved rows remain readable while off.
     if (!appsOn && !webOn && !usageItemsRaw.length) {
       section.appendChild(head);

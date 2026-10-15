@@ -26,6 +26,8 @@ window.runRecordingHistoryTests = async () => {
   const summary = section => q('#' + section + '-section .section-summary strong')?.textContent;
   document.body.dataset.scene = 'activity';
   apply(); await wait();
+  const firstOptions = [...q('#usage-section .section-head select').options].map(option => option.value);
+  expect(firstOptions.includes('app|com.google.Chrome') && firstOptions.includes('web|youtube.com') && !firstOptions.includes('app|com.example.App'), 'first OFF-history render builds Usage choices from current rows rather than the previous range');
   expect(!q('#usage-section .off') && summary('usage') === '00:10:00', 'saved Usage remains visible with both recording switches off');
   expect(row('Saved Chrome')?.querySelector('.colour-time').textContent === '00:10:00' && row('Saved website')?.querySelector('.colour-time').textContent === '00:05:00', 'OFF Usage retains complete browser and website rows');
   const pieLabels = [...scope.querySelectorAll('#usage-section .legend-label')].map(node => node.textContent);
