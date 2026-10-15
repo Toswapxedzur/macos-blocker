@@ -1480,12 +1480,13 @@
     head.appendChild(usageFocusSelect());
     head.appendChild(rangeTabs("usage"));
     var appsOn = s.appUsage && s.appUsage.enabled, webOn = s.webVisit && s.webVisit.enabled;
-    if (!appsOn && !webOn) {
+    var data = usageData();
+    // Recording controls future collection; saved rows remain readable while off.
+    if (!appsOn && !webOn && !usageItemsRaw.length) {
       section.appendChild(head);
       section.appendChild(notRecorded(["app-usage", "web-visit"]));
       return section;
     }
-    var data = usageData();
     var summary = el("span", "section-summary");
     summary.appendChild(el("strong", null, fmt(data.used)));
     summary.appendChild(document.createTextNode(at("usageSummarySuffix", " used · {unrecorded} not recorded", { unrecorded: fmt(data.empty) })));
@@ -1548,16 +1549,17 @@
   // other pages (their time not on any one piece).
   function contentData() {
     var set = contentFocusSet();
-    var pieces = (contentSnap.watchedTimeline || []).map(function (s) {
+    var recorded = contentSnap.watchedTimeline || [];
+    var sites = (contentSnap.web && contentSnap.web.timeline || []).filter(function (w) {
+      return PLATFORM_SITES.some(function (p) { return w.key === p[0] || w.key.endsWith("." + p[0]); });
+    });
+    var pieces = recorded.map(function (s) {
       var tags = tagsOf(s.key);
       var shown = set ? tags.filter(function (t) { return set.has(t.id); }) : tags;
       return { seg: s, startMs: s.startedAtMs, endMs: s.startedAtMs + s.seconds * 1000, tags: shown.length ? shown : [UNTAGGED] };
     }).filter(function (p) { return !set || p.tags[0] !== UNTAGGED; });
     var other = [];
     if (!set) {
-      var sites = (contentSnap.web && contentSnap.web.timeline || []).filter(function (w) {
-        return PLATFORM_SITES.some(function (p) { return w.key === p[0] || w.key.endsWith("." + p[0]); });
-      });
       sites.forEach(function (w) {
         var start = w.startedAtMs, end = w.startedAtMs + w.seconds * 1000;
         var cuts = pieces.filter(function (p) { return p.endMs > start && p.startMs < end; })
@@ -1582,7 +1584,7 @@
     var tagEntries = Object.keys(byTag).map(function (k) { return byTag[k]; }).sort(function (a, b) { return b.seconds - a.seconds; });
     var watched = pieces.reduce(function (sum, p) { return sum + (p.endMs - p.startMs) / 1000; }, 0);
     var otherSeconds = other.reduce(function (sum, o) { return sum + (o.endMs - o.startMs) / 1000; }, 0);
-    return { pieces: pieces, other: other, tags: tagEntries, watched: watched, otherSeconds: otherSeconds };
+    return { pieces: pieces, other: other, tags: tagEntries, watched: watched, otherSeconds: otherSeconds, hasHistory: recorded.length > 0 || sites.length > 0 };
   }
 
   function contentStrip(data) {
@@ -1774,12 +1776,12 @@
     head.appendChild(el("h2", null, at("label.Content", "Content")));
     head.appendChild(contentFocusSelect());
     head.appendChild(rangeTabs("content"));
-    if (!(s.contentWatched && s.contentWatched.enabled)) {
+    var data = contentData();
+    if (!(s.contentWatched && s.contentWatched.enabled) && !data.hasHistory) {
       section.appendChild(head);
       section.appendChild(notRecorded(["content-watched"]));
       return section;
     }
-    var data = contentData();
     var summary = el("span", "section-summary");
     summary.appendChild(el("strong", null, fmt(data.watched)));
     summary.appendChild(document.createTextNode(at("contentSummarySuffix", " on content") + (contentFocus === "all" ? " · " + at("timeOnOtherPages", "{time} other pages", { time: fmt(data.otherSeconds) }) : "")));
