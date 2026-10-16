@@ -1966,6 +1966,16 @@
     picker.month = Math.min(d.getTime(), now.getTime());
     drawPicker();
   }
+  function positionPicker() {
+    if (!picker) return;
+    var box = picker.node, r = picker.anchor.getBoundingClientRect();
+    var bounds = box.getBoundingClientRect(), gap = 6, inset = 8;
+    var below = r.bottom + gap, above = r.top - bounds.height - gap;
+    var top = below + bounds.height <= window.innerHeight - inset ? below
+      : above >= inset ? above : Math.max(inset, window.innerHeight - bounds.height - inset);
+    box.style.top = top + "px";
+    box.style.left = Math.max(inset, Math.min(r.left, window.innerWidth - bounds.width - inset)) + "px";
+  }
   function drawPicker() {
     var box = picker.node, month = new Date(picker.month), today = dayStart(Date.now());
     var chosen = ranges[picker.section].indexOf("since:") === 0 ? +ranges[picker.section].slice(6) : null;
@@ -1996,10 +2006,9 @@
     }
     box.appendChild(grid);
     box.appendChild(el("div", "picker-note", at("fromTheSelectedDayUntilNow", "From the selected day until now.")));
-    var r = picker.anchor.getBoundingClientRect();
-    box.style.top = (r.bottom + 6) + "px";
-    box.style.left = Math.max(8, Math.min(r.left, window.innerWidth - 268)) + "px";
+    positionPicker();
   }
+  window.addEventListener("resize", positionPicker);
   scope.addEventListener("mousedown", function (e) {
     if (!picker) return;
     var path = e.composedPath();
