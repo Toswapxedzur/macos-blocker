@@ -40,6 +40,16 @@ window.runBrowserAccountingTests = async () => {
   const filter=q('#usage-section select');filter.value='all';filter.dispatchEvent(new Event('change',{bubbles:true}));
   labels=[...scope.querySelectorAll('#usage-section .legend-label')].map(n=>n.textContent);
   expect(!labels.includes('Safari') && !labels.includes('Chrome'),'browsers without recorded sites are also excluded from pie');
+  const partialBrowser=segment('com.apple.Safari','Safari',600,300,1), fullSite=segment('youtube.com','YouTube',1200,0,4);
+  snap.app={totalSeconds:600,bars:[partialBrowser],timeline:[partialBrowser]};
+  snap.web={totalSeconds:1200,bars:[fullSite],timeline:[fullSite]};
+  activityApply(snap,{},{},{},[]);
+  expect(q('#usage-section .section-summary strong').textContent==='00:20:00','website intervals outside recorded browser intervals remain elapsed usage without counting overlap twice');
+  expect(q('#usage-section .strip').querySelectorAll('.site').length===3,'ordered strip retains uncovered website intervals before and after its browser');
+  row('YouTube').click();
+  expect(q('#usage-section .section-summary strong').textContent==='00:20:00','focused website includes its full recorded duration across Apps recording gaps');
+  const browserFocus=q('#usage-section .section-head select'); browserFocus.value='app|com.apple.Safari';browserFocus.dispatchEvent(new Event('change',{bubbles:true}));
+  expect(q('#usage-section .section-summary strong').textContent==='00:10:00','focused browser includes only its own recorded duration');
   expect(!window.uiErrors.length,'production renderer has no page errors');
   return results;
 };
