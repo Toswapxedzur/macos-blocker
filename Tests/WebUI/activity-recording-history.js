@@ -62,6 +62,7 @@ window.runRecordingHistoryTests = async () => {
   expect(!!q('#usage-section .off') && summary('content') === '00:03:00', 'independent Content snapshot remains readable when Usage range is empty and OFF');
   apply({...empty,web:snapshot.web}); await wait();
   expect(!!row('Saved website') && !q('#usage-section .off'), 'website-only saved Usage remains readable while Apps and Websites are off');
+  expect(summary('usage') === '00:05:00' && q('#usage-section .strip .site'), 'website-only OFF history contributes to the visible headline and ordered strip');
   expect(!q('#content-section .off') && q('#content-section .section-summary').textContent.includes('00:05:00 other pages'), 'saved platform website time remains visible as Other pages while Content is off');
   apply({...empty,web:{totalSeconds:300,bars:[{...site,key:'example.com'}],timeline:[{...site,key:'example.com'}]}}); await wait();
   expect(!!q('#content-section .off'), 'unrelated website history does not fabricate Content history');

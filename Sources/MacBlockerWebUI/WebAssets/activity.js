@@ -278,7 +278,7 @@
   // to each browser segment (fractions of the range). `pieces` feed the strip,
   // `byBrowser` the browsers' own time in the list.
   function attributeSites(apps, sites) {
-    var pieces = [], byBrowser = {};
+    var pieces = [], byBrowser = {}, covered = new Map();
     // Sites by start; each browser block looks only at the sites that can
     // overlap it (every pair was ~6 M checks for 90 days).
     var sorted = sites.slice().sort(function (a, b) { return a.startFraction - b.startFraction; });
@@ -295,9 +295,18 @@
         var a = Math.max(from, w.startFraction), b = Math.min(to, w.startFraction + w.widthFraction);
         if (b <= a) continue;
         pieces.push({ from: a, to: b, site: w, browser: s });
+        var intervals = covered.get(w) || []; intervals.push([a, b]); covered.set(w, intervals);
         var perSite = byBrowser[s.key] || (byBrowser[s.key] = {});
         perSite[w.key] = (perSite[w.key] || 0) + (b - a);
       }
+    });
+    sites.forEach(function (w) {
+      var cursor = w.startFraction, end = cursor + w.widthFraction;
+      (covered.get(w) || []).sort(function (a, b) { return a[0] - b[0]; }).forEach(function (interval) {
+        if (interval[0] > cursor) pieces.push({ from: cursor, to: interval[0], site: w, browser: null });
+        cursor = Math.max(cursor, interval[1]);
+      });
+      if (cursor < end) pieces.push({ from: cursor, to: end, site: w, browser: null });
     });
     return { pieces: pieces, byBrowser: byBrowser };
   }
@@ -1013,13 +1022,19 @@
     var items = set ? usageItemsRaw.filter(function (entry) { return set.has(entryID(entry)); }) : mergeItems(usageItemsRaw);
     usageItemsShown = items;
     var segments = apps.timeline.filter(function (s) { return !set || set.has("app|" + s.key); });
-    var pieces = attribution.pieces.filter(function (p) { return !set || set.has("web|" + p.site.key) || set.has("app|" + p.browser.key); });
-    // Time used: the apps in front (a browser's sites are inside its time).
-    var used = set
-      ? segments.reduce(function (sum, s) { return sum + s.seconds; }, 0)
-        + pieces.filter(function (p) { return !set.has("app|" + p.browser.key); })
-          .reduce(function (sum, p) { return sum + (p.to - p.from) * spanSeconds; }, 0)
-      : apps.timeline.reduce(function (sum, s) { return sum + s.seconds; }, 0);
+    var pieces = attribution.pieces.filter(function (p) { return !set || set.has("web|" + p.site.key) || (p.browser && set.has("app|" + p.browser.key)); });
+    // Recorded websites remain real usage when Apps recording has gaps or is off.
+    // Merge the selected intervals so overlapping app/site clocks count once.
+    var intervals = segments.map(function (s) { return [s.startFraction, s.startFraction + s.widthFraction]; })
+      .concat(pieces.map(function (p) { return [p.from, p.to]; }))
+      .sort(function (a, b) { return a[0] - b[0]; });
+    var usedFraction = 0, cursor = -Infinity;
+    intervals.forEach(function (interval) {
+      var from = Math.max(0, interval[0], cursor), to = Math.min(1, interval[1]);
+      if (to > from) usedFraction += to - from;
+      cursor = Math.max(cursor, to);
+    });
+    var used = usedFraction * spanSeconds;
     var pieRaw = usageItemsRaw.filter(function (entry) { return !entry.browser && (!set || set.has(entryID(entry))); });
     var pieItems = set ? pieRaw : mergeItems(pieRaw);
     return { items: items, pieItems: pieItems, segments: segments, pieces: pieces, used: used, empty: Math.max(0, spanSeconds - used) };
@@ -1079,7 +1094,7 @@
     var f = stripFrame(44, snapshot);
     if (data.segments.length + data.pieces.length > 128) return stripCanvas(f, [
       ...data.segments.map(s => ({from:s.startFraction,to:s.startFraction+s.widthFraction,color:colorOf(colorIndexFor("app",s.key,s.colorIndex)),info:()=>segmentInfo(s,BROWSERS[s.key] ? at("appBrowser", "App · browser") : "App",s.startedAtMs,s.startedAtMs+s.seconds*1000,f.multiDay)})),
-      ...data.pieces.map(piece => ({from:piece.from,to:piece.to,height:44*.85,color:colorOf(colorIndexFor("web",piece.site.key,piece.site.colorIndex)),info:()=>segmentInfo(piece.site,"Website",snapshot.rangeStartMs+piece.from*f.span,snapshot.rangeStartMs+piece.to*f.span,f.multiDay,piece.browser)}))
+      ...data.pieces.map(piece => ({from:piece.from,to:piece.to,height:piece.browser ? 44*.85 : 44,color:colorOf(colorIndexFor("web",piece.site.key,piece.site.colorIndex)),info:()=>segmentInfo(piece.site,"Website",snapshot.rangeStartMs+piece.from*f.span,snapshot.rangeStartMs+piece.to*f.span,f.multiDay,piece.browser)}))
     ],44);
     data.segments.forEach(function (s) {
       var seg = paint(el("div", "seg"), colorIndexFor("app", s.key, s.colorIndex));
@@ -1090,6 +1105,7 @@
     data.pieces.forEach(function (piece) {
       var w = piece.site;
       var site = paint(el("div", "seg site"), colorIndexFor("web", w.key, w.colorIndex));
+      if (!piece.browser) site.style.height = "100%";
       place(site, piece.from, piece.to);
       hoverable(site, function () { return segmentInfo(w, "Website", snapshot.rangeStartMs + piece.from * f.span, snapshot.rangeStartMs + piece.to * f.span, f.multiDay, piece.browser); });
       f.track.appendChild(site);
@@ -1430,12 +1446,12 @@
             hourMinute(seg.startFraction) + " – " + hourMinute(seg.startFraction + seg.widthFraction) + " · " + fmt(seg.widthFraction * 86400)] }; } });
       });
       attribution.pieces.forEach(function (piece) {
-        if (set && !set.has("web|" + piece.site.key) && !set.has("app|" + piece.browser.key)) return;
+        if (set && !set.has("web|" + piece.site.key) && !(piece.browser && set.has("app|" + piece.browser.key))) return;
         var color = colorOf(colorIndexFor("web", piece.site.key, piece.site.colorIndex));
-        binSites.push({ key: piece.site.key, label: piece.site.label || piece.site.key, browserKey: piece.browser.key,
+        binSites.push({ key: piece.site.key, label: piece.site.label || piece.site.key, browserKey: piece.browser ? piece.browser.key : null,
           from: piece.from, to: piece.to, color: color });
-        blocks.push({ from: piece.from, to: piece.to, narrow: true, color: color,
-          info: function () { return { title: piece.site.label || piece.site.key, key: piece.site.key, lines: [at("websiteIn", "Website · in {browser}", { browser: piece.browser.label || piece.browser.key }) + " · " + dayName(day.dayStartMs),
+        blocks.push({ from: piece.from, to: piece.to, narrow: !!piece.browser, color: color,
+          info: function () { return { title: piece.site.label || piece.site.key, key: piece.site.key, lines: [(piece.browser ? at("websiteIn", "Website · in {browser}", { browser: piece.browser.label || piece.browser.key }) : at("label.Website", "Website")) + " · " + dayName(day.dayStartMs),
             hourMinute(piece.from) + " – " + hourMinute(piece.to) + " · " + fmt((piece.to - piece.from) * 86400)] }; } });
       });
       ordered.push({ start: day.dayStartMs, blocks: blocks, browserBlocks: blocks.filter(function (block) { return block.browser; }),
