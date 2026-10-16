@@ -203,7 +203,7 @@
     apps.forEach(function (b) {
       var overlaps = {}, inSites = attribution.byBrowser[b.key] || {};
       Object.keys(inSites).forEach(function (key) { overlaps[key] = inSites[key] * spanSeconds; });
-      if (b.seconds >= 1) items.push({ item: b, seconds: b.seconds, kind: "App", browser: !!BROWSERS[b.key], siteSeconds: overlaps });
+      if (b.seconds >= 1) items.push({ item: b, seconds: b.seconds, kind: "App", browser: !!isBrowserApp(b.key), siteSeconds: overlaps });
     });
     sites.forEach(function (b) { items.push({ item: b, seconds: b.seconds, kind: "Website" }); });
     return items.sort(function (x, y) { return y.seconds - x.seconds; });
@@ -285,7 +285,7 @@
     var starts = sorted.map(function (w) { return w.startFraction; });
     var longest = sorted.reduce(function (m, w) { return Math.max(m, w.widthFraction); }, 0);
     apps.forEach(function (s) {
-      if (!BROWSERS[s.key]) return;
+      if (!isBrowserApp(s.key)) return;
       var from = s.startFraction, to = s.startFraction + s.widthFraction;
       // first site that could still be running at `from`
       var lo = 0, hi = starts.length, bound = from - longest;
@@ -326,6 +326,13 @@
     "com.brave.Browser": 1, "company.thebrowser.Browser": 1, "com.vivaldi.Vivaldi": 1,
     "com.operasoftware.Opera": 1, "com.apple.Safari": 1, "org.mozilla.firefox": 1
   };
+  // Windows records unpackaged apps by executable path, rather than a Mac bundle ID.
+  var WINDOWS_BROWSERS = new Set(["chrome.exe", "msedge.exe", "firefox.exe", "opera.exe", "brave.exe", "vivaldi.exe", "iexplore.exe"]);
+  function isBrowserApp(key) {
+    if (BROWSERS[key]) return true;
+    return window.__CB_DESKTOP_PROGRAM_ID === "windowsapp" && WINDOWS_BROWSERS.has(String(key || "").split(/[\\/]/).pop().toLowerCase());
+  }
+
 
   // ── Hover card (owner 2026-09-29: hover any bar or pie for details) ──
   // Our own card, not the system tooltip. A chart part registers what it
@@ -1093,13 +1100,13 @@
   function usageStrip(data) {
     var f = stripFrame(44, snapshot);
     if (data.segments.length + data.pieces.length > 128) return stripCanvas(f, [
-      ...data.segments.map(s => ({from:s.startFraction,to:s.startFraction+s.widthFraction,color:colorOf(colorIndexFor("app",s.key,s.colorIndex)),info:()=>segmentInfo(s,BROWSERS[s.key] ? at("appBrowser", "App · browser") : "App",s.startedAtMs,s.startedAtMs+s.seconds*1000,f.multiDay)})),
+      ...data.segments.map(s => ({from:s.startFraction,to:s.startFraction+s.widthFraction,color:colorOf(colorIndexFor("app",s.key,s.colorIndex)),info:()=>segmentInfo(s,isBrowserApp(s.key) ? at("appBrowser", "App · browser") : "App",s.startedAtMs,s.startedAtMs+s.seconds*1000,f.multiDay)})),
       ...data.pieces.map(piece => ({from:piece.from,to:piece.to,height:piece.browser ? 44*.85 : 44,color:colorOf(colorIndexFor("web",piece.site.key,piece.site.colorIndex)),info:()=>segmentInfo(piece.site,"Website",snapshot.rangeStartMs+piece.from*f.span,snapshot.rangeStartMs+piece.to*f.span,f.multiDay,piece.browser)}))
     ],44);
     data.segments.forEach(function (s) {
       var seg = paint(el("div", "seg"), colorIndexFor("app", s.key, s.colorIndex));
       place(seg, s.startFraction, s.startFraction + s.widthFraction);
-      hoverable(seg, function () { return segmentInfo(s, BROWSERS[s.key] ? at("appBrowser", "App · browser") : "App", s.startedAtMs, s.startedAtMs + s.seconds * 1000, f.multiDay); });
+      hoverable(seg, function () { return segmentInfo(s, isBrowserApp(s.key) ? at("appBrowser", "App · browser") : "App", s.startedAtMs, s.startedAtMs + s.seconds * 1000, f.multiDay); });
       f.track.appendChild(seg);
     });
     data.pieces.forEach(function (piece) {
@@ -1441,8 +1448,8 @@
         if (set && !set.has("app|" + seg.key)) return;
         var color = colorOf(colorIndexFor("app", seg.key, seg.colorIndex));
         binApps.push({ key: seg.key, label: seg.label || seg.key, from: seg.startFraction, to: seg.startFraction + seg.widthFraction, color: color });
-        blocks.push({ from: seg.startFraction, to: seg.startFraction + seg.widthFraction, color: color, browser: !!BROWSERS[seg.key],
-          info: function () { return { title: seg.label || seg.key, key: seg.key, lines: [(BROWSERS[seg.key] ? at("appBrowser", "App · browser") : "App") + " · " + dayName(day.dayStartMs),
+        blocks.push({ from: seg.startFraction, to: seg.startFraction + seg.widthFraction, color: color, browser: !!isBrowserApp(seg.key),
+          info: function () { return { title: seg.label || seg.key, key: seg.key, lines: [(isBrowserApp(seg.key) ? at("appBrowser", "App · browser") : "App") + " · " + dayName(day.dayStartMs),
             hourMinute(seg.startFraction) + " – " + hourMinute(seg.startFraction + seg.widthFraction) + " · " + fmt(seg.widthFraction * 86400)] }; } });
       });
       attribution.pieces.forEach(function (piece) {

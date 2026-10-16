@@ -40,6 +40,17 @@ window.runBrowserAccountingTests = async () => {
   const filter=q('#usage-section select');filter.value='all';filter.dispatchEvent(new Event('change',{bubbles:true}));
   labels=[...scope.querySelectorAll('#usage-section .legend-label')].map(n=>n.textContent);
   expect(!labels.includes('Safari') && !labels.includes('Chrome'),'browsers without recorded sites are also excluded from pie');
+  const oldProgram=window.__CB_DESKTOP_PROGRAM_ID;
+  window.__CB_DESKTOP_PROGRAM_ID='windowsapp';
+  const windowsChrome=segment('C:\\Program Files\\Google\\Chrome\\Application\\CHROME.EXE','Windows Chrome',1800,0,1);
+  snap.app={totalSeconds:1800,bars:[windowsChrome],timeline:[windowsChrome]};
+  snap.web={totalSeconds:600,bars:[youtube],timeline:[youtube]};
+  activityApply(snap,{},{},{},[]);
+  labels=[...scope.querySelectorAll('#usage-section .legend-label')].map(n=>n.textContent);
+  expect(!labels.includes('Windows Chrome') && labels.includes('YouTube'),'Windows executable-path browsers are excluded from the pie');
+  expect(row('Windows Chrome')?.querySelector('.colour-time').textContent==='00:30:00','Windows browser rows preserve their full recorded duration');
+  expect(q('#usage-section .strip .site').getBoundingClientRect().height<q('#usage-section .strip .seg:not(.site)').getBoundingClientRect().height,'Windows browser paths retain the thin band beneath their website');
+  window.__CB_DESKTOP_PROGRAM_ID=oldProgram;
   const partialBrowser=segment('com.apple.Safari','Safari',600,300,1), fullSite=segment('youtube.com','YouTube',1200,0,4);
   snap.app={totalSeconds:600,bars:[partialBrowser],timeline:[partialBrowser]};
   snap.web={totalSeconds:1200,bars:[fullSite],timeline:[fullSite]};
