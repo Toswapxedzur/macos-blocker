@@ -17,8 +17,9 @@ public struct StorageProduct: Codable, Equatable, Sendable {
         #else
         let product = "mac"
         #endif
-        let versions = (Bundle.module.url(forResource: "storage-product-versions", withExtension: "json", subdirectory: "Resources")
-            .flatMap { try? Data(contentsOf: $0) }
+        let versionsURL = VaultBundledResources.directory(target: "VaultClassifierCore", subdirectory: "Resources")?
+            .appendingPathComponent("storage-product-versions.json")
+        let versions = (versionsURL.flatMap { try? Data(contentsOf: $0) }
             .flatMap { try? JSONDecoder().decode([String: String].self, from: $0) }) ?? [:]
         let appBundleVersion = Bundle.main.bundleIdentifier?.hasPrefix("com.adamancia.vault.mac") == true
             ? Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String : nil
