@@ -396,7 +396,10 @@ public final class MacEnforcementBridge: ObservableObject {
         for diagnostic in result.diagnostics {
             NSLog("[Vault rule %@] %@", diagnostic.groupId, diagnostic.message)
         }
-        do { try webStore.commitRuleDispatch(result.states) }
+        do {
+            guard result.stateFailures?.isEmpty != false else { throw GroupStoreError.invalidInput("Invalid event state") }
+            try webStore.commitRuleDispatch(result.states)
+        }
         catch {
             appendLog(groupId: group.id, group: group.name, message: "Event state could not be saved; no actions were performed: " + String(describing: error))
             // This event performed no actions. Reload only the last saved state

@@ -128,7 +128,10 @@ final class ConnectionHub: ObservableObject {
     /// frames to NWConnection; isolated tests observe delivery without sockets.
     private let outboundDelivery: ((Data) -> Void)?
 
-    init() {
+    private let registryDefaults: UserDefaults
+
+    init(registryDefaults: UserDefaults = .standard) {
+        self.registryDefaults = registryDefaults
         // Production always owns a private serial FIFO. Only the isolated
         // transport initializer below permits a test queue and delivery sink.
         outboundQueue = DispatchQueue(label: "macosBlocker.ConnectionHub.outbound")
@@ -136,6 +139,7 @@ final class ConnectionHub: ObservableObject {
     }
 
     init(testOutboundQueue: DispatchQueue, outboundDelivery: @escaping (Data) -> Void) {
+        self.registryDefaults = .standard
         self.outboundQueue = testOutboundQueue
         self.outboundDelivery = outboundDelivery
     }
@@ -1493,11 +1497,15 @@ final class ConnectionHub: ObservableObject {
         let previousTime: Any
         if let existing, !existing.sharedRuleTime.isEmpty { previousTime = existing.sharedRuleTime }
         else { previousTime = NSNull() }
-        guard let merged = GroupActionsRuntime.shared.call("mergeTime", [
-            previousTime,
-            seeds, initiatingProgram + "/" + initiatingID, (Date().timeIntervalSince1970 * 1000).rounded(.down)
-        ], module: "RuleCore") as? [String: Any], merged["ok"] as? Bool == true,
-              let timeState = merged["state"] as? [String: Any] else { lock.unlock(); return "incompatible-custom-time" }
+        var timeState: [String: Any] = [:]
+        if existing?.sharedRuleTime.isEmpty == false || joining.contains(where: { !($0.2.timeState?["objects"] as? [String: Any] ?? [:]).isEmpty }) {
+            guard let merged = GroupActionsRuntime.shared.call("mergeTime", [
+                previousTime,
+                seeds, initiatingProgram + "/" + initiatingID, (Date().timeIntervalSince1970 * 1000).rounded(.down)
+            ], module: "RuleCore") as? [String: Any], merged["ok"] as? Bool == true,
+                  let mergedState = merged["state"] as? [String: Any] else { lock.unlock(); return "incompatible-custom-time" }
+            timeState = mergedState
+        }
         let cluster = ownCluster ?? otherCluster ?? {
             let created = ClusterState(id: UUID().uuidString, groupName: own.name)
             created.initiator = program
@@ -2043,7 +2051,7 @@ final class ConnectionHub: ObservableObject {
             // acknowledgment; successful file commit retains its existing API.
             let schema = StorageSchemaPolicy(format: "hub.clusters", currentSchema: 2)
             guard self.clusterStorageWritable,
-                  UserDefaults.standard.data(forKey: Self.clustersDefaultsKey).map({ (try? schema.payload(from: $0)) != nil }) ?? true else {
+                  self.registryDefaults.data(forKey: Self.clustersDefaultsKey).map({ (try? schema.payload(from: $0)) != nil }) ?? true else {
                 throw GroupStoreError.invalidInput("cluster-storage-unavailable")
             }
             let oldClusters = self.clusters
@@ -2355,7 +2363,7 @@ final class ConnectionHub: ObservableObject {
             persistClustersLocked()
             // UserDefaults is the existing cluster writer. Verify its exact
             // supported envelope; a refusal freezes new requests until repair.
-            let saved = UserDefaults.standard.data(forKey: Self.clustersDefaultsKey)
+            let saved = self.registryDefaults.data(forKey: Self.clustersDefaultsKey)
                 .flatMap { try? StorageSchemaPolicy(format: "hub.clusters", currentSchema: 2).payload(from: $0) }
                 .flatMap { try? JSONSerialization.jsonObject(with: $0) as? [[String: Any]] }
             guard let stored = saved?.first(where: { $0["id"] as? String == cluster.id })?["sharedRuleTime"] as? [String: Any],
@@ -2483,9 +2491,9 @@ final class ConnectionHub: ObservableObject {
         guard clusterStorageWritable,
               let payload = try? JSONSerialization.data(withJSONObject: arr, options: [.sortedKeys]),
               let data = try? schema.wrap(payload), data != lastPersistedClusters else { return }
-        if let existing = UserDefaults.standard.data(forKey: ConnectionHub.clustersDefaultsKey), (try? schema.payload(from: existing)) == nil { clusterStorageWritable = false; return }
+        if let existing = self.registryDefaults.data(forKey: ConnectionHub.clustersDefaultsKey), (try? schema.payload(from: existing)) == nil { clusterStorageWritable = false; return }
         lastPersistedClusters = data
-        UserDefaults.standard.set(data, forKey: ConnectionHub.clustersDefaultsKey)
+        self.registryDefaults.set(data, forKey: ConnectionHub.clustersDefaultsKey)
     }
 
     /// Caller must hold `lock`. Rebuilds the cluster registry (and the running
@@ -2493,17 +2501,17 @@ final class ConnectionHub: ObservableObject {
     func restoreClustersLocked() {
         // The automatic links of v1 are dropped (owner 2026-09-27): each Mac
         // group in one keeps only its own lines, as after an Unlink.
-        if let old = UserDefaults.standard.data(forKey: ConnectionHub.droppedClustersDefaultsKey) {
+        if let old = self.registryDefaults.data(forKey: ConnectionHub.droppedClustersDefaultsKey) {
             let arr = (try? JSONSerialization.jsonObject(with: old)) as? [[String: Any]] ?? []
             for obj in arr {
                 if let id = (obj["memberGroupIds"] as? [String: String])?[Self.localProgram] { unlinkedLocal.insert(id) }
             }
-            UserDefaults.standard.removeObject(forKey: ConnectionHub.droppedClustersDefaultsKey)
+            self.registryDefaults.removeObject(forKey: ConnectionHub.droppedClustersDefaultsKey)
         }
-        guard let data = UserDefaults.standard.data(forKey: ConnectionHub.clustersDefaultsKey),
+        guard let data = self.registryDefaults.data(forKey: ConnectionHub.clustersDefaultsKey),
               let payload = try? StorageSchemaPolicy(format: "hub.clusters", currentSchema: 2).payload(from: data),
               let arr = (try? JSONSerialization.jsonObject(with: payload)) as? [[String: Any]] else {
-            if UserDefaults.standard.data(forKey: ConnectionHub.clustersDefaultsKey) != nil { clusterStorageWritable = false }
+            if self.registryDefaults.data(forKey: ConnectionHub.clustersDefaultsKey) != nil { clusterStorageWritable = false }
             return
         }
         // Optional old registries need no migration. A malformed present
