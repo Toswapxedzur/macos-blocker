@@ -69,6 +69,7 @@ public final class RuleRuntime {
         public var logs: [Log]
         public var panels: [String: [PanelSnapshot]]
         public var states: [String: String]
+        public var types: [String: [String]]?
         public var quarantine: Quarantine?
     }
 
@@ -168,6 +169,12 @@ public final class RuleRuntime {
         context.evaluateScript("MacBlockerRuntime.unload(\(literal(groupID)));")
         context.exception = nil
         #endif
+    }
+
+    private struct TimeContextReply: Decodable { var ok: Bool; var error: String? }
+    public func setTimeContext(groupID: String, contextJSON: String) throws {
+        let result: TimeContextReply = try call("MacBlockerRuntime.setTimeContext(\(literal(groupID)), \(literal(contextJSON)))")
+        if !result.ok { throw RuleRuntimeError.failed(result.error ?? "custom-time-context-refused") }
     }
 
     /// One event (`type`, `data`) to one group's rule.

@@ -206,6 +206,7 @@ final class ConnectionHub: ObservableObject {
         enqueueLocked([
             "kind": "welcome", "v": Self.protocolVersion,
             "usageTransferReceipts": true,
+            "ruleTimeVersion": 1,
             "activitySettingsNotifications": activityStoreValue != nil && publishedActivitySnapshot != nil,
             "hubProgram": Self.localProgram, "peers": peerListJSONLocked()
         ], to: [connection])
@@ -382,6 +383,7 @@ final class ConnectionHub: ObservableObject {
         let id: String
         let name: String
         let frozen: Bool
+        var timeState: [String: Any]? = nil
     }
 
     /// A live cluster: the bound programs plus the hub-authoritative shared
@@ -435,6 +437,7 @@ final class ConnectionHub: ObservableObject {
         /// instead of one total: a sliding window needs to know WHEN time was
         /// used so old minutes can age out. Deltas only, like `sharedUsageMs`.
         var sharedBuckets: [Double: Double] = [:]
+        var sharedRuleTime: [String: Any] = [:]
         var bucketsSeeded = false
         /// Active snooze runtime shared across members (newest start wins). The
         /// entry carries its own timing so each side enforces + expires it
@@ -473,6 +476,7 @@ final class ConnectionHub: ObservableObject {
             copy.joiningBucketDeltas = joiningBucketDeltas
             copy.usageTransferReceipts = usageTransferReceipts
             copy.sharedBuckets = sharedBuckets
+            copy.sharedRuleTime = sharedRuleTime.mapValues(ConnectionHub.copyJSONValue)
             copy.bucketsSeeded = bucketsSeeded
             copy.sharedSnoozeTs = sharedSnoozeTs
             copy.sharedSnoozeTotalMs = sharedSnoozeTotalMs
@@ -836,6 +840,16 @@ final class ConnectionHub: ObservableObject {
             let prog = peers[key]?.program ?? ((obj["program"] as? String) ?? "")
             lock.unlock()
             setRoster(program: prog, groups: (obj["groups"] as? [[String: Any]]) ?? [])
+        case "rule-time-request":
+            lock.lock()
+            let program = peers[key]?.program ?? ""
+            lock.unlock()
+            let requestID = obj["requestID"] as? String ?? ""
+            guard Self.isVisibleBridgeIdentifier(requestID, maximumLength: 128), let groupID = obj["groupId"] as? String,
+                  let commands = obj["commands"] as? [[String: Any]], commands.count <= 64 else { return }
+            let body = syncRuleTime(program: program, groupID: groupID, clusterID: obj["clusterId"] as? String,
+                                    seed: obj["seed"] as? [String: Any], commands: commands, usage: obj["usage"] as? [String: Any])
+            send(conn, dict: ["kind": "rule-time-response", "requestID": requestID, "groupId": groupID, "body": body])
         case "group-sync":
             lock.lock()
             let prog = peers[key]?.program ?? ((obj["program"] as? String) ?? "")
@@ -1341,7 +1355,7 @@ final class ConnectionHub: ObservableObject {
 
     private static func rosterInfos(_ groups: [[String: Any]]) -> [GroupInfo] {
         groups.map { GroupInfo(id: ($0["id"] as? String) ?? "", name: ($0["name"] as? String) ?? "",
-                               frozen: ($0["frozen"] as? Bool) ?? false) }
+                               frozen: ($0["frozen"] as? Bool) ?? false, timeState: $0["timeState"] as? [String: Any]) }
     }
 
     /// Caller holds the canonical file lock, if one exists, then the hub lock.
@@ -1469,6 +1483,21 @@ final class ConnectionHub: ObservableObject {
             let joining = ownCluster == nil ? program : targetProgram
             if existing.members.contains(joining) { lock.unlock(); return "program-already-linked" }
         }
+        let existing = ownCluster ?? otherCluster
+        let initiatingProgram = existing?.initiator.isEmpty == false ? existing!.initiator : program
+        let initiatingID = existing?.memberGroupIds[initiatingProgram] ?? groupId
+        let joining: [(String, String, GroupInfo)] = [(program, groupId, own), (targetProgram, targetGroupId, other)]
+            .filter { existing?.members.contains($0.0) != true }
+        let seeds = joining.map { ["member": $0.0 + "/" + $0.1,
+                                  "state": $0.2.timeState ?? ["version": 1, "objects": [:]]] as [String: Any] }
+        let previousTime: Any
+        if let existing, !existing.sharedRuleTime.isEmpty { previousTime = existing.sharedRuleTime }
+        else { previousTime = NSNull() }
+        guard let merged = GroupActionsRuntime.shared.call("mergeTime", [
+            previousTime,
+            seeds, initiatingProgram + "/" + initiatingID, (Date().timeIntervalSince1970 * 1000).rounded(.down)
+        ], module: "RuleCore") as? [String: Any], merged["ok"] as? Bool == true,
+              let timeState = merged["state"] as? [String: Any] else { lock.unlock(); return "incompatible-custom-time" }
         let cluster = ownCluster ?? otherCluster ?? {
             let created = ClusterState(id: UUID().uuidString, groupName: own.name)
             created.initiator = program
@@ -1487,6 +1516,7 @@ final class ConnectionHub: ObservableObject {
         cluster.members.formUnion([program, targetProgram])
         cluster.memberGroupIds[program] = groupId
         cluster.memberGroupIds[targetProgram] = targetGroupId
+        cluster.sharedRuleTime = timeState
         persistClustersLocked()
         broadcastClusterLocked(clusterJSONObject(cluster))
         lock.unlock()
@@ -1972,7 +2002,7 @@ final class ConnectionHub: ObservableObject {
     private func reconcileLocalDocumentLocked(_ document: inout [String: Any], nowMs: Double,
                                                save: ([String: Any]) throws -> Void) throws -> Bool {
         guard let groups = Self.canonicalLocalGroups(document) else { return false }
-        let roster = Self.localRoster(groups)
+        let roster = Self.localRoster(groups, document: document)
         let rosterKey = WebStoreDocument.canonicalJSON(roster)
         if rosterKey != self.lastLocalRoster {
             try self.setRosterLocked(program: Self.localProgram, infos: Self.rosterInfos(roster), document: document) { updated in
@@ -2011,7 +2041,7 @@ final class ConnectionHub: ObservableObject {
             // A recognizable unsupported registry cannot be overwritten by
             // an editor transaction. UserDefaults has no physical durability
             // acknowledgment; successful file commit retains its existing API.
-            let schema = StorageSchemaPolicy(format: "hub.clusters")
+            let schema = StorageSchemaPolicy(format: "hub.clusters", currentSchema: 2)
             guard self.clusterStorageWritable,
                   UserDefaults.standard.data(forKey: Self.clustersDefaultsKey).map({ (try? schema.payload(from: $0)) != nil }) ?? true else {
                 throw GroupStoreError.invalidInput("cluster-storage-unavailable")
@@ -2065,10 +2095,12 @@ final class ConnectionHub: ObservableObject {
         return groups
     }
 
-    private static func localRoster(_ groups: [[String: Any]]) -> [[String: Any]] {
+    private static func localRoster(_ groups: [[String: Any]], document: [String: Any] = [:]) -> [[String: Any]] {
         groups.compactMap { group in
             guard let id = group["id"] as? String else { return nil }
-            return ["id": id, "name": (group["name"] as? String) ?? "", "frozen": WebStoreDocument.isLocked(group)]
+            let states = document["cbRuleState"] as? [String: [String: Any]] ?? [:]
+            return ["id": id, "name": (group["name"] as? String) ?? "", "frozen": WebStoreDocument.isLocked(group),
+                    "timeState": states[id]?["$vaultTime"] as? [String: Any] ?? ["version": 1, "objects": [:]]]
         }
     }
 
@@ -2086,7 +2118,7 @@ final class ConnectionHub: ObservableObject {
     private func reconcileDefinitionsLocked(document: [String: Any], nowMs: Double, updateRoster: Bool = true) {
         let groups = document["blockedGroups"] as? [[String: Any]] ?? []
         if updateRoster {
-            let roster = Self.localRoster(groups)
+            let roster = Self.localRoster(groups, document: document)
             let key = WebStoreDocument.canonicalJSON(roster)
             if key != lastLocalRoster {
                 do { try setRosterLocked(program: Self.localProgram, infos: Self.rosterInfos(roster), document: nil, save: { _ in }) }
@@ -2280,6 +2312,63 @@ final class ConnectionHub: ObservableObject {
         return (cluster.sharedUsageMs, cluster.sharedUsageResetAtMs, cluster.sharedBuckets)
     }
 
+    /// One serialized authenticated transaction for a linked time object.
+    /// Pure RuleCore policy is shared with browser/native rule engines. No
+    /// acknowledgment is returned before the registry includes its receipt.
+    func syncRuleTime(program: String = ConnectionHub.localProgram, groupID: String,
+                      clusterID: String? = nil, seed: [String: Any]?, commands: [[String: Any]],
+                      usage: [String: Any]? = nil) -> [String: Any] {
+        lock.lock(); defer { lock.unlock() }
+        guard let cluster = clusterLocked(program: program, groupId: groupID) else {
+            if let remembered = seed?["scope"] as? String, !remembered.isEmpty { return ["linked": true, "ready": false, "clusterId": remembered] }
+            return ["linked": false]
+        }
+        let unavailable: [String: Any] = ["linked": true, "ready": false, "clusterId": cluster.id]
+        guard clusterStorageWritable, editorStaging == nil, commands.count <= 64,
+              clusterID == nil || clusterID == cluster.id else { return unavailable }
+        guard let body = try? JSONSerialization.data(withJSONObject: ["seed": seed as Any? ?? NSNull(), "commands": commands, "usage": usage as Any? ?? NSNull()]),
+              body.count <= 96_000 else { return unavailable.merging(["error": "custom-time-request-too-large"]) { _, new in new } }
+        let member = program + "/" + groupID
+        let initiatorProgram = cluster.members.contains(cluster.initiator) ? cluster.initiator : cluster.members.sorted().first!
+        let initiator = initiatorProgram + "/" + (cluster.memberGroupIds[initiatorProgram] ?? "")
+        let members = cluster.members.sorted().map { $0 + "/" + (cluster.memberGroupIds[$0] ?? "") }
+        let seeds = cluster.members.sorted().map { program -> [String: Any] in
+            let id = cluster.memberGroupIds[program] ?? ""
+            let saved = rosters[program]?.first { $0.id == id }?.timeState
+            return ["member": program + "/" + id, "state": saved ?? ["version": 1, "objects": [:]]]
+        }
+        let enabled = cluster.sharedScalars["enabled"] as? Bool ?? true
+        if !enabled && commands.contains(where: { !["ensure", "assign"].contains($0["op"] as? String ?? "") }) { return unavailable }
+        let request: [String: Any] = ["member": member, "members": members, "initiator": initiator,
+            "seed": seed ?? ["version": 1, "objects": [:]], "seeds": seeds,
+            "commands": commands.filter { $0["scope"] as? String == cluster.id },
+            "usage": enabled ? (usage as Any? ?? NSNull()) : NSNull(),
+            "nowMs": (Date().timeIntervalSince1970 * 1000).rounded(.down)]
+        let previous: Any = cluster.sharedRuleTime.isEmpty ? NSNull() : cluster.sharedRuleTime as Any
+        guard let result = GroupActionsRuntime.shared.call("syncTime", [previous, request], module: "RuleCore") as? [String: Any],
+              result["ok"] as? Bool == true, let state = result["state"] as? [String: Any] else {
+            return unavailable.merging(["error": "custom-time-policy-refused"]) { _, new in new }
+        }
+        if WebStoreDocument.canonicalJSON(state) != WebStoreDocument.canonicalJSON(cluster.sharedRuleTime) {
+            let before = cluster.sharedRuleTime
+            cluster.sharedRuleTime = state
+            persistClustersLocked()
+            // UserDefaults is the existing cluster writer. Verify its exact
+            // supported envelope; a refusal freezes new requests until repair.
+            let saved = UserDefaults.standard.data(forKey: Self.clustersDefaultsKey)
+                .flatMap { try? StorageSchemaPolicy(format: "hub.clusters", currentSchema: 2).payload(from: $0) }
+                .flatMap { try? JSONSerialization.jsonObject(with: $0) as? [[String: Any]] }
+            guard let stored = saved?.first(where: { $0["id"] as? String == cluster.id })?["sharedRuleTime"] as? [String: Any],
+                  WebStoreDocument.canonicalJSON(stored) == WebStoreDocument.canonicalJSON(state) else {
+                cluster.sharedRuleTime = before; clusterStorageWritable = false
+                return unavailable.merging(["error": "custom-time-save-failed"]) { _, new in new }
+            }
+            broadcastClusterLocked(clusterJSONObject(cluster))
+        }
+        return ["linked": true, "ready": result["ready"] as? Bool ?? false, "clusterId": cluster.id,
+                "state": state, "acknowledgedSerial": result["acknowledgedSerial"] ?? 0]
+    }
+
     /// The link a Mac group belongs to — matched by its pinned id, as the
     /// overlay and the contributions match it.
     private func localCluster(groupID: String) -> ClusterState? {
@@ -2379,6 +2468,7 @@ final class ConnectionHub: ObservableObject {
                 "sharedUsageMs": c.sharedUsageMs,
                 "sharedUsageResetAtMs": c.sharedUsageResetAtMs,
                 "sharedBuckets": UsageBudget.bucketJSON(c.sharedBuckets),
+                "sharedRuleTime": c.sharedRuleTime,
                 "usageSeeded": c.usageSeeded,
                 "joiningUsageBaseMs": c.joiningUsageBaseMs as Any? ?? NSNull(),
                 "joiningUsageDeltaMs": c.joiningUsageDeltaMs,
@@ -2389,7 +2479,7 @@ final class ConnectionHub: ObservableObject {
                 "bucketsSeeded": c.bucketsSeeded
             ]
         }
-        let schema = StorageSchemaPolicy(format: "hub.clusters")
+        let schema = StorageSchemaPolicy(format: "hub.clusters", currentSchema: 2)
         guard clusterStorageWritable,
               let payload = try? JSONSerialization.data(withJSONObject: arr, options: [.sortedKeys]),
               let data = try? schema.wrap(payload), data != lastPersistedClusters else { return }
@@ -2411,7 +2501,7 @@ final class ConnectionHub: ObservableObject {
             UserDefaults.standard.removeObject(forKey: ConnectionHub.droppedClustersDefaultsKey)
         }
         guard let data = UserDefaults.standard.data(forKey: ConnectionHub.clustersDefaultsKey),
-              let payload = try? StorageSchemaPolicy(format: "hub.clusters").payload(from: data),
+              let payload = try? StorageSchemaPolicy(format: "hub.clusters", currentSchema: 2).payload(from: data),
               let arr = (try? JSONSerialization.jsonObject(with: payload)) as? [[String: Any]] else {
             if UserDefaults.standard.data(forKey: ConnectionHub.clustersDefaultsKey) != nil { clusterStorageWritable = false }
             return
@@ -2452,6 +2542,7 @@ final class ConnectionHub: ObservableObject {
             cluster.sharedUsageMs = (obj["sharedUsageMs"] as? Double) ?? 0
             cluster.sharedUsageResetAtMs = (obj["sharedUsageResetAtMs"] as? Double) ?? 0
             cluster.sharedBuckets = UsageBudget.parseBuckets(obj["sharedBuckets"]) ?? [:]
+            cluster.sharedRuleTime = obj["sharedRuleTime"] as? [String: Any] ?? [:]
             cluster.usageSeeded = (obj["usageSeeded"] as? Bool) ?? false
             cluster.usageTransferReceipts = (obj["usageTransferReceipts"] as? [String: Double]) ?? [:]
             cluster.bucketsSeeded = (obj["bucketsSeeded"] as? Bool) ?? false
@@ -2497,7 +2588,7 @@ final class ConnectionHub: ObservableObject {
                 ] as [String: Any]
             }
         ]
-        if hasShared || cluster.sharedUsageMs > 0
+        if hasShared || !cluster.sharedRuleTime.isEmpty || cluster.sharedUsageMs > 0
             || !cluster.sharedBuckets.isEmpty
             || cluster.sharedSnoozeTs > 0 || cluster.sharedSnoozeTotalMs > 0 || !cluster.usageTransferReceipts.isEmpty {
             var shared: [String: Any] = [
@@ -2506,6 +2597,7 @@ final class ConnectionHub: ObservableObject {
                 "usageMs": cluster.sharedUsageMs,
                 "usageResetAtMs": cluster.sharedUsageResetAtMs,
                 "usageBuckets": UsageBudget.bucketJSON(cluster.sharedBuckets),
+                "ruleTime": cluster.sharedRuleTime,
                 "snooze": cluster.sharedSnooze,
                 "snoozeTs": cluster.sharedSnoozeTs,
                 "snoozeTotalMs": cluster.sharedSnoozeTotalMs
