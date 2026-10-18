@@ -481,7 +481,7 @@ public final class MacEnforcementBridge: ObservableObject {
         }
         for (groupID, group) in wanted {
             if loadedRuleSources[groupID] != group.customRuleSource, quarantinedRuleSources[groupID] != group.customRuleSource {
-                _ = loadRule(group: group, source: group.customRuleSource, stateJSON: webStore.ruleState(groupID: groupID))
+                _ = loadRule(group: group, source: group.customRuleSource)
             }
             if loadedRuleSources[groupID] != nil { setSuppressed(!group.enabled, groupID: groupID) }
         }
@@ -500,10 +500,12 @@ public final class MacEnforcementBridge: ObservableObject {
     }
 
     /// Registers a group's rule; one that doesn't load leaves the old one.
-    private func loadRule(group: BlockGroup, source: String, stateJSON: String, recordRun: Bool = false) -> RuleRuntime.LoadResult? {
+    private func loadRule(group: BlockGroup, source: String, recordRun: Bool = false) -> RuleRuntime.LoadResult? {
         guard let runtime = ensureRuntime() else { return nil }
         do {
             try configureRuleTime(runtime, groupID: group.id)
+            // Handover may have saved final shared time; initialize from those bytes.
+            let stateJSON = webStore.ruleState(groupID: group.id)
             var persisted = false
             let result = try runtime.load(groupID: group.id, source: source, stateJSON: stateJSON) { states in
                 persisted = try self.webStore.commitRuleLoad(groupID: group.id, source: recordRun ? source : nil, states: states)
@@ -537,15 +539,26 @@ public final class MacEnforcementBridge: ObservableObject {
     }
 
     private func ruleTimeContext(groupID: String, type: String? = nil, data: Any? = nil) -> [String: Any] {
-        let saved = webStore.ruleState(groupID: groupID).data(using: .utf8)
-            .flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
-        let seed = saved?["$vaultTime"] as? [String: Any]
-        let sample = data as? [String: Any] ?? [:]
-        let usage: [String: Any]? = (type == "tick" || type == "visible") ?
-            ["type": type!, "now": (Date().timeIntervalSince1970 * 1000).rounded(.down),
-             "data": ["usageAppId": sample["usageAppId"] ?? "", "elapsedMs": sample["elapsedMs"] ?? 0]] : nil
-        return ConnectionHub.shared.syncRuleTime(groupID: groupID, seed: seed,
-            commands: seed?["pending"] as? [[String: Any]] ?? [], usage: usage)
+        var nextLink = "unavailable"
+        for _ in 0..<3 {
+            let saved = webStore.ruleState(groupID: groupID).data(using: .utf8)
+                .flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
+            let seed = saved?["$vaultTime"] as? [String: Any]
+            let sample = data as? [String: Any] ?? [:]
+            let usage: [String: Any]? = (type == "tick" || type == "visible") ?
+                ["type": type!, "now": (Date().timeIntervalSince1970 * 1000).rounded(.down),
+                 "data": ["usageAppId": sample["usageAppId"] ?? "", "elapsedMs": sample["elapsedMs"] ?? 0]] : nil
+            let context = ConnectionHub.shared.syncRuleTime(groupID: groupID, seed: seed,
+                commands: seed?["pending"] as? [[String: Any]] ?? [], usage: usage)
+            if context["detached"] as? Bool == true, let namespace = context["state"] as? [String: Any] {
+                nextLink = context["relinkClusterId"] as? String ?? ""
+                do { try webStore.commitRuleTimeHandover(groupID: groupID, expected: seed, namespace: namespace) }
+                catch { return ["linked": true, "ready": false, "clusterId": context["clusterId"] ?? nextLink, "error": "detached-time-save-failed"] }
+                if !nextLink.isEmpty || context["handoverPending"] as? Bool == true { continue }
+            }
+            return context
+        }
+        return ["linked": true, "ready": false, "clusterId": nextLink]
     }
 
     private func configureRuleTime(_ runtime: RuleRuntime, groupID: String, type: String? = nil, data: Any? = nil) throws {
@@ -578,7 +591,7 @@ public final class MacEnforcementBridge: ObservableObject {
         // Run enables the group (as the editor does).
         var running = group
         running.enabled = true
-        guard let result = loadRule(group: running, source: source, stateJSON: webStore.ruleState(groupID: groupID), recordRun: true) else {
+        guard let result = loadRule(group: running, source: source, recordRun: true) else {
             return ["ok": false, "error": quarantinedRuleSources[groupID] != nil ? "sandbox-timeout" : "rules-not-running"]
         }
         return ["ok": result.ok, "handlers": result.handlers, "error": result.error ?? NSNull()]

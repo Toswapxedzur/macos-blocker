@@ -442,6 +442,7 @@ final class ConnectionHub: ObservableObject {
         /// used so old minutes can age out. Deltas only, like `sharedUsageMs`.
         var sharedBuckets: [Double: Double] = [:]
         var sharedRuleTime: [String: Any] = [:]
+        var detachedRuleTime: [String: [String: Any]] = [:]
         var bucketsSeeded = false
         /// Active snooze runtime shared across members (newest start wins). The
         /// entry carries its own timing so each side enforces + expires it
@@ -481,6 +482,7 @@ final class ConnectionHub: ObservableObject {
             copy.usageTransferReceipts = usageTransferReceipts
             copy.sharedBuckets = sharedBuckets
             copy.sharedRuleTime = sharedRuleTime.mapValues(ConnectionHub.copyJSONValue)
+            copy.detachedRuleTime = detachedRuleTime.mapValues { $0.mapValues(ConnectionHub.copyJSONValue) }
             copy.bucketsSeeded = bucketsSeeded
             copy.sharedSnoozeTs = sharedSnoozeTs
             copy.sharedSnoozeTotalMs = sharedSnoozeTotalMs
@@ -1372,8 +1374,16 @@ final class ConnectionHub: ObservableObject {
         }
         try preserveDetachedLocalLocked(affected, removing: program, document: document, save: save)
         rosters[program] = infos
+        let prefix = program + "/"
+        var discarded = false
+        for cluster in Array(clusters.values) {
+            for member in cluster.detachedRuleTime.keys where member.hasPrefix(prefix) && !infos.contains(where: { $0.id == String(member.dropFirst(prefix.count)) }) {
+                cluster.detachedRuleTime.removeValue(forKey: member); discarded = true
+            }
+            if cluster.members.isEmpty && cluster.detachedRuleTime.isEmpty { clusters.removeValue(forKey: cluster.id) }
+        }
         for cluster in affected { removeMemberLocked(cluster, program: program) }
-        if !affected.isEmpty { persistClustersLocked() }
+        if !affected.isEmpty || discarded { persistClustersLocked() }
         for cluster in affected { broadcastClusterLocked(clusterJSONObject(cluster)) }
         broadcastToPeersLocked(["kind": "rosters", "rosters": rostersJSONObjectLocked()])
     }
@@ -1392,21 +1402,37 @@ final class ConnectionHub: ObservableObject {
     /// dissolves a two-member link. Never recreate a deleted local group.
     private func preserveDetachedLocalLocked(_ affected: [ClusterState], removing program: String,
                                              document: [String: Any]?, save: ([String: Any]) throws -> Void) throws {
-        let detached = affected.filter {
-            $0.members.contains(Self.localProgram) && (program == Self.localProgram || $0.members.count == 2)
+        let old = affected.map { ($0, $0.detachedRuleTime) }
+        do {
+            try retainDetachedRuleTimeLocked(affected, removing: program)
+            let detached = affected.filter {
+                $0.members.contains(Self.localProgram) && (program == Self.localProgram || $0.members.count == 2)
+            }
+            guard !detached.isEmpty else { return }
+            guard let document else {
+                if localWebStoreValue != nil { throw GroupStoreError.invalidInput("local shared runtime cannot be preserved") }
+                return
+            }
+            let nowMs = Date().timeIntervalSince1970 * 1000
+            for cluster in detached { rollBudgetLocked(cluster, nowMs: nowMs); Self.countSnoozeLocked(cluster, nowMs: nowMs) }
+            var retained = overlaySharedLocked(onto: document, clusters: detached, ownLinesOnly: true, nowMs: nowMs)
+            var states = retained["cbRuleState"] as? [String: [String: Any]] ?? [:]
+            let groups = retained["blockedGroups"] as? [[String: Any]] ?? []
+            for cluster in detached {
+                guard let id = cluster.memberGroupIds[Self.localProgram], groups.contains(where: { $0["id"] as? String == id && $0["groupType"] as? String == "custom" }),
+                      !cluster.sharedRuleTime.isEmpty else { continue }
+                var state = states[id] ?? [:]
+                guard let final = finalRuleTimeLocked(cluster, program: Self.localProgram, groupID: id, seed: state["$vaultTime"] as? [String: Any])?["state"] as? [String: Any] else { throw GroupStoreError.invalidInput("Final custom time could not be preserved") }
+                state["$vaultTime"] = final
+                guard let data = try? JSONSerialization.data(withJSONObject: state), data.count <= 65536 else { throw GroupStoreError.invalidInput("Final time exceeds rule state capacity") }
+                states[id] = state
+            }
+            retained["cbRuleState"] = states
+            if WebStoreDocument.canonicalJSON(retained) != WebStoreDocument.canonicalJSON(document) { try save(retained) }
+        } catch {
+            for (cluster, snapshot) in old { cluster.detachedRuleTime = snapshot }
+            throw error
         }
-        guard !detached.isEmpty else { return }
-        guard let document else {
-            if localWebStoreValue != nil { throw GroupStoreError.invalidInput("local shared runtime cannot be preserved") }
-            return
-        }
-        let nowMs = Date().timeIntervalSince1970 * 1000
-        for cluster in detached {
-            rollBudgetLocked(cluster, nowMs: nowMs)
-            Self.countSnoozeLocked(cluster, nowMs: nowMs)
-        }
-        let retained = overlaySharedLocked(onto: document, clusters: detached, ownLinesOnly: true, nowMs: nowMs)
-        if WebStoreDocument.canonicalJSON(retained) != WebStoreDocument.canonicalJSON(document) { try save(retained) }
     }
 
     /// Caller must hold `lock`. Takes `program` out of the link; a link left
@@ -1417,6 +1443,9 @@ final class ConnectionHub: ObservableObject {
             unlinkedLocal.insert(id)
             // Linked again later, it contributes afresh.
             localDefinitionSeen.removeValue(forKey: id)
+        }
+        if var confirmed = cluster.sharedRuleTime["confirmed"] as? [String: Any], let id = cluster.memberGroupIds[program] {
+            confirmed.removeValue(forKey: program + "/" + id); cluster.sharedRuleTime["confirmed"] = confirmed
         }
         cluster.members.remove(program)
         cluster.memberGroupIds.removeValue(forKey: program)
@@ -1433,7 +1462,7 @@ final class ConnectionHub: ObservableObject {
                 unlinkedLocal.insert(id)
                 localDefinitionSeen.removeValue(forKey: id)
             }
-            clusters.removeValue(forKey: cluster.id)
+            if cluster.detachedRuleTime.isEmpty { clusters.removeValue(forKey: cluster.id) }
             cluster.members.removeAll()
         }
     }
@@ -1493,7 +1522,7 @@ final class ConnectionHub: ObservableObject {
         let joining: [(String, String, GroupInfo)] = [(program, groupId, own), (targetProgram, targetGroupId, other)]
             .filter { existing?.members.contains($0.0) != true }
         let seeds = joining.map { ["member": $0.0 + "/" + $0.1,
-                                  "state": $0.2.timeState ?? ["version": 1, "objects": [:]]] as [String: Any] }
+                                  "state": self.prelinkRuleTimeLocked(program: $0.0, groupID: $0.1, seed: $0.2.timeState)] as [String: Any] }
         let previousTime: Any
         if let existing, !existing.sharedRuleTime.isEmpty { previousTime = existing.sharedRuleTime }
         else { previousTime = NSNull() }
@@ -1545,11 +1574,19 @@ final class ConnectionHub: ObservableObject {
                    let native = (document?["blockedGroups"] as? [[String: Any]])?.first(where: { ($0["id"] as? String) == pinned }),
                    ((native["lockVersion"] as? NSNumber)?.intValue ?? 0) > ((cluster.sharedLock["lockVersion"] as? NSNumber)?.intValue ?? 0),
                    WebStoreDocument.isLocked(native) { return "group-locked" }
-                try self.preserveDetachedLocalLocked([cluster], removing: program, document: document, save: save)
-                self.removeMemberLocked(cluster, program: program)
-                self.persistClustersLocked()
-                self.broadcastClusterLocked(self.clusterJSONObject(cluster))
-                return nil
+                let before = self.clusters.mapValues { $0.editorCopy() }
+                let oldUnlinked = self.unlinkedLocal, oldSeen = self.localDefinitionSeen
+                do {
+                    try self.preserveDetachedLocalLocked([cluster], removing: program, document: document, save: save)
+                    self.removeMemberLocked(cluster, program: program)
+                    self.persistClustersLocked()
+                    guard self.clusterStorageWritable else { throw GroupStoreError.invalidInput("cluster-storage-unavailable") }
+                    self.broadcastClusterLocked(self.clusterJSONObject(cluster))
+                    return nil
+                } catch {
+                    self.clusters = before; self.unlinkedLocal = oldUnlinked; self.localDefinitionSeen = oldSeen
+                    throw error
+                }
             }
             return refusal
         } catch { return "local-storage-unavailable" }
@@ -2320,6 +2357,50 @@ final class ConnectionHub: ObservableObject {
         return (cluster.sharedUsageMs, cluster.sharedUsageResetAtMs, cluster.sharedBuckets)
     }
 
+    private func prelinkRuleTimeLocked(program: String, groupID: String, seed: [String: Any]?) -> [String: Any] {
+        if seed?["detachedReceipt"] != nil { return seed ?? ["version": 1, "objects": [:]] }
+        let member = program + "/" + groupID
+        let latest = clusters.values.filter { $0.detachedRuleTime[member] != nil }.max {
+            ($0.detachedRuleTime[member]?["atMs"] as? Double ?? 0) < ($1.detachedRuleTime[member]?["atMs"] as? Double ?? 0)
+        }
+        if let latest, let final = finalRuleTimeLocked(latest, program: program, groupID: groupID, seed: seed)?["state"] as? [String: Any] { return final }
+        return seed ?? ["version": 1, "objects": [:]]
+    }
+
+    private func finalRuleTimeLocked(_ cluster: ClusterState, program: String, groupID: String,
+                                     seed: [String: Any]?, acknowledged: Bool = false) -> [String: Any]? {
+        let member = program + "/" + groupID
+        guard let record = cluster.detachedRuleTime[member], let state = record["state"] as? [String: Any],
+              let token = record["token"] as? String, let initiator = record["initiator"] as? String,
+              let result = GroupActionsRuntime.shared.call("detachTime", [seed ?? ["version": 1, "objects": [:]], state,
+                member, initiator, cluster.id, token, (Date().timeIntervalSince1970 * 1000).rounded(.down), acknowledged], module: "RuleCore") as? [String: Any],
+              result["ok"] as? Bool == true, let final = result["state"] as? [String: Any] else { return nil }
+        return ["linked": false, "detached": true, "clusterId": cluster.id, "state": final,
+            "relinkClusterId": clusterLocked(program: program, groupId: groupID)?.id ?? "",
+            "handoverPending": clusters.values.contains { $0.id != cluster.id && $0.detachedRuleTime[member] != nil }]
+    }
+
+    private func retainDetachedRuleTimeLocked(_ affected: [ClusterState], removing program: String) throws {
+        var sequence = max((Date().timeIntervalSince1970 * 1000).rounded(.down),
+            (clusters.values.flatMap { $0.detachedRuleTime.values }.compactMap { $0["atMs"] as? Double }.max() ?? 0) + 1)
+        for cluster in affected where !cluster.sharedRuleTime.isEmpty {
+            let leaving = cluster.members.count == 2 ? cluster.members : Set([program])
+            for peer in leaving {
+                guard let id = cluster.memberGroupIds[peer] else { continue }
+                let member = peer + "/" + id
+                let initiating = cluster.initiator + "/" + (cluster.memberGroupIds[cluster.initiator] ?? "")
+                cluster.detachedRuleTime[member] = ["version": 1, "token": UUID().uuidString, "state": cluster.sharedRuleTime,
+                    "initiator": initiating, "atMs": sequence]
+            }
+            sequence += 1
+        }
+        let retained = clusters.values.map { $0.detachedRuleTime }
+        guard clusters.values.reduce(0, { $0 + $1.detachedRuleTime.count }) <= 1024,
+              let bytes = try? JSONSerialization.data(withJSONObject: retained), bytes.count <= 8 * 1024 * 1024 else {
+            throw GroupStoreError.invalidInput("Reconnect detached members before unlinking more groups")
+        }
+    }
+
     /// One serialized authenticated transaction for a linked time object.
     /// Pure RuleCore policy is shared with browser/native rule engines. No
     /// acknowledgment is returned before the registry includes its receipt.
@@ -2327,6 +2408,35 @@ final class ConnectionHub: ObservableObject {
                       clusterID: String? = nil, seed: [String: Any]?, commands: [[String: Any]],
                       usage: [String: Any]? = nil) -> [String: Any] {
         lock.lock(); defer { lock.unlock() }
+        guard clusterStorageWritable, editorStaging == nil else { return ["linked": true, "ready": false, "clusterId": seed?["scope"] ?? clusterID ?? "unavailable"] }
+        let receipt = seed?["detachedReceipt"] as? [String: Any]
+        let memberKey = program + "/" + groupID
+        // Drain old links in order, even if the member already sees a newer link.
+        let discovered = clusters.values.filter { $0.detachedRuleTime[memberKey] != nil }.min {
+            let left = $0.detachedRuleTime[memberKey]?["atMs"] as? Double ?? 0
+            let right = $1.detachedRuleTime[memberKey]?["atMs"] as? Double ?? 0
+            return left == right ? $0.id < $1.id : left < right
+        }?.id
+        let remembered = receipt?["clusterId"] as? String ?? discovered ?? seed?["scope"] as? String ?? (clusterID?.isEmpty == false ? clusterID : nil)
+        if let remembered, let retired = clusters[remembered], let record = retired.detachedRuleTime[program + "/" + groupID] {
+            let matched = receipt?["token"] as? String == record["token"] as? String
+            guard let final = finalRuleTimeLocked(retired, program: program, groupID: groupID, seed: seed, acknowledged: matched) else {
+                return ["linked": true, "ready": false, "clusterId": remembered, "error": "detached-time-refused"]
+            }
+            if matched {
+                retired.detachedRuleTime.removeValue(forKey: program + "/" + groupID)
+                if retired.members.count < 2 && retired.detachedRuleTime.isEmpty { clusters.removeValue(forKey: retired.id) }
+                persistClustersLocked()
+                guard clusterStorageWritable else { return ["linked": true, "ready": false, "clusterId": remembered] }
+            }
+            return final
+        }
+        if let receipt, clusterLocked(program: program, groupId: groupID)?.id != receipt["clusterId"] as? String {
+            var final = seed ?? [:]; final.removeValue(forKey: "detachedReceipt")
+            return ["linked": false, "detached": true, "clusterId": receipt["clusterId"] ?? "", "state": final,
+                "relinkClusterId": clusterLocked(program: program, groupId: groupID)?.id ?? "",
+                "handoverPending": clusters.values.contains { $0.detachedRuleTime[memberKey] != nil }]
+        }
         guard let cluster = clusterLocked(program: program, groupId: groupID) else {
             if let remembered = seed?["scope"] as? String, !remembered.isEmpty { return ["linked": true, "ready": false, "clusterId": remembered] }
             return ["linked": false]
@@ -2423,7 +2533,7 @@ final class ConnectionHub: ObservableObject {
     /// the Mac's own web editor each tick.
     func clustersJSON() -> String {
         lock.lock()
-        let payload: [String: Any] = ["clusters": clusters.values.map { clusterJSONObject($0) }, "rosters": rostersJSONObjectLocked()]
+        let payload: [String: Any] = ["clusters": clusters.values.filter { $0.members.count >= 2 }.map { clusterJSONObject($0) }, "rosters": rostersJSONObjectLocked()]
         lock.unlock()
         guard let data = try? JSONSerialization.data(withJSONObject: payload),
               let json = String(data: data, encoding: .utf8) else {
@@ -2477,6 +2587,7 @@ final class ConnectionHub: ObservableObject {
                 "sharedUsageResetAtMs": c.sharedUsageResetAtMs,
                 "sharedBuckets": UsageBudget.bucketJSON(c.sharedBuckets),
                 "sharedRuleTime": c.sharedRuleTime,
+                "detachedRuleTime": c.detachedRuleTime,
                 "usageSeeded": c.usageSeeded,
                 "joiningUsageBaseMs": c.joiningUsageBaseMs as Any? ?? NSNull(),
                 "joiningUsageDeltaMs": c.joiningUsageDeltaMs,
@@ -2488,12 +2599,16 @@ final class ConnectionHub: ObservableObject {
             ]
         }
         let schema = StorageSchemaPolicy(format: "hub.clusters", currentSchema: 2)
-        guard clusterStorageWritable,
-              let payload = try? JSONSerialization.data(withJSONObject: arr, options: [.sortedKeys]),
-              let data = try? schema.wrap(payload), data != lastPersistedClusters else { return }
+        guard clusterStorageWritable else { return }
+        guard let payload = try? JSONSerialization.data(withJSONObject: arr, options: [.sortedKeys]),
+              let data = try? schema.wrap(payload) else { clusterStorageWritable = false; return }
+        guard data != lastPersistedClusters else { return }
         if let existing = self.registryDefaults.data(forKey: ConnectionHub.clustersDefaultsKey), (try? schema.payload(from: existing)) == nil { clusterStorageWritable = false; return }
-        lastPersistedClusters = data
         self.registryDefaults.set(data, forKey: ConnectionHub.clustersDefaultsKey)
+        guard self.registryDefaults.synchronize(), self.registryDefaults.data(forKey: ConnectionHub.clustersDefaultsKey) == data else {
+            clusterStorageWritable = false; return
+        }
+        lastPersistedClusters = data
     }
 
     /// Caller must hold `lock`. Rebuilds the cluster registry (and the running
@@ -2514,6 +2629,9 @@ final class ConnectionHub: ObservableObject {
             if self.registryDefaults.data(forKey: ConnectionHub.clustersDefaultsKey) != nil { clusterStorageWritable = false }
             return
         }
+        let retainedRows = arr.compactMap { $0["detachedRuleTime"] as? [String: Any] }
+        guard retainedRows.reduce(0, { $0 + $1.count }) <= 1024,
+              let retainedBytes = try? JSONSerialization.data(withJSONObject: retainedRows), retainedBytes.count <= 8 * 1024 * 1024 else { clusterStorageWritable = false; return }
         // Optional old registries need no migration. A malformed present
         // provenance ledger is preserved read-only, never silently overwritten.
         for obj in arr where obj["scopeOrigins"] != nil {
@@ -2551,6 +2669,18 @@ final class ConnectionHub: ObservableObject {
             cluster.sharedUsageResetAtMs = (obj["sharedUsageResetAtMs"] as? Double) ?? 0
             cluster.sharedBuckets = UsageBudget.parseBuckets(obj["sharedBuckets"]) ?? [:]
             cluster.sharedRuleTime = obj["sharedRuleTime"] as? [String: Any] ?? [:]
+            if obj["detachedRuleTime"] != nil {
+                guard let retained = obj["detachedRuleTime"] as? [String: [String: Any]], retained.count <= 16,
+                      retained.allSatisfy({ member, record in
+                          let parts = member.split(separator: "/", maxSplits: 1)
+                          return parts.count == 2 && !parts[1].isEmpty && (Self.browserPrograms.contains(String(parts[0])) || String(parts[0]) == Self.localProgram) &&
+                              record["version"] as? Int == 1 && !(record["token"] as? String ?? "").isEmpty &&
+                              (record["state"] as? [String: Any])?["version"] as? Int == 1 &&
+                              (record["state"] as? [String: Any])?["objects"] is [String: Any] && !(record["initiator"] as? String ?? "").isEmpty &&
+                              (record["atMs"] as? Double ?? -1) >= 0
+                      }) else { clusterStorageWritable = false; return }
+                cluster.detachedRuleTime = retained
+            }
             cluster.usageSeeded = (obj["usageSeeded"] as? Bool) ?? false
             cluster.usageTransferReceipts = (obj["usageTransferReceipts"] as? [String: Double]) ?? [:]
             cluster.bucketsSeeded = (obj["bucketsSeeded"] as? Bool) ?? false
@@ -2563,7 +2693,7 @@ final class ConnectionHub: ObservableObject {
             }
             // Only restore clusters that still have ≥2 members (a 1-member
             // cluster is meaningless and would never broadcast).
-            if cluster.members.count >= 2 { clusters[id] = cluster }
+            if cluster.members.count >= 2 || !cluster.detachedRuleTime.isEmpty { clusters[id] = cluster }
         }
     }
 
@@ -2634,7 +2764,7 @@ final class ConnectionHub: ObservableObject {
 
     /// Caller holds the hub lock, including while authenticating a new peer.
     private func sendClustersSnapshotLocked(_ conn: NWConnection) {
-        enqueueLocked(["kind": "clusters", "clusters": clusters.values.map { clusterJSONObject($0) },
+        enqueueLocked(["kind": "clusters", "clusters": clusters.values.filter { $0.members.count >= 2 }.map { clusterJSONObject($0) },
                        "rosters": rostersJSONObjectLocked()], to: [conn])
     }
 

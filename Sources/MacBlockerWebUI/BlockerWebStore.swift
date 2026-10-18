@@ -484,6 +484,20 @@ public final class BlockerWebStore: @unchecked Sendable {
         return String(decoding: data, as: UTF8.self)
     }
 
+    public func commitRuleTimeHandover(groupID: String, expected: [String: Any]?, namespace: [String: Any]) throws {
+        try withLockedDocument { raw, save in
+            guard var raw, (raw["blockedGroups"] as? [[String: Any]] ?? []).contains(where: { $0["id"] as? String == groupID && $0["groupType"] as? String == "custom" }) else { throw GroupStoreError.groupNotFound(groupID) }
+            var states = raw["cbRuleState"] as? [String: [String: Any]] ?? [:]
+            var state = states[groupID] ?? [:]
+            guard WebStoreDocument.canonicalJSON(state["$vaultTime"]) == WebStoreDocument.canonicalJSON(expected) else { throw GroupStoreError.invalidInput("Time state changed; retry transfer") }
+            state["$vaultTime"] = namespace
+            let bytes = try JSONSerialization.data(withJSONObject: state)
+            guard bytes.count <= 65536 else { throw GroupStoreError.invalidInput("Final time exceeds rule state capacity") }
+            states[groupID] = state; raw["cbRuleState"] = states
+            try save(raw)
+        }
+    }
+
     /// Save event state before its external actions. A failed write must not
     /// acknowledge a managed timer completion or perform its actions.
     public func commitRuleDispatch(_ states: [String: String]) throws {
