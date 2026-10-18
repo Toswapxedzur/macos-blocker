@@ -118,6 +118,13 @@ enum ManagedRuleTimeChecks {
         let refusal = failureHub.unlinkGroup(program:"chrome",groupId:"x")
         try check(refusal == "local-storage-unavailable" && failureHub.activeClusterCount() == 1 && defaults.data(forKey:"ConnectionHub.clusters.v2") == beforeFailedUnlink,"failed registry save preserves membership and refuses unlink success")
         defaults.refuseWrites = false
+        let failedLinkHub = ConnectionHub(registryDefaults:defaults); failedLinkHub.hostingLocalHub = true
+        failedLinkHub.setRoster(program:"chrome",groups:[["id":"new-x","name":"X","timeState":seed]])
+        failedLinkHub.setRoster(program:"safari",groups:[["id":"new-y","name":"Y","timeState":seed]])
+        defaults.refuseWrites = true
+        let failedLink = failedLinkHub.linkGroups(program:"chrome",groupId:"new-x",targetProgram:"safari",targetGroupId:"new-y")
+        try check(failedLink == "local-storage-unavailable" && failedLinkHub.activeClusterCount() == 0 && defaults.data(forKey:"ConnectionHub.clusters.v2") == beforeFailedUnlink,"failed registry save cannot announce a new link or overwrite the old registry")
+        defaults.refuseWrites = false
 
         let key = "ConnectionHub.clusters.v2"
         let bytes = defaults.data(forKey:key)!

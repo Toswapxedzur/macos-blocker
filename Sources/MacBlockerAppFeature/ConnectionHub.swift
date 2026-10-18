@@ -1527,7 +1527,8 @@ final class ConnectionHub: ObservableObject {
         if let existing, !existing.sharedRuleTime.isEmpty { previousTime = existing.sharedRuleTime }
         else { previousTime = NSNull() }
         var timeState: [String: Any] = [:]
-        if existing?.sharedRuleTime.isEmpty == false || joining.contains(where: { !($0.2.timeState?["objects"] as? [String: Any] ?? [:]).isEmpty }) {
+        let seededTime = seeds.contains { !(($0["state"] as? [String: Any])?["objects"] as? [String: Any] ?? [:]).isEmpty }
+        if existing?.sharedRuleTime.isEmpty == false || seededTime {
             guard let merged = GroupActionsRuntime.shared.call("mergeTime", [
                 previousTime,
                 seeds, initiatingProgram + "/" + initiatingID, (Date().timeIntervalSince1970 * 1000).rounded(.down)
@@ -1535,6 +1536,7 @@ final class ConnectionHub: ObservableObject {
                   let mergedState = merged["state"] as? [String: Any] else { lock.unlock(); return "incompatible-custom-time" }
             timeState = mergedState
         }
+        let before = clusters.mapValues { $0.editorCopy() }
         let cluster = ownCluster ?? otherCluster ?? {
             let created = ClusterState(id: UUID().uuidString, groupName: own.name)
             created.initiator = program
@@ -1555,6 +1557,9 @@ final class ConnectionHub: ObservableObject {
         cluster.memberGroupIds[targetProgram] = targetGroupId
         cluster.sharedRuleTime = timeState
         persistClustersLocked()
+        guard clusterStorageWritable else {
+            clusters = before; lock.unlock(); return "local-storage-unavailable"
+        }
         broadcastClusterLocked(clusterJSONObject(cluster))
         lock.unlock()
         return nil
