@@ -484,6 +484,29 @@ public final class BlockerWebStore: @unchecked Sendable {
         return String(decoding: data, as: UTF8.self)
     }
 
+    /// Save event state before its external actions. A failed write must not
+    /// acknowledge a managed timer completion or perform its actions.
+    public func commitRuleDispatch(_ states: [String: String]) throws {
+        guard !states.isEmpty else { return }
+        try withLockedDocument { raw, save in
+            guard var raw else { throw GroupStoreError.invalidInput("Missing or unreadable rule storage") }
+            let current = Set((raw["blockedGroups"] as? [[String: Any]] ?? []).compactMap { group in
+                (group["groupType"] as? String) == "custom" ? group["id"] as? String : nil
+            })
+            var stored = raw["cbRuleState"] as? [String: Any] ?? [:]
+            for (id, json) in states {
+                guard current.contains(id) else { throw GroupStoreError.groupNotFound(id) }
+                guard json.utf8.count <= 65536,
+                      let value = try JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any] else {
+                    throw GroupStoreError.invalidInput("Invalid event state")
+                }
+                stored[id] = value
+            }
+            raw["cbRuleState"] = stored
+            try save(raw)
+        }
+    }
+
     /// Writes rules' states (JSON text; nil forgets a group's).
     public func writeRuleStates(_ states: [String: String?]) {
         guard !states.isEmpty else { return }
