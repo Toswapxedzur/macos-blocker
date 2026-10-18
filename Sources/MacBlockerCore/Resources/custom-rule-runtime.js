@@ -96,7 +96,7 @@ var MacBlockerRuntime = (function () {
       const actions = result.actions.map((action) => (action.kind === "file"
         ? { ...action, payload: action.payload === null ? null : typeof action.payload === "string" ? action.payload : JSON.stringify(action.payload) }
         : action));
-      return JSON.stringify({ actions, logs: logs(result.logs), diagnostics: logs(result.diagnostics), panels: result.panels, states, types: result.types, quarantine: result.quarantine });
+      return JSON.stringify({ actions, logs: logs(result.logs), diagnostics: logs(result.diagnostics), panels: result.panels, states, types: result.types, stateFailures: result.stateFailures, quarantine: result.quarantine });
     }
   };
 })();

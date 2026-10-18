@@ -69,6 +69,7 @@ public final class RuleRuntime {
         public var logs: [Log]
         public var panels: [String: [PanelSnapshot]]
         public var states: [String: String]
+        public var stateFailures: [String]?
         public var types: [String: [String]]?
         public var quarantine: Quarantine?
     }
