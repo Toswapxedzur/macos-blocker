@@ -178,7 +178,7 @@ final class GuardEngineTests: XCTestCase {
         allow.applicationAllowlist = true
         XCTAssertTrue(AppBlockPolicy.blocksApplication("com.hnc.Discord", groups: [allow], usage: UsageSnapshot(), now: Date()))
         XCTAssertFalse(AppBlockPolicy.blocksApplication("com.example.Editor", groups: [allow], usage: UsageSnapshot(), now: Date()))
-        XCTAssertFalse(AppBlockPolicy.blocksApplication("com.google.Chrome", groups: [allow], usage: UsageSnapshot(), now: Date()))
+        XCTAssertTrue(AppBlockPolicy.blocksApplication("com.google.Chrome", groups: [allow], usage: UsageSnapshot(), now: Date()))
     }
 
     // MARK: - Termination sweep selection (pure)
@@ -232,12 +232,12 @@ final class GuardEngineTests: XCTestCase {
         XCTAssertEqual(modes, ["com.hnc.Discord"])
     }
 
-    func testBrowserGroupsAreExcludedFromNativePolicy() {
+    func testBrowserAppTargetsAreIncludedInNativePolicy() {
         let group = appGroup(id: "g", bundleID: "com.google.Chrome", mode: .instant)
         let modes = AppBlockPolicy.blockedApplications(
             groups: [group], usage: UsageSnapshot(), now: Date()
         )
-        XCTAssertTrue(modes.isEmpty)
+        XCTAssertEqual(modes, ["com.google.Chrome"])
     }
 
     func testTimedGroupDoesNotBlockBeforeLimit() {
