@@ -2,6 +2,7 @@
 import Foundation
 import CryptoKit
 import struct VaultClassifierCore.StorageSchemaPolicy
+import struct VaultClassifierCore.StorageProduct
 import MacBlockerCore
 import MacBlockerWebUI
 import Network
@@ -28,27 +29,16 @@ final class ConnectionHub: ObservableObject {
     private static let remotePrograms = LocalHubAuthentication.browserPrograms.union(["classifier"])
     private static let browserPrograms = LocalHubAuthentication.browserPrograms
 
-    /// A browser peer and its whole-app target refer to the same process on
-    /// this loopback-only hub. Chromium-family extensions report as `chrome`.
-    private static let browserAppIDsByProgram: [String: Set<String>] = [
-        "chrome": ["com.google.Chrome", "com.google.Chrome.beta", "com.google.Chrome.canary",
-                   "com.google.Chrome.dev", "com.google.Chrome.for.Testing", "org.chromium.Chromium",
-                   "com.brave.Browser", "com.operasoftware.Opera", "com.vivaldi.Vivaldi",
-                   "company.thebrowser.Browser"],
-        "edge": ["com.microsoft.edgemac"],
-        "safari": ["com.apple.Safari", "com.apple.SafariTechnologyPreview"]
-    ]
-
-    static func countsWholeBrowser(_ scopes: [[String: Any]], program: String) -> Bool {
-        guard let browserIDs = browserAppIDsByProgram[program] else { return false }
+    /// Only a native-attested application can establish overlap with an Apps
+    /// target. Program families and contribution payloads are not identities.
+    static func countsWholeBrowser(_ scopes: [[String: Any]], browserIdentity: BrowserApplicationIdentity?) -> Bool {
+        guard let browserIdentity, browserIdentity.kind == "mac-bundle-id" else { return false }
         return scopes.contains { line in
             guard (line["surface"] as? String) == "apps",
                   (line["action"] as? String ?? "block") == "block" else { return false }
             let listed = Set((line["apps"] as? [[String: Any]] ?? []).compactMap { $0["id"] as? String })
-            if (line["appsExcept"] as? Bool) == true {
-                return browserIDs.allSatisfy { !BlockGroup.lists(listed, $0) }
-            }
-            return browserIDs.contains { BlockGroup.lists(listed, $0) }
+            let included = BlockGroup.lists(listed, browserIdentity.value)
+            return (line["appsExcept"] as? Bool) == true ? !included : included
         }
     }
 
@@ -56,6 +46,7 @@ final class ConnectionHub: ObservableObject {
         let id: String
         var program: String
         var connected: Bool
+        var browserIdentity: BrowserApplicationIdentity?
         let challenge: String
         let connection: NWConnection
     }
@@ -162,8 +153,8 @@ final class ConnectionHub: ObservableObject {
         outboundDelivery = nil
     }
 
-    init(testOutboundQueue: DispatchQueue, outboundDelivery: @escaping (Data) -> Void) {
-        self.registryDefaults = .standard
+    init(testOutboundQueue: DispatchQueue, registryDefaults: UserDefaults = .standard, outboundDelivery: @escaping (Data) -> Void) {
+        self.registryDefaults = registryDefaults
         self.outboundQueue = testOutboundQueue
         self.outboundDelivery = outboundDelivery
     }
@@ -188,7 +179,10 @@ final class ConnectionHub: ObservableObject {
             activityObserver = nil
             publishedActivitySnapshot = nil
             let retiring = peers.values.filter { $0.connected && Self.browserPrograms.contains($0.program) }.map(\.connection)
-            for connection in retiring { peers[ObjectIdentifier(connection)]?.connected = false }
+            for connection in retiring {
+                peers[ObjectIdentifier(connection)]?.connected = false
+                peers[ObjectIdentifier(connection)]?.browserIdentity = nil
+            }
             lock.unlock()
             if let oldObserver { oldStore?.removeSettingsObserver(oldObserver) }
             // A replacement is a new authority epoch. Existing browser sessions
@@ -235,6 +229,7 @@ final class ConnectionHub: ObservableObject {
             "kind": "welcome", "v": Self.protocolVersion,
             "usageTransferReceipts": true,
             "ruleTimeVersion": 1,
+            "browserIdentityVersion": VaultClassifierBridge.LocalHubAuthentication.browserIdentityVersion,
             "activitySettingsNotifications": activityStoreValue != nil && publishedActivitySnapshot != nil,
             "hubProgram": Self.localProgram, "peers": peerListJSONLocked()
         ], to: [connection])
@@ -265,7 +260,8 @@ final class ConnectionHub: ObservableObject {
     private var wantsToListen = false
     // Internal (not private) so tests can stand in for a hosting hub.
     var hostingLocalHub = false
-    static func helloRejectionReason(_ obj: [String: Any], challenge: String, secret: Data?) -> String? {
+    static func helloRejectionReason(_ obj: [String: Any], challenge: String, secret: Data?,
+                                     appMajor: Int = StorageProduct.current.major) -> String? {
         let version = (obj["v"] as? NSNumber)?.intValue
         guard version == protocolVersion else { return "protocol-mismatch" }
         guard let program = obj["program"] as? String, remotePrograms.contains(program) else {
@@ -277,6 +273,17 @@ final class ConnectionHub: ObservableObject {
         guard VaultClassifierBridge.LocalHubAuthentication.verifyProof(
             program: program, challenge: challenge, proof: proof, secret: secret
         ) else { return "authentication-failed" }
+        let hasVersion = obj.keys.contains("browserIdentityVersion")
+        let hasIdentity = obj.keys.contains("browserIdentity")
+        guard hasVersion || hasIdentity else {
+            return browserPrograms.contains(program) && !(0...3).contains(appMajor) ? "browser-upgrade-required" : nil
+        }
+        guard browserPrograms.contains(program), hasVersion && hasIdentity,
+              VaultClassifierBridge.LocalHubAuthentication.isBrowserIdentityVersion(obj["browserIdentityVersion"]),
+              let object = obj["browserIdentity"] as? [String: Any],
+              let identity = VaultClassifierBridge.LocalHubAuthentication.verifyBrowserIdentityAttestation(
+                object, program: program, challenge: challenge, secret: secret),
+              identity.kind == "mac-bundle-id" else { return "invalid-browser-identity" }
         return nil
     }
 
@@ -804,11 +811,12 @@ final class ConnectionHub: ObservableObject {
     // tests. Admission is called only after handleIncoming verifies the proof.
     func registerPendingPeer(_ connection: NWConnection, challenge: String) {
         lock.lock(); defer { lock.unlock() }
-        peers[ObjectIdentifier(connection)] = Peer(id: UUID().uuidString, program: "", connected: false,
+        peers[ObjectIdentifier(connection)] = Peer(id: UUID().uuidString, program: "", connected: false, browserIdentity: nil,
                                                   challenge: challenge, connection: connection)
     }
 
-    func admitAuthenticatedPeer(_ connection: NWConnection, program: String) -> String? {
+    func admitAuthenticatedPeer(_ connection: NWConnection, program: String,
+                                browserIdentity: BrowserApplicationIdentity? = nil) -> String? {
         lock.lock(); defer { lock.unlock() }
         let key = ObjectIdentifier(connection)
         guard peers[key] != nil, Self.remotePrograms.contains(program) else { return "invalid-program" }
@@ -817,6 +825,7 @@ final class ConnectionHub: ObservableObject {
         let connectedPrograms = peers.values.filter { $0.connected }.map(\.program)
         guard !Self.isDuplicateBrowser(program, connectedPrograms: connectedPrograms) else { return "duplicate-program" }
         peers[key]?.program = program
+        peers[key]?.browserIdentity = browserIdentity
         peers[key]?.connected = true
         welcomeAuthenticatedPeerLocked(connection, program: program)
         broadcastPeersLocked()
@@ -865,7 +874,13 @@ final class ConnectionHub: ObservableObject {
                 return
             }
             let program = (obj["program"] as? String) ?? "browser"
-            if let reason = admitAuthenticatedPeer(conn, program: program) { rejectAndClose(conn, reason: reason) }
+            let identity = (obj["browserIdentity"] as? [String: Any]).flatMap { object in
+                secret.flatMap { VaultClassifierBridge.LocalHubAuthentication.verifyBrowserIdentityAttestation(
+                    object, program: program, challenge: challenge, secret: $0) }
+            }
+            if let reason = admitAuthenticatedPeer(conn, program: program, browserIdentity: identity) {
+                rejectAndClose(conn, reason: reason)
+            }
         case "groups-announce":
             lock.lock()
             let prog = peers[key]?.program ?? ((obj["program"] as? String) ?? "")
@@ -883,14 +898,12 @@ final class ConnectionHub: ObservableObject {
             send(conn, dict: ["kind": "rule-time-response", "requestID": requestID, "groupId": groupID, "body": body])
         case "group-sync":
             lock.lock()
-            let prog = peers[key]?.program ?? ((obj["program"] as? String) ?? "")
+            if let peer = peers[key], peer.connected {
+                applySyncLocked(program: peer.program, groupId: (obj["groupId"] as? String) ?? "",
+                                contribution: obj, ts: (obj["ts"] as? Double) ?? 0,
+                                browserIdentity: peer.browserIdentity)
+            }
             lock.unlock()
-            applySync(
-                program: prog,
-                groupId: (obj["groupId"] as? String) ?? "",
-                contribution: obj,
-                ts: (obj["ts"] as? Double) ?? 0
-            )
         case "group-link", "group-unlink":
             lock.lock()
             let prog = peers[key]?.program ?? ""
@@ -1640,15 +1653,17 @@ final class ConnectionHub: ObservableObject {
     /// contribution unions its entries into the shared lines, so two groups that
     /// existed separately keep both sides' entries when they link), and the usage
     /// counter is a delta accumulator (the Mac is the budget authority).
-    func applySync(program: String, groupId: String, contribution: [String: Any], ts: Double) {
+    func applySync(program: String, groupId: String, contribution: [String: Any], ts: Double,
+                   browserIdentity: BrowserApplicationIdentity? = nil) {
         lock.lock(); defer { lock.unlock() }
-        applySyncLocked(program: program, groupId: groupId, contribution: contribution, ts: ts)
+        applySyncLocked(program: program, groupId: groupId, contribution: contribution, ts: ts, browserIdentity: browserIdentity)
     }
 
     /// The caller holds the hub lock. Rebase and application of native intent
     /// use this same critical section, so an intervening browser edit cannot
     /// be overwritten by a frame prepared against an older shared snapshot.
-    private func applySyncLocked(program: String, groupId: String, contribution: [String: Any], ts: Double) {
+    private func applySyncLocked(program: String, groupId: String, contribution: [String: Any], ts: Double,
+                                 browserIdentity: BrowserApplicationIdentity? = nil) {
         guard !program.isEmpty, !groupId.isEmpty else { return }
         guard let cluster = clusterLocked(program: program, groupId: groupId) else {
             return
@@ -1773,7 +1788,7 @@ final class ConnectionHub: ObservableObject {
         // covers any website time from that browser. Keep offline handovers:
         // they were measured while the native sampler was unavailable.
         let browserCoveredByApp = deltaPeriod == nil && transferKey == nil &&
-            Self.countsWholeBrowser(cluster.sharedScopes, program: program)
+            Self.browserPrograms.contains(program) && Self.countsWholeBrowser(cluster.sharedScopes, browserIdentity: browserIdentity)
         if !duplicateTransfer, !browserCoveredByApp,
            let delta = contribution["usageDeltaMs"] as? Double, delta != 0,
            deltaPeriod == nil || deltaPeriod!.rounded(.down) == cluster.sharedUsageResetAtMs.rounded(.down) {
