@@ -33,13 +33,16 @@ enum ManagedRuleTimeChecks {
         let load = try runtime.load(groupID:"m",source:source,stateJSON:"{}")
         try check(load.ok,"native managed rule loads")
         let seed = try object(load.states["m"]!)["$vaultTime"] as! [String: Any]
+        let browserRuntime = try RuleRuntime()
+        let browserLoad = try browserRuntime.load(groupID:"c",source:source.replacingOccurrences(of:"apps:['org.example.game']",with:"websites:['example.com']"),stateJSON:"{}")
+        let browserSeed = try object(browserLoad.states["c"]!)["$vaultTime"] as! [String: Any]
         let hub = ConnectionHub(registryDefaults:defaults); hub.hostingLocalHub = true; hub.localWebStore = store
         hub.setRoster(program:"macapp",groups:[["id":"m","name":"Mac","timeState":seed]])
-        hub.setRoster(program:"chrome",groups:[["id":"c","name":"Chrome","timeState":seed]])
+        hub.setRoster(program:"chrome",groups:[["id":"c","name":"Chrome","timeState":browserSeed]])
         try check(hub.linkGroups(program:"macapp",groupId:"m",targetProgram:"chrome",targetGroupId:"c") == nil,"actual Mac hub preflights and links compatible objects")
         let first = hub.syncRuleTime(groupID:"m",seed:seed,commands:[])
         try check(first["ready"] as? Bool == false,"actual Mac hub waits for every fresh member seed")
-        let second = hub.syncRuleTime(program:"chrome",groupID:"c",seed:seed,commands:[])
+        let second = hub.syncRuleTime(program:"chrome",groupID:"c",seed:browserSeed,commands:[])
         try check(second["ready"] as? Bool == true,"actual Mac hub opens only after both seeds confirm")
         let cluster = second["clusterId"] as! String
         let at = (Date().timeIntervalSince1970 * 1000).rounded(.down)
@@ -48,6 +51,9 @@ enum ManagedRuleTimeChecks {
         let replay = hub.syncRuleTime(groupID:"m",clusterID:cluster,seed:seed,commands:[reset])
         func generation(_ frame: [String:Any]) -> Int? { (((frame["state"] as? [String:Any])?["objects"] as? [String:Any])?["clock"] as? [String:Any])?["generation"] as? Int }
         try check(mutation["acknowledgedSerial"] as? Int == 1 && generation(mutation) == 1 && generation(replay) == 1,"actual Mac hub persists replay receipt before acknowledging reset")
+        try runtime.setTimeContext(groupID:"m",contextJSON:String(decoding:try JSONSerialization.data(withJSONObject:mutation),as:UTF8.self))
+        let linkedTick = try runtime.dispatch(type:"tick",data:[:],groupID:"m")
+        try check((try object(linkedTick.states["m"]!)["$vaultTime"] as? [String:Any])?["scope"] as? String == cluster,"live native engine has the linked namespace before unlink")
         let wrong = hub.syncRuleTime(groupID:"m",clusterID:"different",seed:seed,commands:[reset])
         try check(wrong["ready"] as? Bool == false,"actual Mac hub refuses a stale cluster identity")
         let restored = ConnectionHub(registryDefaults:defaults); restored.hostingLocalHub = true; restored.restoreClustersLocked()
@@ -65,11 +71,43 @@ enum ManagedRuleTimeChecks {
         try check((try Data(contentsOf:store.fileURL)) == saved,"native event state cannot resurrect a deleted group")
         // The member's disk copy is deliberately older than the shared reset.
         try store.commitRuleDispatch(["m":load.states["m"]!])
+        var disabledDocument = try object(store.loadRawJSON()!)
+        var disabledGroups = disabledDocument["blockedGroups"] as! [[String:Any]]
+        disabledGroups[0]["enabled"] = false; disabledDocument["blockedGroups"] = disabledGroups
+        store.save(rawStore:disabledDocument)
+        runtime.suppress(groupID:"m",true)
         try check(hub.unlinkGroup(program:"chrome",groupId:"c") == nil,"unlink succeeds with the other member offline")
         try check(hub.activeClusterCount() == 0 && hub.clustersJSON().contains("\"clusters\":[]"),"retained final snapshots do not appear as live links")
         let preserved = try object(store.ruleState(groupID:"m"))["$vaultTime"] as! [String:Any]
         let preservedTimer = (preserved["objects"] as! [String:[String:Any]])["clock"]!
         try check(preservedTimer["generation"] as? Int == 1 && preserved["detachedReceipt"] != nil,"disabled native member saves the final shared timer before unlink")
+        // The ordinary preflight runs before dispatch, even for disabled rules.
+        // It must not consume the durable handover without updating this engine.
+        try RuleTimeContextDelivery.refresh(groupID:"m",runtime:runtime) {
+            let savedSeed = try object(store.ruleState(groupID:"m"))["$vaultTime"] as! [String:Any]
+            let frame = hub.syncRuleTime(groupID:"m",seed:savedSeed,commands:[])
+            if frame["detached"] as? Bool == true, let final = frame["state"] as? [String:Any] {
+                try store.commitRuleTimeHandover(groupID:"m",expected:savedSeed,namespace:final)
+            }
+            return frame
+        }
+        let afterHandover = try object(store.ruleState(groupID:"m"))["$vaultTime"] as! [String:Any]
+        try check(afterHandover["detachedReceipt"] == nil,"native preflight durably acknowledges the final handover")
+        try RuleTimeContextDelivery.refresh(groupID:"m",runtime:runtime) {
+            hub.syncRuleTime(groupID:"m",seed:afterHandover,commands:[])
+        }
+        runtime.suppress(groupID:"m",false)
+        let localTick = try runtime.dispatch(type:"tick",data:[:],groupID:"m")
+        let localState = try object(localTick.states["m"]!)
+        let localTime = localState["$vaultTime"] as! [String:Any]
+        let localBudget = (localTime["objects"] as! [String:[String:Any]])["budget"]!
+        try check(localTime["scope"] is NSNull && (localState["budget"] as? [String:Any])?["ready"] as? Bool == true,"live native engine becomes locally available after preflight consumes unlink")
+        try check(localBudget["websites"] as? [String] == [] && localBudget["apps"] as? [String] == ["org.example.game"] && ((localTime["objects"] as? [String:[String:Any]])?["clock"]?["generation"] as? Int) == 1,"native handover restores own targets and preserves the final timer generation")
+        var unloadedRefresh = 0
+        try RuleTimeContextDelivery.refresh(groupID:"unloaded",runtime:nil) {
+            unloadedRefresh += 1; return ["linked":false]
+        }
+        try check(unloadedRefresh == 1,"unloaded custom members still advance their hub handover")
         var stale = seed; stale["scope"] = cluster
         let handover = hub.syncRuleTime(program:"chrome",groupID:"c",clusterID:cluster,seed:stale,commands:[reset])
         let transferred = handover["state"] as! [String:Any]
