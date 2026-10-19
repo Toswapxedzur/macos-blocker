@@ -200,7 +200,7 @@
     } catch (_) {}
   };
 
-  // Only v.log output, keyed by immutable group ID. Config snapshots must
+  // Rule output and explicit errors, keyed by immutable group ID. Config snapshots must
   // never overwrite this independent log store. The retired mixed buffer is ignored.
   var RULE_LOG_KEY = "__cb_rule_logs_by_group__";
   var ruleLogs = Object.create(null);
@@ -211,7 +211,7 @@
     Object.keys(savedLogs || {}).forEach(function (groupId) {
       if (!Array.isArray(savedLogs[groupId])) return;
       ruleLogs[groupId] = savedLogs[groupId].filter(function (entry) {
-        return entry && entry.source === "v.log" && entry.groupId === groupId;
+        return entry && (entry.source === "v.log" || entry.source === "page-error") && entry.groupId === groupId;
       }).slice(-200);
     });
   } catch (_) {}
@@ -228,12 +228,12 @@
   }
 
   function nativeLogToFeedEntry(e) {
-    if (!e || e.source !== "v.log" || typeof e.groupId !== "string" || !e.groupId) return null;
+    if (!e || (e.source !== "v.log" && e.source !== "page-error") || typeof e.groupId !== "string" || !e.groupId) return null;
     var ts = e.timestamp ? new Date(e.timestamp).getTime() : Date.now();
     if (!Number.isFinite(ts)) ts = Date.now();
     return {
       id: "native-" + logFeedSession + "-" + (++logFeedCounter),
-      ts: ts, source: "v.log", level: "log", groupId: e.groupId,
+      ts: ts, source: e.source, level: e.source === "page-error" || e.level === "error" ? "error" : "log", groupId: e.groupId,
       eventType: e.eventType || "", message: e.message || ""
     };
   }

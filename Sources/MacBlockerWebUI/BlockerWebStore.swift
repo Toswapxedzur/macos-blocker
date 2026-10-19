@@ -484,6 +484,43 @@ public final class BlockerWebStore: @unchecked Sendable {
         return String(decoding: data, as: UTF8.self)
     }
 
+    public func commitRuleTimeHandover(groupID: String, expected: [String: Any]?, namespace: [String: Any]) throws {
+        try withLockedDocument { raw, save in
+            guard var raw, (raw["blockedGroups"] as? [[String: Any]] ?? []).contains(where: { $0["id"] as? String == groupID && $0["groupType"] as? String == "custom" }) else { throw GroupStoreError.groupNotFound(groupID) }
+            var states = raw["cbRuleState"] as? [String: [String: Any]] ?? [:]
+            var state = states[groupID] ?? [:]
+            guard WebStoreDocument.canonicalJSON(state["$vaultTime"]) == WebStoreDocument.canonicalJSON(expected) else { throw GroupStoreError.invalidInput("Time state changed; retry transfer") }
+            state["$vaultTime"] = namespace
+            let bytes = try JSONSerialization.data(withJSONObject: state)
+            guard bytes.count <= 65536 else { throw GroupStoreError.invalidInput("Final time exceeds rule state capacity") }
+            states[groupID] = state; raw["cbRuleState"] = states
+            try save(raw)
+        }
+    }
+
+    /// Save event state before its external actions. A failed write must not
+    /// acknowledge a managed timer completion or perform its actions.
+    public func commitRuleDispatch(_ states: [String: String]) throws {
+        guard !states.isEmpty else { return }
+        try withLockedDocument { raw, save in
+            guard var raw else { throw GroupStoreError.invalidInput("Missing or unreadable rule storage") }
+            let current = Set((raw["blockedGroups"] as? [[String: Any]] ?? []).compactMap { group in
+                (group["groupType"] as? String) == "custom" ? group["id"] as? String : nil
+            })
+            var stored = raw["cbRuleState"] as? [String: Any] ?? [:]
+            for (id, json) in states {
+                guard current.contains(id) else { throw GroupStoreError.groupNotFound(id) }
+                guard json.utf8.count <= 65536,
+                      let value = try JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any] else {
+                    throw GroupStoreError.invalidInput("Invalid event state")
+                }
+                stored[id] = value
+            }
+            raw["cbRuleState"] = stored
+            try save(raw)
+        }
+    }
+
     /// Writes rules' states (JSON text; nil forgets a group's).
     public func writeRuleStates(_ states: [String: String?]) {
         guard !states.isEmpty else { return }
