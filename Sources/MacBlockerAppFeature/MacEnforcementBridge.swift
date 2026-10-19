@@ -565,7 +565,9 @@ public final class MacEnforcementBridge: ObservableObject {
     }
 
     private func configureRuleTime(_ runtime: RuleRuntime, groupID: String, type: String? = nil, data: Any? = nil) throws {
-        try RuleTimeContextDelivery.refresh(groupID: groupID, runtime: runtime) {
+        try RuleTimeContextDelivery.refresh(groupID: groupID, runtime: runtime, deliveryFailed: {
+            self.unloadRule(groupID: groupID)
+        }) {
             ruleTimeContext(groupID: groupID, type: type, data: data)
         }
     }
@@ -575,7 +577,9 @@ public final class MacEnforcementBridge: ObservableObject {
             // Reading the hub can save/acknowledge the final unlink snapshot.
             // Deliver that same snapshot to a loaded engine before a later read
             // can return plain linked:false and lose the handover context.
-            try RuleTimeContextDelivery.refresh(groupID: groupID, runtime: ruleRuntime) {
+            try RuleTimeContextDelivery.refresh(groupID: groupID, runtime: ruleRuntime, deliveryFailed: {
+                self.unloadRule(groupID: groupID)
+            }) {
                 ruleTimeContext(groupID: groupID)
             }
         } catch {
@@ -803,11 +807,19 @@ public final class MacEnforcementBridge: ObservableObject {
 /// A hub read may acknowledge a durable handover, so callers must also deliver
 /// its result to the live engine. Disabled/unloaded groups still refresh the hub.
 enum RuleTimeContextDelivery {
-    static func refresh(groupID: String, runtime: RuleRuntime?, context: () throws -> [String: Any]) throws {
+    static func refresh(groupID: String, runtime: RuleRuntime?, deliveryFailed: () -> Void = {}, context: () throws -> [String: Any]) throws {
         let snapshot = try context()
         guard let runtime else { return }
-        let bytes = try JSONSerialization.data(withJSONObject: snapshot)
-        try runtime.setTimeContext(groupID: groupID, contextJSON: String(decoding: bytes, as: UTF8.self))
+        do {
+            let bytes = try JSONSerialization.data(withJSONObject: snapshot)
+            try runtime.setTimeContext(groupID: groupID, contextJSON: String(decoding: bytes, as: UTF8.self))
+        } catch {
+            // The provider may already have saved and acknowledged unlink.
+            // Drop the stale engine; ordinary reconciliation loads that saved
+            // final state without replaying this event's handlers or actions.
+            deliveryFailed()
+            throw error
+        }
     }
 }
 
