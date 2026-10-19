@@ -57,7 +57,7 @@ Custom rules have their own [Code manual](../code-manual/en.md). It explains the
 
 ## Native apps
 
-Use an Apps target's + picker to select installed apps. **Block every app except these** turns the list into an allowlist. System apps, browsers, and Vault itself are excluded from native app blocking.
+Use an Apps target's + picker to select installed or currently running apps. Reopen the picker to refresh its list when you launch an app from another folder. **Block every app except these** turns the list into an allowlist. Mac Vault can block ordinary Apple apps and whole browsers; Mac Vault itself and any app sharing its bundle identifier remain protected.
 
 A blocked app is asked to quit. **Ask a blocked app to quit again every (minutes)** controls retries. Website redirects, page pauses, and feed hiding are enforced by the browser extension; they do not become native app actions.
 

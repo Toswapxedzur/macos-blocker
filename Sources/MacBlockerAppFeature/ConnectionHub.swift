@@ -28,6 +28,30 @@ final class ConnectionHub: ObservableObject {
     private static let remotePrograms = LocalHubAuthentication.browserPrograms.union(["classifier"])
     private static let browserPrograms = LocalHubAuthentication.browserPrograms
 
+    /// A browser peer and its whole-app target refer to the same process on
+    /// this loopback-only hub. Chromium-family extensions report as `chrome`.
+    private static let browserAppIDsByProgram: [String: Set<String>] = [
+        "chrome": ["com.google.Chrome", "com.google.Chrome.beta", "com.google.Chrome.canary",
+                   "com.google.Chrome.dev", "com.google.Chrome.for.Testing", "org.chromium.Chromium",
+                   "com.brave.Browser", "com.operasoftware.Opera", "com.vivaldi.Vivaldi",
+                   "company.thebrowser.Browser"],
+        "edge": ["com.microsoft.edgemac"],
+        "safari": ["com.apple.Safari", "com.apple.SafariTechnologyPreview"]
+    ]
+
+    static func countsWholeBrowser(_ scopes: [[String: Any]], program: String) -> Bool {
+        guard let browserIDs = browserAppIDsByProgram[program] else { return false }
+        return scopes.contains { line in
+            guard (line["surface"] as? String) == "apps",
+                  (line["action"] as? String ?? "block") == "block" else { return false }
+            let listed = Set((line["apps"] as? [[String: Any]] ?? []).compactMap { $0["id"] as? String })
+            if (line["appsExcept"] as? Bool) == true {
+                return browserIDs.allSatisfy { !BlockGroup.lists(listed, $0) }
+            }
+            return browserIDs.contains { BlockGroup.lists(listed, $0) }
+        }
+    }
+
     private struct Peer {
         let id: String
         var program: String
@@ -413,8 +437,9 @@ final class ConnectionHub: ObservableObject {
         /// until a member contributes one.
         var sharedLock: [String: Any] = [:]
         /// Shared live usage budget. Members report *increments* (usageDeltaMs)
-        /// from their own accrual, never absolutes, so folding this total back
-        /// into each member's local counter can never double count. Before any
+        /// from their own accrual, never absolutes, so adopting this total does
+        /// not echo usage back. The browser-app overlap rule below also keeps
+        /// website time nested inside a whole-browser target. Before any
         /// delta arrives we seed it from the largest member absolute so joining a
         /// cluster with prior usage doesn't wipe it.
         var sharedUsageMs: Double = 0
@@ -1645,8 +1670,8 @@ final class ConnectionHub: ObservableObject {
         // (usageDeltaMs) measured at their own accrual point — the browser's page
         // heartbeat and the Mac's frontmost-app sampler. Because we only ever ADD
         // reported increments (never adopt an absolute), folding the broadcast
-        // total back into each member's local counter produces no echo and no
-        // double counting, and there is no "decrease == reset" race. A newer
+        // total back into each member's local counter produces no echo; the
+        // whole-browser rule below handles nested website time. A newer
         // reset anchor rolls the whole budget over.
         // The hub owns the shared period: a member's anchor only seeds it when
         // the hub has none yet; from then on only the hub starts a new period.
@@ -1663,7 +1688,14 @@ final class ConnectionHub: ObservableObject {
         // Time a browser counted while the hub was away arrives tagged with
         // its period: added only when that period is still the current one.
         let deltaPeriod = (contribution["usageDeltaAnchorMs"] as? NSNumber)?.doubleValue
-        if !duplicateTransfer, let delta = contribution["usageDeltaMs"] as? Double, delta != 0,
+        // The hub and extensions run on this same Mac. When the native Apps
+        // line counts the whole browser, its frontmost-app sampler already
+        // covers any website time from that browser. Keep offline handovers:
+        // they were measured while the native sampler was unavailable.
+        let browserCoveredByApp = deltaPeriod == nil && transferKey == nil &&
+            Self.countsWholeBrowser(cluster.sharedScopes, program: program)
+        if !duplicateTransfer, !browserCoveredByApp,
+           let delta = contribution["usageDeltaMs"] as? Double, delta != 0,
            deltaPeriod == nil || deltaPeriod!.rounded(.down) == cluster.sharedUsageResetAtMs.rounded(.down) {
             if (cluster.sharedScalars["rollingLimit"] as? Bool) != true {
                 Self.countBudgetSnoozeLocked(cluster, beforeMs: cluster.sharedUsageMs, addedMs: delta, nowMs: nowMs)
@@ -1671,7 +1703,7 @@ final class ConnectionHub: ObservableObject {
             cluster.sharedUsageMs = max(0, cluster.sharedUsageMs + delta)
             if cluster.joiningUsageBaseMs != nil { cluster.joiningUsageDeltaMs += delta }
             cluster.usageSeeded = true
-        } else if !duplicateTransfer,
+        } else if !duplicateTransfer, (!browserCoveredByApp || firstContribution),
                   let seed = contribution["usageMs"] as? Double,
                   seed.isFinite, seed >= 0,
                   (!cluster.usageSeeded || firstContribution),
@@ -1691,8 +1723,15 @@ final class ConnectionHub: ObservableObject {
             resetAtMidnight: (cluster.sharedScalars["resetAtMidnight"] as? Bool) == true
         )
         let rollingBefore = UsageBudget.usedMs(UsageBudget.pruneBuckets(cluster.sharedBuckets, group: rollingPolicy, nowMs: nowMs))
-        if !duplicateTransfer { applyBucketContributionLocked(cluster, contribution, firstContribution: firstContribution) }
-        if !duplicateTransfer, (cluster.sharedScalars["rollingLimit"] as? Bool) == true,
+        if !duplicateTransfer {
+            var bucketContribution = contribution
+            if browserCoveredByApp {
+                bucketContribution.removeValue(forKey: "usageBuckets")
+                if !firstContribution { bucketContribution.removeValue(forKey: "usageBucketsSeed") }
+            }
+            applyBucketContributionLocked(cluster, bucketContribution, firstContribution: firstContribution)
+        }
+        if !duplicateTransfer, !browserCoveredByApp, (cluster.sharedScalars["rollingLimit"] as? Bool) == true,
            let deltas = UsageBudget.parseBuckets(contribution["usageBuckets"]), !deltas.isEmpty {
             let rollingAfter = UsageBudget.usedMs(UsageBudget.pruneBuckets(cluster.sharedBuckets, group: rollingPolicy, nowMs: nowMs))
             Self.countBudgetSnoozeLocked(cluster, beforeMs: rollingBefore, addedMs: max(0, rollingAfter - rollingBefore), nowMs: nowMs)

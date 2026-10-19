@@ -46,12 +46,13 @@ final class GuardEngineTests: XCTestCase {
 
     // MARK: - Guardrails
 
-    func testApplePlatformBinariesAreNeverMatched() {
-        let policy = GuardPolicy(targets: [GuardTarget(bundleIdentifier: "com.apple.Safari")])
-        // Even though a (misconfigured) target names an Apple bundle, the
-        // guardrail refuses to match it.
-        XCTAssertNil(policy.match(bundleIdentifier: "com.apple.Safari"))
-        XCTAssertFalse(policy.match(bundleIdentifier: "com.apple.Safari") != nil)
+    func testOrdinaryAppleAppsAndBrowsersCanMatch() {
+        let policy = GuardPolicy(targets: [
+            GuardTarget(bundleIdentifier: "com.apple.calculator"),
+            GuardTarget(bundleIdentifier: "com.apple.Safari")
+        ])
+        XCTAssertNotNil(policy.match(bundleIdentifier: "com.apple.calculator"))
+        XCTAssertNotNil(policy.match(bundleIdentifier: "com.apple.Safari"))
     }
 
     func testUnidentifiedProcessIsTreatedAsProtected() {
@@ -59,7 +60,7 @@ final class GuardEngineTests: XCTestCase {
         XCTAssertNil(policy.match(bundleIdentifier: nil))
     }
 
-    func testNativeTerminatorNeverSelectsBrowserProcesses() {
+    func testNativeTerminatorSelectsBlockedBrowserProcesses() {
         XCTAssertTrue(BlockedProcesses.isBrowserBundleIdentifier("com.google.Chrome"))
         XCTAssertTrue(BlockedProcesses.isBrowserBundleIdentifier("com.google.Chrome.helper"))
         XCTAssertTrue(BlockedProcesses.isBrowserBundleIdentifier("org.mozilla.firefox"))
@@ -74,7 +75,7 @@ final class GuardEngineTests: XCTestCase {
             RunningProcessSnapshot(processIdentifier: 200, bundleIdentifier: "com.example.FocusApp")
         ])
 
-        XCTAssertEqual(plan.map(\.bundleIdentifier), ["com.example.FocusApp"])
+        XCTAssertEqual(plan.map(\.bundleIdentifier), ["com.google.Chrome", "com.example.FocusApp"])
     }
 
     // MARK: - "Block every application except these"
@@ -91,13 +92,13 @@ final class GuardEngineTests: XCTestCase {
         XCTAssertNotNil(policy.match(bundleIdentifier: "com.hnc.Discord"))
         XCTAssertEqual(policy.match(bundleIdentifier: "com.hnc.Discord")?.displayName, "Deep work")
         XCTAssertTrue(policy.match(bundleIdentifier: "com.hnc.Discord") != nil)
-        // Guardrails still win: Apple, Vault itself, browsers and unidentified processes.
-        XCTAssertNil(policy.match(bundleIdentifier: "com.apple.Finder"))
+        // Only Vault's bundle identity and unidentified processes stay exempt.
+        XCTAssertNotNil(policy.match(bundleIdentifier: "com.apple.Finder"))
         if let own = GuardPolicy.ownBundleIdentifier {
             XCTAssertNil(policy.match(bundleIdentifier: own))
             XCTAssertNil(policy.match(bundleIdentifier: own + ".Helper"), "Vault's helpers are left alone with it")
         }
-        XCTAssertNil(policy.match(bundleIdentifier: "com.google.Chrome"))
+        XCTAssertNotNil(policy.match(bundleIdentifier: "com.google.Chrome"))
         XCTAssertNil(policy.match(bundleIdentifier: nil))
     }
 
@@ -139,12 +140,14 @@ final class GuardEngineTests: XCTestCase {
     func testAllowlistBudgetCountsTheAppsItWouldBlock() {
         var group = appGroup(id: "g", bundleID: "com.example.Editor", mode: .afterMinutes)
         XCTAssertTrue(group.countsApplication("com.example.Editor", exempt: false), "a blocklist counts its listed app")
+        XCTAssertFalse(group.countsApplication("com.example.Editor", exempt: true), "a protected app never spends time even if listed")
         XCTAssertFalse(group.countsApplication("com.hnc.Discord", exempt: false))
         group.applicationAllowlist = true
         XCTAssertFalse(group.countsApplication("com.example.Editor", exempt: false), "an allowed app spends nothing")
         XCTAssertFalse(group.countsApplication("com.example.editor.Helper", exempt: false))
         XCTAssertTrue(group.countsApplication("com.hnc.Discord", exempt: false), "a blocked app spends the budget")
-        XCTAssertFalse(group.countsApplication("com.google.Chrome", exempt: true), "exempt apps (browsers, Apple, Vault) never count")
+        XCTAssertTrue(group.countsApplication("com.google.Chrome", exempt: false), "browsers can spend the app budget")
+        XCTAssertFalse(group.countsApplication("com.example.Vault", exempt: true), "a protected app spends nothing")
     }
 
     func testOneEnforcingTestForRulesTimeAndBlocking() {
@@ -303,11 +306,17 @@ final class GuardEngineTests: XCTestCase {
         XCTAssertTrue(blocked(usedMinutes: 20, snooze: lapsed), "a lapsed budget snooze adds nothing")
     }
 
-    // Owner 2026-09-26: the picker and the "+" offer only apps a block can act on.
+    // The picker and the "+" offer only apps a block can act on.
     func testOnlyBlockableAppsAreOffered() {
         XCTAssertTrue(GuardPolicy.canBlock("com.hnc.Discord"))
-        XCTAssertFalse(GuardPolicy.canBlock("com.apple.Music"), "Apple's apps are never blocked")
-        XCTAssertFalse(GuardPolicy.canBlock("com.google.Chrome"), "browsers block inside themselves")
-        XCTAssertFalse(GuardPolicy.canBlock("com.google.Chrome.helper"))
+        XCTAssertTrue(GuardPolicy.canBlock("com.apple.Music"))
+        XCTAssertTrue(GuardPolicy.canBlock("com.apple.clock"))
+        XCTAssertTrue(GuardPolicy.canBlock("com.google.Chrome"))
+        XCTAssertTrue(GuardPolicy.canBlock("com.google.Chrome.helper"))
+        XCTAssertFalse(GuardPolicy.canBlock(nil))
+        if let own = GuardPolicy.ownBundleIdentifier {
+            XCTAssertFalse(GuardPolicy.canBlock(own))
+            XCTAssertFalse(GuardPolicy.canBlock(own + ".Helper"))
+        }
     }
 }

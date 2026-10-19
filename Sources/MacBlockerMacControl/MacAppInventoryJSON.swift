@@ -16,7 +16,7 @@ public enum MacAppInventoryJSON {
         var entries: [[String: String]] = []
         entries.reserveCapacity(apps.count)
 
-        // Only apps a block can act on (not Apple's, browsers or Vault).
+        // Only apps a block can act on (Vault's own bundle id stays protected).
         for app in apps where GuardPolicy.canBlock(app.bundleIdentifier) {
             var icon = ""
             if let image = MacApplicationInventory.icon(for: app),

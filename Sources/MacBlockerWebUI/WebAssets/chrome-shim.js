@@ -163,6 +163,13 @@
         if (typeof window.__cbOnAppInventory === "function") {
           try { window.__cbOnAppInventory(); } catch (_) {}
         }
+        // The picker may already be open when a newly running app arrives.
+        // Keep its current search and refresh the visible results in place.
+        var picker = document.getElementById("appPickerModal");
+        var search = document.getElementById("appPickerSearch");
+        if (picker && !picker.classList.contains("hidden") && search) {
+          search.dispatchEvent(new Event("input", { bubbles: true }));
+        }
       }
     } catch (_) {}
   };
@@ -526,21 +533,43 @@
   window.chrome.permissions = permissions;
   window.chrome.i18n = i18n;
 
-  // Pull the installed-application inventory (served dynamically by the native
-  // scheme handler). It can be multi-megabyte with icons, so we fetch it rather
-  // than have it injected. Resolves relative to the current page origin.
-  try {
-    if (typeof fetch === "function") {
-      fetch("app-inventory.json", { cache: "no-store" })
-        .then(function (response) {
-          return response && response.ok ? response.json() : null;
-        })
-        .then(function (list) {
-          if (Array.isArray(list) && typeof window.__cbApplyAppInventory === "function") {
-            window.__cbApplyAppInventory(list);
-          }
-        })
-        .catch(function () {});
+  // The native inventory includes running apps outside Applications. Fetch it
+  // on load, each picker opening, and on return to an open picker so a newly
+  // launched app appears without reloading the editor. Only the newest request
+  // may replace the list; icon payloads can be large and finish out of order.
+  var appInventoryRequest = 0;
+  function refreshAppInventory() {
+    if (typeof fetch !== "function") return;
+    var request = ++appInventoryRequest;
+    fetch("app-inventory.json", { cache: "no-store" })
+      .then(function (response) { return response && response.ok ? response.json() : null; })
+      .then(function (list) {
+        if (request === appInventoryRequest && Array.isArray(list)) {
+          window.__cbApplyAppInventory(list);
+        }
+      })
+      .catch(function () {});
+  }
+  function watchAppPicker() {
+    var picker = document.getElementById("appPickerModal");
+    if (!picker || typeof MutationObserver !== "function") return;
+    var refreshIfOpen = function () {
+      if (!picker.classList.contains("hidden")) refreshAppInventory();
+    };
+    // NSWorkspace launch/quit notifications call this only while the picker is
+    // visible, so a background-launched app can appear without reopening it.
+    window.__cbRefreshAppInventory = refreshIfOpen;
+    new MutationObserver(refreshIfOpen).observe(picker, {
+      attributes: true, attributeFilter: ["class"]
+    });
+    window.addEventListener("focus", refreshIfOpen);
+  }
+  if (typeof document !== "undefined") {
+    if (document.readyState === "loading") {
+      document.addEventListener("DOMContentLoaded", watchAppPicker, { once: true });
+    } else {
+      watchAppPicker();
     }
-  } catch (_) {}
+  }
+  refreshAppInventory();
 })();

@@ -275,8 +275,7 @@ public final class MacEnforcementBridge: ObservableObject {
         let snoozes = view.snoozes
         let frontApp = NSWorkspace.shared.frontmostApplication
         activityRecorder?.sample(frontmost: frontApp, now: now)
-        let observedFrontmost = frontApp?.bundleIdentifier
-        let frontmost = BlockedProcesses.isBrowserBundleIdentifier(observedFrontmost) ? nil : observedFrontmost
+        let frontmost = frontApp?.bundleIdentifier
 
         // 1. Reconcile reset windows + accrue time spent in the frontmost app.
         let elapsed = elapsedSinceLastSample(now: now)

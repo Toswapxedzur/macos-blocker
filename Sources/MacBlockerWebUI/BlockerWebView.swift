@@ -264,6 +264,7 @@ public struct BlockerWebView: NSViewRepresentable {
         private var downloadDestinations: [ObjectIdentifier: URL] = [:]
 
         private var usagePushTimer: Timer?
+        private var appInventoryObserver: NSObjectProtocol?
         // Observes native writes to web-store.json (an MCP tool call, a direct
         // GroupStore.save) so the open editor re-seeds instead of showing a stale
         // tree. Retained so deinit can detach it.
@@ -297,6 +298,9 @@ public struct BlockerWebView: NSViewRepresentable {
 
         deinit {
             usagePushTimer?.invalidate()
+            if let observer = appInventoryObserver {
+                NSWorkspace.shared.notificationCenter.removeObserver(observer)
+            }
             if let observer = groupStoreObserver {
                 NotificationCenter.default.removeObserver(observer)
             }
@@ -313,6 +317,16 @@ public struct BlockerWebView: NSViewRepresentable {
                 self?.pushClusters()
             }
             usagePushTimer = timer
+
+            if appInventoryObserver == nil {
+                appInventoryObserver = NSWorkspace.shared.notificationCenter.addObserver(
+                    forName: NSWorkspace.didLaunchApplicationNotification,
+                    object: nil,
+                    queue: .main
+                ) { [weak self] _ in
+                    self?.webView?.evaluateJavaScript("window.__cbRefreshAppInventory?.()", completionHandler: nil)
+                }
+            }
 
             // Re-seed the editor when a native writer (MCP tool, direct save)
             // mutates the store out-of-band. The notification can fire on the MCP

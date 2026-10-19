@@ -44,8 +44,8 @@ public struct BlockedProcess: Equatable, Sendable {
 /// Finds the running applications a policy blocks. Quitting them is
 /// `QuitRequests`: normally, never by force.
 public enum BlockedProcesses {
-    /// Browsers are owned by their extensions. The native app never blocks,
-    /// closes or hides them or their helper processes.
+    /// Browser identities used by Activity's app/site accounting. They are
+    /// ordinary app targets for a whole-browser block in Mac Vault.
     public static let browserBundleIdentifiers: Set<String> = [
         "com.apple.Safari",
         "com.apple.SafariTechnologyPreview",
