@@ -64,6 +64,9 @@ var MacBlockerRuntime = (function () {
   }
 
   return {
+    setTimeContext(groupId, contextJSON) {
+      return JSON.stringify(engine.setTimeContext(String(groupId), JSON.parse(contextJSON)));
+    },
     load(groupId, source, stateJSON) {
       if (registering) return JSON.stringify({ ok: false, handlers: 0, types: [], error: "A rule load is already in progress.", logs: [], states: {} });
       registering = true;
@@ -85,13 +88,15 @@ var MacBlockerRuntime = (function () {
       engine.suppress(String(groupId), on === true);
     },
     dispatch(descriptorJSON) {
-      const result = engine.dispatch(JSON.parse(descriptorJSON));
+      const descriptor = JSON.parse(descriptorJSON);
+      if (descriptor.timeContext) engine.setTimeContext(String(descriptor.targetGroupId), descriptor.timeContext);
+      const result = engine.dispatch(descriptor);
       const states = {};
       for (const [groupId, state] of Object.entries(result.states)) states[groupId] = JSON.stringify(state);
       const actions = result.actions.map((action) => (action.kind === "file"
         ? { ...action, payload: action.payload === null ? null : typeof action.payload === "string" ? action.payload : JSON.stringify(action.payload) }
         : action));
-      return JSON.stringify({ actions, logs: logs(result.logs), diagnostics: logs(result.diagnostics), panels: result.panels, states, quarantine: result.quarantine });
+      return JSON.stringify({ actions, logs: logs(result.logs), diagnostics: logs(result.diagnostics), panels: result.panels, states, types: result.types, stateFailures: result.stateFailures, quarantine: result.quarantine });
     }
   };
 })();
