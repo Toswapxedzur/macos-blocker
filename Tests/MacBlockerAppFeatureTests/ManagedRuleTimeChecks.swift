@@ -103,6 +103,22 @@ enum ManagedRuleTimeChecks {
         let localBudget = (localTime["objects"] as! [String:[String:Any]])["budget"]!
         try check(localTime["scope"] is NSNull && (localState["budget"] as? [String:Any])?["ready"] as? Bool == true,"live native engine becomes locally available after preflight consumes unlink")
         try check(localBudget["websites"] as? [String] == [] && localBudget["apps"] as? [String] == ["org.example.game"] && ((localTime["objects"] as? [String:[String:Any]])?["clock"]?["generation"] as? Int) == 1,"native handover restores own targets and preserves the final timer generation")
+        let failedDeliveryRuntime = try RuleRuntime()
+        _ = try failedDeliveryRuntime.load(groupID:"m",source:source,stateJSON:load.states["m"]!)
+        try failedDeliveryRuntime.setTimeContext(groupID:"m",contextJSON:String(decoding:try JSONSerialization.data(withJSONObject:mutation),as:UTF8.self))
+        var discardedStaleEngine = false
+        do {
+            try RuleTimeContextDelivery.refresh(groupID:"m",runtime:failedDeliveryRuntime,deliveryFailed:{
+                discardedStaleEngine = true; failedDeliveryRuntime.unload(groupID:"m")
+            }) { ["linked":false] }
+            throw Failure(description:"stale shared context unexpectedly accepted plain unlink")
+        } catch RuleRuntime.RuleRuntimeError.failed(_) { }
+        try check(discardedStaleEngine,"failed context delivery discards the stale engine after saved unlink")
+        let recovered = try failedDeliveryRuntime.load(groupID:"m",source:source,stateJSON:store.ruleState(groupID:"m"))
+        try check(recovered.ok,"ordinary reload accepts the already-saved final handover after delivery failure")
+        let recoveredTick = try failedDeliveryRuntime.dispatch(type:"tick",data:[:],groupID:"m")
+        let recoveredState = try object(recoveredTick.states["m"]!)
+        try check((recoveredState["budget"] as? [String:Any])?["ready"] as? Bool == true && ((recoveredState["$vaultTime"] as? [String:Any])?["scope"] is NSNull),"reloaded member recovers local availability without replaying the failed event")
         var unloadedRefresh = 0
         try RuleTimeContextDelivery.refresh(groupID:"unloaded",runtime:nil) {
             unloadedRefresh += 1; return ["linked":false]
