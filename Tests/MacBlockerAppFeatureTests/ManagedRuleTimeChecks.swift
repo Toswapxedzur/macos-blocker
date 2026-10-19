@@ -189,6 +189,63 @@ enum ManagedRuleTimeChecks {
         let unsupported = ConnectionHub(registryDefaults:defaults); unsupported.hostingLocalHub = true; unsupported.restoreClustersLocked()
         let answer = unsupported.syncRuleTime(groupID:"m",seed:seed.merging(["scope":cluster]){ _, new in new },commands:[])
         try check(answer["ready"] as? Bool == false && defaults.data(forKey:key) == newerBytes,"newer registry remains unchanged and cannot grant a local allowance")
+        try NamedBrowserOverlapChecks.run(report)
     }
+}
+
+private enum NamedBrowserOverlapChecks {
+ struct Failure:Error,CustomStringConvertible {let description:String}
+ static func run(_ report:(String)->Void)throws {
+  func need(_ yes:Bool,_ label:String)throws {guard yes else{throw Failure(description:label)};report(label)}
+  func object(_ text:String)throws->[String:Any]{try JSONSerialization.jsonObject(with:Data(text.utf8)) as! [String:Any]}
+  let actualName="Agentic.NamedBrowserActual."+UUID().uuidString
+  let actualDefaults=UserDefaults(suiteName:actualName)!
+  defer {actualDefaults.removePersistentDomain(forName:actualName)}
+  let dir=FileManager.default.temporaryDirectory.appendingPathComponent("named-browser-overlap-"+UUID().uuidString)
+  defer {try? FileManager.default.removeItem(at:dir)}
+  let store=BlockerWebStore(shared:SharedAppGroupStore(baseDirectory:dir))
+  store.save(rawStore:["blockedGroups":[["id":"m","name":"Mac","groupType":"custom","enabled":true]],"cbRuleState":[:]])
+  let native=try RuleRuntime(), browser=try RuleRuntime()
+  let source=#"(on,v)=>{const p=v.rolling('pool',{windowMs:20000,limitMs:3000});p.assign({apps:['com.google.Chrome']});const s=v.rolling('separate',{windowMs:20000,limitMs:3000});s.assign({apps:['com.apple.calculator']});on('tick',()=>{v.state.pool=p.snapshot();v.state.separate=s.snapshot();});}"#
+  let browserSource=source.replacingOccurrences(of:"apps:['com.google.Chrome']",with:"websites:['example.com']").replacingOccurrences(of:"apps:['com.apple.calculator']",with:"websites:['example.org']")
+  let nr=try native.load(groupID:"m",source:source,stateJSON:"{}"),br=try browser.load(groupID:"c",source:browserSource,stateJSON:"{}")
+  guard nr.ok,br.ok else{throw Failure(description:"Named overlap source failed to load")}
+  let ns=try object(nr.states["m"]!)["$vaultTime"] as! [String:Any],bs=try object(br.states["c"]!)["$vaultTime"] as! [String:Any]
+  let hub=ConnectionHub(registryDefaults:actualDefaults);hub.hostingLocalHub=true;hub.localWebStore=store
+  hub.setRoster(program:"macapp",groups:[["id":"m","name":"Mac","groupType":"custom","timeState":ns]])
+  hub.setRoster(program:"chrome",groups:[["id":"c","name":"Chrome","groupType":"custom","timeState":bs]])
+  guard hub.linkGroups(program:"macapp",groupId:"m",targetProgram:"chrome",targetGroupId:"c")==nil else{throw Failure(description:"Named overlap link failed")}
+  hub.applySync(program:"macapp",groupId:"m",contribution:["scopes":[["surface":"apps","apps":[["id":"com.google.Chrome"]],"action":"block"]]],ts:0)
+  hub.applySync(program:"chrome",groupId:"c",contribution:["scopes":[["surface":"site","sites":["example.com"],"action":"block"]]],ts:0)
+  _=hub.syncRuleTime(groupID:"m",seed:ns,commands:[])
+  let ready=hub.syncRuleTime(program:"chrome",groupID:"c",seed:bs,commands:[])
+  guard ready["ready"] as? Bool==true,let cluster=ready["clusterId"] as? String else{throw Failure(description:"Named overlap fresh seeds not ready")}
+  // Actual hub wall time remains unchanged. Only this pure test waits for a
+  // four-second history interval after the fresh seeds' reset anchors.
+  Thread.sleep(forTimeInterval:4.1)
+  let at=(Date().timeIntervalSince1970*1000).rounded(.down)
+  _=hub.syncRuleTime(groupID:"m",clusterID:cluster,seed:ns,commands:[],usage:["type":"tick","now":at-1000,"data":["usageAppId":"com.google.Chrome","elapsedMs":3000]])
+  let shared=hub.syncRuleTime(program:"chrome",groupID:"c",clusterID:cluster,seed:bs,commands:[],usage:["type":"visible","now":at,"data":["url":"https://example.com/","elapsedMs":3000]])
+  guard shared["ready"] as? Bool==true,let state=shared["state"] as? [String:Any] else{throw Failure(description:"Named overlap usage refused")}
+  func used(_ frame:[String:Any],_ time:Double)throws->[(Double,Double)] {
+   var results:[(Double,Double)]=[]
+   let data=try JSONSerialization.data(withJSONObject:frame),text=String(decoding:data,as:UTF8.self)
+   for (runtime,id) in [(native,"m"),(browser,"c")] {
+    try runtime.setTimeContext(groupID:id,contextJSON:text)
+    let tick=try runtime.dispatch(type:"tick",data:[:],groupID:id,now:Date(timeIntervalSince1970:time/1000))
+    let saved=try object(tick.states[id]!),p=saved["pool"] as! [String:Any],s=saved["separate"] as! [String:Any]
+    guard p["ready"] as? Bool==true,s["ready"] as? Bool==true else{throw Failure(description:"Named overlap snapshot unavailable")}
+    results.append(((p["usedMs"] as! NSNumber).doubleValue,(s["usedMs"] as! NSNumber).doubleValue))
+   }
+   return results
+  }
+  try need(try used(shared,at).allSatisfy{$0.0==4000 && $0.1==0},"actual native JSC/hub Chrome-App plus partially overlapping website intervals union once; neither contribution is dropped and separate remains zero")
+  func atTime(_ time:Double)throws->[String:Any] {
+   guard let result=GroupActionsRuntime.shared.call("reduceTime",[state,["member":"macapp/m","commands":[],"nowMs":time]],module:"RuleCore") as? [String:Any],result["ok"] as? Bool==true,let reduced=result["state"] as? [String:Any] else{throw Failure(description:"Named overlap explicit timestamp reduction refused")}
+   return ["linked":true,"ready":true,"clusterId":cluster,"state":reduced]
+  }
+  try need(try used(atTime(at+19999),at+19999).allSatisfy{$0.0==1 && $0.1==0},"actual JSC named interval retains exactly one millisecond before expiry")
+  try need(try used(atTime(at+20000),at+20000).allSatisfy{$0.0==0 && $0.1==0},"actual JSC named interval expires exactly at original twenty-second boundary")
+ }
 }
 #endif
