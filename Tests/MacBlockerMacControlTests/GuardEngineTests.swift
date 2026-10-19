@@ -313,6 +313,8 @@ final class GuardEngineTests: XCTestCase {
         XCTAssertTrue(GuardPolicy.canBlock("com.apple.clock"))
         XCTAssertTrue(GuardPolicy.canBlock("com.google.Chrome"))
         XCTAssertTrue(GuardPolicy.canBlock("com.google.Chrome.helper"))
+        XCTAssertFalse(GuardPolicy.canBlock("com.adamancia.vault.mac"))
+        XCTAssertFalse(GuardPolicy.canBlock("com.adamancia.vault.mac.development"))
         XCTAssertFalse(GuardPolicy.canBlock(nil))
         if let own = GuardPolicy.ownBundleIdentifier {
             XCTAssertFalse(GuardPolicy.canBlock(own))

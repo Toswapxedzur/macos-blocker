@@ -16,7 +16,14 @@ public struct GuardPolicy: Equatable, Sendable {
 
     /// Vault itself: a block never touches it (matters once an allowlist
     /// group blocks "everything except").
-    public static let ownBundleIdentifier = Bundle.main.bundleIdentifier
+    // The development launcher can execute a signed bare binary, for which
+    // Bundle.main has no Info.plist identifier. Its signing identity is still
+    // Mac Vault's development identity, so keep that guard in every build.
+    public static let ownBundleIdentifier: String? = Bundle.main.bundleIdentifier ?? "com.adamancia.vault.mac.development"
+    private static let protectedBundleIdentifiers: Set<String> = [
+        "com.adamancia.vault.mac", "com.adamancia.vault.mac.development",
+        ownBundleIdentifier?.lowercased() ?? ""
+    ]
 
     /// The one test of whether a block can act on an app — the quit sweep, a
     /// rule's close, time counting, the app picker and the quick-add "+" all
@@ -27,7 +34,7 @@ public struct GuardPolicy: Equatable, Sendable {
     public static func canBlock(_ bundleIdentifier: String?) -> Bool {
         guard let bundleID = bundleIdentifier, !bundleID.isEmpty else { return false }
         let lowered = bundleID.lowercased()
-        if let own = ownBundleIdentifier?.lowercased(), lowered == own || lowered.hasPrefix(own + ".") { return false }
+        if protectedBundleIdentifiers.contains(where: { lowered == $0 || lowered.hasPrefix($0 + ".") }) { return false }
         return true
     }
 
