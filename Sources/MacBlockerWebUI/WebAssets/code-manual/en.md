@@ -36,6 +36,7 @@ Named objects survive Run and restart in reserved `v.state.$vaultTime`; do not e
     {id: "reset", type: "button", label: "Reset"}
   ]});
   on("panel", ev => {
+    if (ev.data.eventName !== "click") return;
     if (ev.data.controlId === "start") timer.start();
     if (ev.data.controlId === "pause") timer.pause();
     if (ev.data.controlId === "reset") timer.reset();
@@ -48,7 +49,7 @@ Named objects survive Run and restart in reserved `v.state.$vaultTime`; do not e
 
 - `on(type, handler)` → boolean. Registers `handler(ev)`; multiple handlers run in registration order. False means invalid arguments or handler limit reached. `ev = { type: string, now: number, data }`; `now` is Unix milliseconds.
 - `v.state`: mutable JSON object, persisted after event dispatch. Initialize missing fields rather than overwriting existing state. Assigning a non-object or array resets it to `{}`; nonserializable/oversized updates are not persisted.
-- `v.log(...values)`: the only producer of this group's Log. Logs/Clear are independent per group. Load errors appear in Run status; handler diagnostics do not populate Log.
+- `v.log(...values)`: appends to this group's Log. Execution and delivery failures appear as explicit error entries in the same feed. Logs/Clear are independent per group. Load errors also appear in Run status; partially executed events are not replayed automatically.
 - `v.emit(type, data)`: queues a JSON copy of `data` for this group's handlers after the current event, with a fresh `now`; not a synchronous call.
 - `v.panel(id, spec)`: replaces this group's named floating panel; null `spec` removes it. See Panels.
 - `v.file(op, path, payload?)` → request ID string. See Files.

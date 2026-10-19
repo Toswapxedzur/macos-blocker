@@ -122,7 +122,7 @@ public final class MacEnforcementBridge: ObservableObject {
         ruleLog.removeAll()
         let dicts: [[String: String]] = entries.map {
             ["timestamp": ISO8601DateFormatter().string(from: $0.timestamp),
-             "source": "v.log", "groupId": $0.groupId,
+             "source": $0.level == "error" ? "page-error" : "v.log", "groupId": $0.groupId,
              "level": $0.level, "group": $0.group, "message": $0.message]
         }
         guard let data = try? JSONSerialization.data(withJSONObject: dicts),
