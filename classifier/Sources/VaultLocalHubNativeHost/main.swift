@@ -11,33 +11,15 @@ private let nativeHostEnvironment = VaultRuntimeEnvironment.development
 private let nativeHostEnvironment = VaultRuntimeEnvironment.production
 #endif
 private let nativeHostOrigin = nativeHostEnvironment.chromeExtensionOrigin
-private let allowedParentIdentifiers: Set<String> = {
-    var identifiers: Set<String> = [
-        "com.google.Chrome", "com.google.Chrome.helper",
-        "com.microsoft.edgemac", "com.microsoft.edgemac.helper",
-        "org.chromium.Chromium", "org.chromium.Chromium.helper",
-        "com.brave.Browser", "com.brave.Browser.helper",
-        "com.operasoftware.Opera", "com.operasoftware.Opera.helper",
-    ]
-    // Development builds also serve the automation browsers the test rigs drive
-    // (Chrome for Testing, and the ad-hoc-signed Chromium that Playwright ships,
-    // whose code identifier is the bare "Chromium"). The development host only
-    // ever answers the development extension origin and the development hub.
-    if nativeHostEnvironment == .development {
-        identifiers.formUnion(["com.google.chrome.for.testing", "com.google.chrome.for.testing.helper", "Chromium", "Chromium Helper"])
-    }
-    return identifiers
-}()
-
 @main
 struct VaultLocalHubNativeHost {
     static func main() {
-        guard CommandLine.arguments.dropFirst().first == nativeHostOrigin,
-              hasTrustedChromiumParent() else {
+        guard CommandLine.arguments.dropFirst().first == nativeHostOrigin else {
             return
         }
+        let parent = NativeBrowserParentIdentity.capture(environment: nativeHostEnvironment)
         while let request = readFrame() {
-            guard let response = response(for: request),
+            guard let response = response(for: request, parent: parent),
                   let encoded = try? JSONSerialization.data(withJSONObject: response) else {
                 return
             }
@@ -45,49 +27,23 @@ struct VaultLocalHubNativeHost {
         }
     }
 
-    private static func response(for data: Data) -> [String: Any]? {
+    private static func response(for data: Data, parent: NativeBrowserParentIdentity?) -> [String: Any]? {
+        let unavailable: [String: Any] = ["ok": false, "error": "browser-identity-unavailable", "browserIdentityVersion": 1]
         guard let request = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               request["kind"] as? String == "local-hub-challenge",
               (request["v"] as? NSNumber)?.intValue == LocalHubAuthentication.protocolVersion,
+              request["browserIdentityVersion"] == nil || LocalHubAuthentication.isBrowserIdentityVersion(request["browserIdentityVersion"]),
               let program = request["program"] as? String,
-              LocalHubAuthentication.isBrowserProgram(program),
+              let actual = parent?.identityForProof(), actual.program == program,
               let challenge = request["challenge"] as? String,
-              let proof = try? LocalHubAuthentication.makeProof(
-                program: program,
-                challenge: challenge,
-                environment: nativeHostEnvironment
-              ) else {
-            return ["ok": false, "error": "authentication-unavailable"]
+              let secret = try? LocalHubAuthentication.sharedSecret(environment: nativeHostEnvironment),
+              let proof = try? LocalHubAuthentication.makeProof(program: program, challenge: challenge, secret: secret),
+              let identityProof = try? LocalHubAuthentication.makeBrowserIdentityProof(program: program, challenge: challenge, identity: actual.identity, secret: secret),
+              let rechecked = parent?.identityForProof(), rechecked.program == actual.program, rechecked.identity == actual.identity else {
+            return unavailable
         }
-        return ["ok": true, "proof": proof]
-    }
-
-    private static func hasTrustedChromiumParent() -> Bool {
-        var path = [CChar](repeating: 0, count: Int(MAXPATHLEN))
-        guard proc_pidpath(getppid(), &path, UInt32(path.count)) > 0 else { return false }
-        var code: SecStaticCode?
-        guard SecStaticCodeCreateWithPath(URL(fileURLWithPath: String(cString: path)) as CFURL, [], &code) == errSecSuccess,
-              let code,
-              isValidParentCode(code) else {
-            return false
-        }
-        var information: CFDictionary?
-        guard SecCodeCopySigningInformation(code, SecCSFlags(rawValue: kSecCSSigningInformation), &information) == errSecSuccess,
-              let details = information as? [String: Any],
-              let identifier = details[kSecCodeInfoIdentifier as String] as? String else {
-            return false
-        }
-        return allowedParentIdentifiers.contains(identifier)
-    }
-
-    /// Production requires a fully sealed, valid signature. Development builds
-    /// also accept a parent whose signature is valid but whose bundle carries no
-    /// resource seal: the ad-hoc, linker-signed Chromium that Playwright ships
-    /// fails the sealed check with errSecCSUnsealedFrameworkRoot (-67056).
-    private static func isValidParentCode(_ code: SecStaticCode) -> Bool {
-        if SecStaticCodeCheckValidity(code, [], nil) == errSecSuccess { return true }
-        guard nativeHostEnvironment == .development else { return false }
-        return SecStaticCodeCheckValidity(code, SecCSFlags(rawValue: kSecCSDoNotValidateResources), nil) == errSecSuccess
+        return ["ok": true, "proof": proof, "browserIdentityVersion": 1,
+                "browserIdentity": ["v": 1, "kind": actual.identity.kind, "value": actual.identity.value, "proof": identityProof]]
     }
 
     private static func readFrame() -> Data? {
