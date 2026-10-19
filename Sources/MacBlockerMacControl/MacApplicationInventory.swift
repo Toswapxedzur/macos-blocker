@@ -56,8 +56,9 @@ public enum MacApplicationInventory {
         #endif
     }
 
-    /// Returns the set of installed applications, sorted by name. Each entry's
-    /// `isRunning` reflects the live `NSWorkspace` state at call time.
+    /// Returns installed applications and any additional apps currently running,
+    /// sorted by name. A running app outside the standard search directories
+    /// remains selectable while it is open.
     public static func installedApplications() -> [InstalledApplication] {
         #if os(macOS)
         let runningByBundleID = runningBundleIdentifiers()
@@ -82,6 +83,12 @@ public enum MacApplicationInventory {
             }
         }
 
+        // NSWorkspace also knows about apps launched from Downloads, a mounted
+        // volume, or another folder that the shallow installed-app scan misses.
+        for app in runningApplications() where byBundleID[app.bundleIdentifier] == nil {
+            byBundleID[app.bundleIdentifier] = app
+        }
+
         return byBundleID.values.sorted {
             $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending
         }
@@ -95,8 +102,7 @@ public enum MacApplicationInventory {
         #if os(macOS)
         var byBundleID: [String: InstalledApplication] = [:]
         for app in NSWorkspace.shared.runningApplications {
-            guard app.activationPolicy == .regular,
-                  let bundleID = app.bundleIdentifier,
+            guard let bundleID = app.bundleIdentifier,
                   byBundleID[bundleID] == nil else {
                 continue
             }

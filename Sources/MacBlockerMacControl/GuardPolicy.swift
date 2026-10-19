@@ -20,14 +20,13 @@ public struct GuardPolicy: Equatable, Sendable {
 
     /// The one test of whether a block can act on an app — the quit sweep, a
     /// rule's close, time counting, the app picker and the quick-add "+" all
-    /// use it (owner 2026-09-26: don't offer apps the Mac never blocks). Never
-    /// Apple's own (`com.apple.*`: quitting those can take down the session), a
-    /// browser (its extension blocks inside it), Vault itself — each with its
-    /// helpers — nor a process with no bundle id we can't identify.
+    /// use it (owner 2026-09-26: don't offer apps the Mac never blocks).
+    /// Apple apps and whole browsers are blockable like other apps. Vault's
+    /// own bundle id (including its helpers or another app sharing that id)
+    /// remains protected, as does a process with no identifying bundle id.
     public static func canBlock(_ bundleIdentifier: String?) -> Bool {
         guard let bundleID = bundleIdentifier, !bundleID.isEmpty else { return false }
         let lowered = bundleID.lowercased()
-        if lowered.hasPrefix("com.apple.") || BlockedProcesses.isBrowserBundleIdentifier(bundleID) { return false }
         if let own = ownBundleIdentifier?.lowercased(), lowered == own || lowered.hasPrefix(own + ".") { return false }
         return true
     }

@@ -124,7 +124,7 @@ public final class QuickAddPanel {
               let app = NSWorkspace.shared.frontmostApplication,
               let bundleID = app.bundleIdentifier,
               GuardPolicy.canBlock(bundleID) else {
-            showFeedback(success: false) // Apple's apps, browsers and Vault are never blocked
+            showFeedback(success: false) // Vault's own bundle id is protected
             return
         }
         do {

@@ -72,7 +72,7 @@ public struct BlockGroup: Codable, Identifiable, Equatable, Sendable {
     public var customRuleSource: String
     public var targets: [BlockTarget]
     /// "Block every application except these": the group's application targets
-    /// are the allowed ones; every other (non-protected, non-browser) app is
+    /// are the allowed ones; every other non-protected app is
     /// blocked while the group blocks. Mirrors the website list's allowlist.
     public var applicationAllowlist: Bool
 
@@ -131,10 +131,11 @@ extension BlockGroup {
     /// (and shows its timer). A blocklist counts its listed apps; "everything
     /// except" counts every app it would block, like the extension counts the
     /// sites outside a website allowlist. `exempt` marks an app no group can
-    /// block (Apple, browsers, Vault itself); the caller knows those.
+    /// block (Vault itself or an unidentified process); the caller knows those.
     public func countsApplication(_ bundleID: String, exempt: Bool) -> Bool {
+        guard !exempt else { return false }
         if applicationAllowlist {
-            return !exempt && !Self.lists(applicationIDs, bundleID)
+            return !Self.lists(applicationIDs, bundleID)
         }
         return Self.lists(applicationIDs, bundleID)
     }
