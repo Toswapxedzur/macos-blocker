@@ -346,7 +346,7 @@ public final class MacEnforcementBridge: ObservableObject {
         if everySecond {
             // Empty/disabled custom members still confirm their original seed;
             // they need not execute user handlers to let a join finish.
-            for group in groups where group.groupType == .custom { _ = ruleTimeContext(groupID: group.id) }
+            for group in groups where group.groupType == .custom { refreshRuleTime(groupID: group.id) }
         }
         guard !loadedRuleSources.isEmpty else { return }
 
@@ -383,11 +383,13 @@ public final class MacEnforcementBridge: ObservableObject {
         do {
             try configureRuleTime(runtime, groupID: group.id, type: type, data: data)
             apply(try runtime.dispatch(type: type, data: data, groupID: group.id), group: group)
-            _ = ruleTimeContext(groupID: group.id)
+            refreshRuleTime(groupID: group.id)
         } catch RuleRuntime.RuleRuntimeError.terminated {
+            appendLog(groupId: group.id, group: group.name, message: "Execution deadline exceeded; rule stopped.", level: "error")
             quarantineRule(group: group)
         } catch {
             NSLog("[Vault rule %@] %@: %@", group.id, type, String(describing: error))
+            appendLog(groupId: group.id, group: group.name, message: type + ": " + String(describing: error), level: "error")
         }
     }
 
@@ -395,13 +397,14 @@ public final class MacEnforcementBridge: ObservableObject {
         if let types = result.types { for (id, list) in types { ruleTypes[id] = Set(list) } }
         for diagnostic in result.diagnostics {
             NSLog("[Vault rule %@] %@", diagnostic.groupId, diagnostic.message)
+            appendLog(groupId: diagnostic.groupId, group: group.name, message: diagnostic.message, level: "error")
         }
         do {
             guard result.stateFailures?.isEmpty != false else { throw GroupStoreError.invalidInput("Invalid event state") }
             try webStore.commitRuleDispatch(result.states)
         }
         catch {
-            appendLog(groupId: group.id, group: group.name, message: "Event state could not be saved; no actions were performed: " + String(describing: error))
+            appendLog(groupId: group.id, group: group.name, message: "Event state could not be saved; no actions were performed: " + String(describing: error), level: "error")
             // This event performed no actions. Reload only the last saved state
             // on the next normal reconciliation, allowing a completion to retry.
             unloadRule(groupID: group.id)
@@ -528,7 +531,7 @@ public final class MacEnforcementBridge: ObservableObject {
             // A fresh load isn't suppressed in the engine: say where it stands.
             setSuppressed(!group.enabled, groupID: group.id, force: true)
             if persisted { GroupStore.postDidChange() }
-            _ = ruleTimeContext(groupID: group.id)
+            refreshRuleTime(groupID: group.id)
             return result
         } catch RuleRuntime.RuleRuntimeError.terminated {
             quarantineRule(group: group)
@@ -562,9 +565,22 @@ public final class MacEnforcementBridge: ObservableObject {
     }
 
     private func configureRuleTime(_ runtime: RuleRuntime, groupID: String, type: String? = nil, data: Any? = nil) throws {
-        let context = ruleTimeContext(groupID: groupID, type: type, data: data)
-        let bytes = try JSONSerialization.data(withJSONObject: context)
-        try runtime.setTimeContext(groupID: groupID, contextJSON: String(decoding: bytes, as: UTF8.self))
+        try RuleTimeContextDelivery.refresh(groupID: groupID, runtime: runtime) {
+            ruleTimeContext(groupID: groupID, type: type, data: data)
+        }
+    }
+
+    private func refreshRuleTime(groupID: String) {
+        do {
+            // Reading the hub can save/acknowledge the final unlink snapshot.
+            // Deliver that same snapshot to a loaded engine before a later read
+            // can return plain linked:false and lose the handover context.
+            try RuleTimeContextDelivery.refresh(groupID: groupID, runtime: ruleRuntime) {
+                ruleTimeContext(groupID: groupID)
+            }
+        } catch {
+            NSLog("[Vault rule %@] time refresh: %@", groupID, String(describing: error))
+        }
     }
 
     private func unloadRule(groupID: String) {
@@ -609,9 +625,9 @@ public final class MacEnforcementBridge: ObservableObject {
         ruleLog.removeAll { $0.groupId == groupID }
     }
 
-    private func appendLog(groupId: String, group: String, message: String) {
+    private func appendLog(groupId: String, group: String, message: String, level: String = "log") {
         guard !groupId.isEmpty else { return }
-        let entry = RuleLogEntry(timestamp: Date(), level: "log", groupId: groupId, group: group, message: message)
+        let entry = RuleLogEntry(timestamp: Date(), level: level, groupId: groupId, group: group, message: message)
         ruleLog.append(entry)
         if ruleLog.filter({ $0.groupId == groupId }).count > 200,
            let oldest = ruleLog.firstIndex(where: { $0.groupId == groupId }) {
@@ -782,6 +798,17 @@ public final class MacEnforcementBridge: ObservableObject {
     }
 
     #endif
+}
+
+/// A hub read may acknowledge a durable handover, so callers must also deliver
+/// its result to the live engine. Disabled/unloaded groups still refresh the hub.
+enum RuleTimeContextDelivery {
+    static func refresh(groupID: String, runtime: RuleRuntime?, context: () throws -> [String: Any]) throws {
+        let snapshot = try context()
+        guard let runtime else { return }
+        let bytes = try JSONSerialization.data(withJSONObject: snapshot)
+        try runtime.setTimeContext(groupID: groupID, contextJSON: String(decoding: bytes, as: UTF8.self))
+    }
 }
 
 /// A single entry in the custom-rule log.
