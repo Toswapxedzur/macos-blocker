@@ -4,7 +4,7 @@
 
 ## Quy định của quy tắc
 
-Source: một biểu thức hàm `(on, v) => { ... }`. Chỉ hỗ trợ JavaScript đồng bộ và API bên dưới; không có timers, network, native system APIs hoặc truy cập browser-page. Quy tắc theo thời gian dùng `ev.now` và events. Quy tắc Safari dùng browser code manual và chạy trong ứng dụng chứa riêng của Safari Vault.
+Source: một biểu thức hàm `(on, v) => { ... }`. Chỉ hỗ trợ JavaScript đồng bộ và API bên dưới; không có callback lập lịch JavaScript, mạng, API hệ thống native hoặc truy cập trang trình duyệt. Quy tắc dựa trên thời gian dùng bộ hẹn giờ/bộ theo dõi được quản lý bên dưới, hoặc `ev.now` và sự kiện. Quy tắc Safari dùng browser code manual và chạy trong ứng dụng chứa riêng của Safari Vault.
 
 - Chỉnh sửa lưu thành draft; **Run** kích hoạt và bật nhóm. Nhóm khóa không thể Run. Source rỗng unload quy tắc.
 - Run thành công thay handlers/panels và xóa app-block set của nhóm này, đồng thời giữ `v.state`. Compilation/registration thất bại sẽ giữ quy tắc trước; timeout có thể dừng quy tắc. Restart đăng ký lại source được kích hoạt gần nhất; closure variables và app-block sets được reset.
@@ -12,11 +12,44 @@ Source: một biểu thức hàm `(on, v) => { ... }`. Chỉ hỗ trợ JavaScri
 - Disable ngăn handlers và gỡ panels/app blocks. Enable khôi phục rule đã tải cùng panels/blocks còn giữ. Delete gỡ handlers/state/effects. Ứng dụng đã quit không được mở lại; file writes không được hoàn tác.
 - Events không bị giới hạn theo targets thường của nhóm; hãy chọn ứng dụng trong quy tắc. Actions được xếp hàng rồi áp dụng sau dispatch. Exception dừng handler nhưng không hoàn tác state/actions của nó; handlers sau có thể vẫn chạy. Chỉ file actions có result events.
 
+## Bộ hẹn giờ được quản lý và mức sử dụng trong cửa sổ trượt
+
+`v.timer(id, {direction:"down", durationMs:300000})` tạo hoặc trả về bộ đếm ngược có tên, ban đầu ở trạng thái tạm dừng. Dùng `{direction:"up"}` cho bộ đếm xuôi. Handle có `start()`, `pause()`, `resume()`, `reset()` và `snapshot()`. Gọi bắt đầu/tiếp tục nhiều lần vẫn cho cùng hiệu quả; đặt lại đưa về trạng thái tạm dừng với thời gian đã trôi qua bằng 0. Các trường snapshot gồm `ready`, `error`, `elapsedMs`, `remainingMs` (null với bộ đếm xuôi), `running` và `completed`.
+
+Bộ hẹn giờ đang chạy tiếp tục tiến theo thời gian thực khi ứng dụng/trình duyệt đóng hoặc quy tắc bị tắt. Bộ đếm ngược hoàn tất gửi `timerEnded` kèm `{id, direction, durationMs, generation, incarnation}` một lần cho mỗi hiện thân và thế hệ bộ hẹn giờ, tới từng thành viên khi quy tắc của thành viên đó chạy tiếp; Run không gửi lại sự kiện này. Việc gửi phụ thuộc vào sự kiện của host; đây không phải báo thức thời gian thực. Đặt `{type:"timer", timerId:"focus", label:"Focus"}` trong panel để hiển thị qua điều khiển văn bản hiện có.
+
+`v.rolling(id, {windowMs:3600000, limitMs:600000})` tạo hoặc trả về bộ theo dõi thời gian sử dụng thực tế có tên. `assign({websites:["youtube.com","reddit.com"], apps:[]})` thay thế các mục tiêu được gán cho thành viên này. Quy tắc native có thể gán ID ứng dụng của nền tảng thay thế. Tên miền bao gồm tên miền phụ. Một bộ theo dõi cộng gộp mức sử dụng của các mục tiêu; ID khác có hạn mức độc lập. `snapshot()` trả về `ready`, `error`, `usedMs`, `remainingMs`, `available` và `nextReturnAtMs` (thời điểm mili giây tiếp theo mà bất kỳ phần sử dụng đã ghi nào hết hạn). `available(target?)` cũng kiểm tra việc gán khi có mục tiêu. `reset()` xóa lịch sử của đối tượng này.
+
+Mọi mức sử dụng đủ điều kiện quan sát được đều được tính, kể cả phần vượt hạn mức; bản thân bộ theo dõi không chặn trang/ứng dụng. Các khoảng trang hiển thị chồng lấn chỉ được tính một lần, còn ứng dụng native tính thời gian sử dụng ở tiền cảnh quan sát được. Quy tắc bị tắt không cộng thêm sử dụng; lịch sử vẫn hết hạn đúng tại ranh giới khoảng thời gian. Chỉ có thể sử dụng lại khi lịch sử còn lại thấp hơn giới hạn. Mẫu heartbeat bị giới hạn tối đa năm giây; khoảng trống do tắt ứng dụng/quy tắc không tự tạo hoạt động. Sự kiện do người dùng phát không cộng thêm sử dụng.
+
+Các ID đối tượng giống nhau trong nhóm tùy chỉnh được liên kết cùng dùng một hub native cục bộ làm nguồn thẩm quyền. Liên kết hợp nhất lịch sử và mục tiêu được gán của bộ theo dõi, đồng thời giữ trạng thái bộ hẹn giờ của bên khởi tạo; cấu hình không tương thích sẽ từ chối liên kết. Mỗi thành viên nhận sự kiện hoàn tất riêng. Mất kết nối làm bộ theo dõi dùng chung không khả dụng và từ chối điều khiển bộ hẹn giờ cho đến khi có lại nguồn thẩm quyền mới nhất. Khi hủy liên kết, mỗi thành viên giữ mức sử dụng chung và trạng thái bộ hẹn giờ cuối cùng, khôi phục mục tiêu riêng và bỏ lệnh từ liên kết cũ. Hub giữ snapshot cuối cùng cho đến khi thành viên quay lại lưu và xác nhận; việc bàn giao đang chờ phải hoàn tất trước khi có thể dùng liên kết mới.
+
+Đối tượng có tên tồn tại qua Run và khởi động lại trong `v.state.$vaultTime` được dành riêng; không sửa trực tiếp trường này. Xóa rõ ràng bằng `v.removeTime(id)`. ID gồm 1–80 chữ cái ASCII, chữ số, `_` hoặc `-`; tên thuộc tính dành riêng bị từ chối. Tối đa 32 đối tượng dùng chung giới hạn state UTF-8 64 KiB của quy tắc. Thời lượng là số nguyên mili giây, tối đa 365 ngày. Lịch sử trượt bị giới hạn ở 1024 bucket phút và 2048 khoảng đã hợp nhất. Lỗi dung lượng lịch sử khiến bộ theo dõi không khả dụng cho đến khi được đặt lại rõ ràng; cấu hình không hợp lệ và lần lưu quá lớn báo lỗi mà không xóa dữ liệu đã lưu.
+
+```js
+(on, v) => {
+  const timer = v.timer("focus", {durationMs: 300000});
+  v.panel("focus", {controls: [
+    {type: "timer", timerId: "focus", label: "Focus"},
+    {id: "start", type: "button", label: "Start"},
+    {id: "pause", type: "button", label: "Pause"},
+    {id: "reset", type: "button", label: "Reset"}
+  ]});
+  on("panel", ev => {
+    if (ev.data.eventName !== "click") return;
+    if (ev.data.controlId === "start") timer.start();
+    if (ev.data.controlId === "pause") timer.pause();
+    if (ev.data.controlId === "reset") timer.reset();
+  });
+  on("timerEnded", ev => v.log("Finished", ev.data.id));
+}
+```
+
 ## API
 
 - `on(type, handler)` → boolean. Đăng ký `handler(ev)`; nhiều handlers chạy theo thứ tự đăng ký. False nghĩa là arguments không hợp lệ hoặc chạm giới hạn handlers. `ev = { type: string, now: number, data }`; `now` là Unix milliseconds.
 - `v.state`: JSON object thay đổi được, lưu sau event dispatch. Khởi tạo fields thiếu thay vì ghi đè state hiện có. Gán non-object hoặc array reset thành `{}`; cập nhật không serialize được/quá lớn sẽ không lưu.
-- `v.log(...values)`: nguồn duy nhất ghi Log của nhóm này. Logs/Clear độc lập từng nhóm. Load errors hiện trong Run status; handler diagnostics không ghi Log.
+- `v.log(...values)`: thêm vào Log của nhóm này. Lỗi thực thi và chuyển giao xuất hiện dưới dạng mục lỗi rõ ràng trong cùng bảng tin. Logs/Clear độc lập theo nhóm. Lỗi tải cũng hiện trong trạng thái Run; sự kiện đã thực thi một phần không tự động được chạy lại.
 - `v.emit(type, data)`: xếp hàng bản sao JSON của `data` cho handlers nhóm này sau event hiện tại, cùng `now` mới; không phải lời gọi đồng bộ.
 - `v.panel(id, spec)`: thay floating panel có tên của nhóm này; `spec` null sẽ xóa. Xem Panels.
 - `v.file(op, path, payload?)` → request ID string. Xem Files.
@@ -24,7 +57,7 @@ Source: một biểu thức hàm `(on, v) => { ... }`. Chỉ hỗ trợ JavaScri
 - `v.quit(appId)`: gửi một yêu cầu thoát bình thường, theo cùng chính sách bảo vệ/thử lại; không chặn liên tục.
 - `v.open(appId)`: yêu cầu macOS mở ứng dụng đã cài; không có callback thành công.
 
-Các lời gọi khác trả `undefined`. App IDs là bundle identifiers (ví dụ `com.valvesoftware.steam`), có trong events. Block/Quit bỏ qua `com.apple.*`, browsers, Vault và helpers của Vault, cùng IDs trống. Panel IDs/state thuộc về nhóm, không phải tên hiển thị.
+Các lời gọi khác trả về `undefined`. ID ứng dụng là bundle identifier (ví dụ `com.valvesoftware.steam`), có trong sự kiện. Block/Quit có thể nhắm đến ứng dụng Apple và toàn bộ trình duyệt. Chúng bỏ qua bundle identifier của Mac Vault và các ứng dụng hỗ trợ của nó, bao gồm ứng dụng khác dùng chung danh tính đó, cùng ID trống. ID/state của panel thuộc về một nhóm, không phải tên hiển thị.
 
 ## Events
 
@@ -93,7 +126,7 @@ result fields không dùng là null; thành công có error rỗng. Lỗi gồm 
 
 ## Giới hạn
 
-Mỗi event trên mỗi group: 256 queued actions, 200 log calls, 64 emits; phần vượt bị bỏ. Mỗi rule: 1000 handlers, 24 panels; mỗi control list có 32 entries, mỗi choice 64 options; phần vượt bị bỏ qua/cắt. Emit chains dừng sau 16 generations. Serialized state limit: 65536 JavaScript string characters. Giữ registration và handlers kết hợp mỗi event dưới 1 second; vượt lặp lại hoặc hard timeout sẽ dừng rule đến khi Run. Log lưu 200 entries mỗi nhóm. Timing/replies là best-effort, không đảm bảo real-time.
+Mỗi sự kiện của mỗi nhóm: 256 thao tác trong hàng đợi, 200 lần gọi log, 64 lần phát sự kiện; phần vượt bị bỏ. Mỗi quy tắc: 1000 handler, 24 panel; mỗi danh sách điều khiển có 32 mục và mỗi điều khiển lựa chọn có 64 tùy chọn; phần vượt bị bỏ qua/cắt bớt. Chuỗi phát sự kiện dừng sau 16 thế hệ. Giới hạn state đã tuần tự hóa: 65536 byte UTF-8. Giữ tổng thời gian đăng ký và các handler của từng sự kiện dưới 1 giây; vượt quá nhiều lần hoặc hết thời gian bắt buộc sẽ dừng quy tắc cho đến khi Run. Log giữ 200 mục cho mỗi nhóm. Thời điểm/phản hồi được xử lý theo nỗ lực tốt nhất, không bảo đảm thời gian thực.
 
 ## Quy tắc đầy đủ
 

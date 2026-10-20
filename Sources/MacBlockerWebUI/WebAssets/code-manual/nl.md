@@ -4,7 +4,7 @@
 
 ## Contract van de regel
 
-Source: één functie-expressie `(on, v) => { ... }`. Alleen synchrone JavaScript en de onderstaande API worden ondersteund; geen timers, netwerk, native systeem-API's of browserpaginatoegang. Tijdregels gebruiken `ev.now` en events. Safari-regels gebruiken de browsercodemanual en draaien in de eigen container-app van Safari Vault.
+Source: één functie-expressie `(on, v) => { ... }`. Alleen synchrone JavaScript en de onderstaande API worden ondersteund; geen JavaScript-planningscallbacks, netwerk, native systeem-API's of browserpaginatoegang. Tijdregels gebruiken de hieronder beschreven beheerde timers/trackers, of `ev.now` en events. Safari-regels gebruiken de browsercodemanual en draaien in de eigen container-app van Safari Vault.
 
 - Wijzigingen slaan een concept op; **Run** activeert de regel en schakelt de groep in. Bevroren groepen kunnen niet Run uitvoeren. Een lege source laadt de regel uit.
 - Een geslaagde Run vervangt handlers/panels en wist de app-block set van de groep, met behoud van `v.state`. Bij compilatie-/registratiefouten blijft de vorige regel behouden; een timeout kan deze stoppen. Restart registreert de laatst geactiveerde source opnieuw; closure variables en app-block sets worden gereset.
@@ -12,11 +12,44 @@ Source: één functie-expressie `(on, v) => { ... }`. Alleen synchrone JavaScrip
 - Disable onderdrukt handlers en heft panels/app blocks op. Enable herstelt de geladen regel en bewaarde panels/blocks. Delete verwijdert handlers/state/effecten. Eerder afgesloten apps worden niet opnieuw geopend; bestandsschrijfacties worden niet ongedaan gemaakt.
 - Events zijn niet beperkt tot gewone groepsdoelen; kies apps in de regel. Acties worden in de wachtrij gezet en na dispatch toegepast. Exceptions stoppen die handler zonder state/actions terug te draaien; volgende handlers kunnen nog werken. Alleen file-acties hebben result-events.
 
+## Beheerde timers en voortschrijdend gebruik
+
+`v.timer(id, {direction:"down", durationMs:300000})` maakt een benoemde afteltimer aan of retourneert deze, aanvankelijk gepauzeerd. Gebruik `{direction:"up"}` voor een opteltimer. De handle heeft `start()`, `pause()`, `resume()`, `reset()` en `snapshot()`. Start/resume zijn idempotent; reset keert terug naar gepauzeerd met nul verstreken tijd. Snapshotvelden omvatten `ready`, `error`, `elapsedMs`, `remainingMs` (null bij optellen), `running` en `completed`.
+
+Lopende timers gaan verder volgens de kloktijd terwijl de app/browser gesloten is of de regel uitgeschakeld is. Een voltooide afteltimer levert `timerEnded` met `{id, direction, durationMs, generation, incarnation}` eenmaal per timerincarnatie en generatie aan elk lid wanneer diens regel de volgende keer draait; Run herhaalt dit niet. Levering hangt af van events van de host; dit is geen realtimealarm. Plaats `{type:"timer", timerId:"focus", label:"Focus"}` in een panel om de timer via de bestaande tekstcontrol weer te geven.
+
+`v.rolling(id, {windowMs:3600000, limitMs:600000})` maakt een benoemde tracker voor actief gebruik aan of retourneert deze. `assign({websites:["youtube.com","reddit.com"], apps:[]})` vervangt de doeltoewijzingen van dit lid. Native regels kunnen in plaats daarvan platformgebonden app-IDs toewijzen. Domeinen omvatten subdomeinen. Eén tracker bundelt zijn doelen; andere IDs hebben onafhankelijke tegoeden. `snapshot()` retourneert `ready`, `error`, `usedMs`, `remainingMs`, `available` en `nextReturnAtMs` (de eerstvolgende milliseconde waarop enig vastgelegd gebruik vervalt). `available(target?)` controleert ook de toewijzing wanneer een doel wordt meegegeven. `reset()` wist de geschiedenis van dit object.
+
+Al het waargenomen gebruik dat aan de voorwaarden voldoet telt mee, ook gebruik boven het tegoed; de tracker blokkeert zelf geen pagina/app. Overlappende intervallen van zichtbare pagina's tellen eenmaal, en native apps tellen waargenomen gebruik op de voorgrond. Uitgeschakelde regels voegen geen gebruik toe; geschiedenis vervalt nog steeds op de exacte intervalgrenzen. Beschikbaarheid keert pas terug wanneer de resterende geschiedenis onder de limiet ligt. Heartbeatmetingen zijn begrensd tot vijf seconden; onderbrekingen door afsluiten/uitschakelen creëren geen activiteit. Door de gebruiker uitgezonden events voegen geen gebruik toe.
+
+Dezelfde object-IDs in gekoppelde aangepaste groepen delen één lokale native-hubautoriteit. Koppelen voegt trackergeschiedenis en toewijzingen samen en behoudt de timerstatus van de initiatiefnemer; incompatibele configuraties weigeren de koppeling. Elk lid ontvangt zijn eigen voltooiingsevent. Bij verbindingsverlies worden gedeelde trackers onbeschikbaar en worden timerbedieningen geweigerd totdat een actuele autoriteit terugkeert. Bij ontkoppelen behoudt elk lid het uiteindelijke gedeelde gebruik en de timerstatus, herstelt zijn eigen doelen en laat opdrachten van de oude koppeling vallen. De hub bewaart de laatste snapshot totdat het terugkerende lid deze opslaat en bevestigt; openstaande overdrachten worden voltooid voordat een nieuwe koppeling beschikbaar wordt.
+
+Benoemde objecten overleven Run en herstarten in het gereserveerde `v.state.$vaultTime`; bewerk dat veld niet rechtstreeks. Verwijder ze expliciet met `v.removeTime(id)`. IDs zijn 1–80 ASCII-letters, cijfers, `_` of `-`; gereserveerde eigenschapsnamen worden geweigerd. Maximaal 32 objecten delen de statelimiet van 64 KiB UTF-8 van de regel. Tijdsduur wordt opgegeven in gehele milliseconden, tot 365 dagen. Voortschrijdende geschiedenis is begrensd tot 1024 minuutvakken en 2048 samengevoegde intervallen. Fouten door volle geschiedeniscapaciteit laten de tracker onbeschikbaar totdat deze expliciet wordt gereset; ongeldige configuraties en te grote opslagacties melden fouten zonder opgeslagen gegevens te wissen.
+
+```js
+(on, v) => {
+  const timer = v.timer("focus", {durationMs: 300000});
+  v.panel("focus", {controls: [
+    {type: "timer", timerId: "focus", label: "Focus"},
+    {id: "start", type: "button", label: "Start"},
+    {id: "pause", type: "button", label: "Pause"},
+    {id: "reset", type: "button", label: "Reset"}
+  ]});
+  on("panel", ev => {
+    if (ev.data.eventName !== "click") return;
+    if (ev.data.controlId === "start") timer.start();
+    if (ev.data.controlId === "pause") timer.pause();
+    if (ev.data.controlId === "reset") timer.reset();
+  });
+  on("timerEnded", ev => v.log("Finished", ev.data.id));
+}
+```
+
 ## API
 
 - `on(type, handler)` → boolean. Registreert `handler(ev)`; meerdere handlers werken in registratievolgorde. False betekent ongeldige argumenten of dat de handlerlimiet is bereikt. `ev = { type: string, now: number, data }`; `now` is Unix-milliseconden.
 - `v.state`: wijzigbaar JSON-object, opgeslagen na eventdispatch. Initialiseer ontbrekende fields in plaats van bestaande state te overschrijven. Toewijzing van een non-object of array reset naar `{}`; niet-serialiseerbare/te grote updates worden niet opgeslagen.
-- `v.log(...values)`: de enige producent van de Log van deze groep. Logs/Clear zijn per groep onafhankelijk. Laadfouten staan in Run-status; handlerdiagnostiek komt niet in Log.
+- `v.log(...values)`: voegt entries toe aan de Log van deze groep. Uitvoerings- en leveringsfouten verschijnen als expliciete foutentries in dezelfde feed. Logs/Clear zijn per groep onafhankelijk. Laadfouten staan ook in de Run-status; gedeeltelijk uitgevoerde events worden niet automatisch herhaald.
 - `v.emit(type, data)`: zet een JSON-kopie van `data` in de wachtrij voor de handlers van deze groep na het huidige event, met een nieuwe `now`; dit is geen synchrone aanroep.
 - `v.panel(id, spec)`: vervangt het benoemde zwevende panel van deze groep; null `spec` verwijdert het. Zie Panels.
 - `v.file(op, path, payload?)` → request-ID-string. Zie Files.
@@ -24,7 +57,7 @@ Source: één functie-expressie `(on, v) => { ... }`. Alleen synchrone JavaScrip
 - `v.quit(appId)`: één normaal afsluitverzoek onder hetzelfde beveiligings-/herhaalbeleid; geen doorlopende blokkering.
 - `v.open(appId)`: vraagt macOS een geïnstalleerde app te openen; geen succescallback.
 
-Andere aanroepen retourneren `undefined`. App IDs zijn bundle identifiers (bijvoorbeeld `com.valvesoftware.steam`) die beschikbaar zijn in events. Block/Quit negeren `com.apple.*`, browsers, Vault en de helpers ervan, en lege IDs. Panel IDs/state horen bij één groep, niet bij de weergavenaam.
+Andere aanroepen retourneren `undefined`. App IDs zijn bundle identifiers (bijvoorbeeld `com.valvesoftware.steam`), beschikbaar in events. Block/Quit kunnen Apple-apps en volledige browsers als doel hebben. Ze negeren de bundle identifier van Mac Vault en de helpers ervan, inclusief andere apps met diezelfde identiteit, en lege IDs. Panel IDs/state horen bij één groep, niet bij de weergavenaam.
 
 ## Events
 
@@ -93,7 +126,7 @@ Ongebruikte result fields zijn null; succes heeft een lege error. Fouten omvatte
 
 ## Limieten
 
-Per event per group: 256 queued actions, 200 log calls, 64 emits; overschrijding wordt weggegooid. Per rule: 1000 handlers, 24 panels; elke control list heeft 32 entries en elke choice 64 options; overschrijding genegeerd/afgekapt. Emit chains stoppen na 16 generaties. Serialized state limit: 65536 JavaScript string characters. Houd registratie en gecombineerde handlers per event onder 1 seconde; herhaalde overschrijdingen of hard timeout stoppen de regel tot Run. Log bewaart 200 entries per groep. Timing/replies zijn best-effort, geen real-timegaranties.
+Per event per groep: 256 acties in de wachtrij, 200 logaanroepen, 64 emits; het meerdere wordt weggegooid. Per regel: 1000 handlers, 24 panels; elke lijst met controls heeft 32 entries en elke keuzelijst 64 opties; het meerdere wordt genegeerd/afgekapt. Emitketens stoppen na 16 generaties. Limiet voor geserialiseerde state: 65536 UTF-8-bytes. Houd registratie en de gecombineerde handlers van elk event onder 1 seconde; herhaalde overschrijdingen of een harde timeout stoppen de regel tot Run. Log bewaart 200 entries per groep. Timing/antwoorden zijn naar beste vermogen, zonder realtimegaranties.
 
 ## Volledige regel
 

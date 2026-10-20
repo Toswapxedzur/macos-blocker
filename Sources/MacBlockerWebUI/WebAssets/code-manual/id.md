@@ -4,7 +4,7 @@
 
 ## Kontrak aturan
 
-Sumber: satu ekspresi fungsi `(on, v) => { ... }`. Hanya JavaScript sinkron dan API berikut yang didukung; tanpa timer, jaringan, API sistem native, atau akses halaman browser. Aturan berbasis waktu memakai `ev.now` dan peristiwa. Aturan Safari memakai panduan kode browser dan berjalan dalam aplikasi penampung Safari Vault sendiri.
+Sumber: satu ekspresi fungsi `(on, v) => { ... }`. Hanya JavaScript sinkron dan API di bawah yang didukung; tanpa callback penjadwalan JavaScript, jaringan, API sistem native, atau akses halaman browser. Aturan berbasis waktu memakai timer/pelacak terkelola di bawah, atau `ev.now` dan peristiwa. Aturan Safari memakai panduan kode browser dan berjalan dalam aplikasi penampung Safari Vault sendiri.
 
 - Pengeditan menyimpan draft; **Run** mengaktifkan aturan dan grup. Grup beku tidak dapat Run. Sumber kosong membongkar aturan.
 - Run yang berhasil mengganti handler/panel dan menghapus set pemblokiran aplikasi grup ini sambil mempertahankan `v.state`. Kegagalan kompilasi/registrasi mempertahankan aturan sebelumnya; timeout dapat menghentikannya. Restart mendaftarkan sumber terakhir yang diaktifkan; variabel closure dan set blok aplikasi direset.
@@ -12,11 +12,44 @@ Sumber: satu ekspresi fungsi `(on, v) => { ... }`. Hanya JavaScript sinkron dan 
 - Disable menekan handler dan mencabut panel/blok aplikasi. Enable melanjutkan aturan yang dimuat beserta panel/blok tersimpannya. Delete menghapus handler/state/efeknya. Aplikasi yang sebelumnya dihentikan tidak dibuka lagi; penulisan berkas tidak dibatalkan.
 - Peristiwa tidak dibatasi target grup biasa; pilih app dalam aturan. Aksi diantrekan lalu diterapkan setelah dispatch. Exception menghentikan handler itu tanpa membatalkan state/aksinya; handler berikutnya masih dapat berjalan. Hanya aksi file memiliki event hasil.
 
+## Timer terkelola dan penggunaan bergulir
+
+`v.timer(id, {direction:"down", durationMs:300000})` membuat atau mengembalikan hitung mundur bernama, awalnya dijeda. Gunakan `{direction:"up"}` untuk timer hitung naik. Handle menyediakan `start()`, `pause()`, `resume()`, `reset()` dan `snapshot()`. Start/resume bersifat idempoten; reset mengembalikannya ke keadaan dijeda dengan waktu berlalu nol. Field snapshot mencakup `ready`, `error`, `elapsedMs`, `remainingMs` (null untuk hitung naik), `running` dan `completed`.
+
+Timer yang berjalan terus maju menurut waktu jam nyata saat app/browser ditutup atau aturan dinonaktifkan. Hitung mundur yang selesai mengirim `timerEnded` dengan `{id, direction, durationMs, generation, incarnation}` sekali per inkarnasi dan generasi timer untuk setiap anggota saat aturannya berjalan berikutnya; Run tidak mengirimnya ulang. Pengiriman bergantung pada peristiwa host; ini bukan alarm waktu nyata. Masukkan `{type:"timer", timerId:"focus", label:"Focus"}` ke panel untuk menampilkannya melalui kontrol teks yang sudah ada.
+
+`v.rolling(id, {windowMs:3600000, limitMs:600000})` membuat atau mengembalikan pelacak penggunaan aktif bernama. `assign({websites:["youtube.com","reddit.com"], apps:[]})` mengganti penetapan target anggota ini. Aturan native dapat menetapkan ID app platform sebagai gantinya. Domain mencakup subdomain. Satu pelacak menggabungkan penggunaan targetnya; ID lain memiliki jatah terpisah. `snapshot()` mengembalikan `ready`, `error`, `usedMs`, `remainingMs`, `available`, dan `nextReturnAtMs` (milidetik berikutnya saat penggunaan tercatat mana pun kedaluwarsa). `available(target?)` juga memeriksa penetapan jika target diberikan. `reset()` menghapus riwayat objek ini.
+
+Semua penggunaan teramati yang memenuhi syarat dihitung, termasuk yang melampaui jatah; pelacak itu sendiri tidak memblokir halaman/app. Interval halaman terlihat yang tumpang tindih dihitung sekali, dan app native menghitung penggunaan latar depan yang teramati. Aturan nonaktif tidak menambah penggunaan; riwayat tetap kedaluwarsa tepat pada batas interval. Ketersediaan baru kembali saat riwayat yang tersisa berada di bawah batas. Sampel heartbeat dibatasi hingga lima detik; jeda karena penutupan/nonaktif tidak menciptakan aktivitas. Peristiwa yang dikirim pengguna tidak menambah penggunaan.
+
+ID objek yang sama dalam grup kustom tertaut berbagi satu otoritas hub native lokal. Penautan menggabungkan riwayat dan penetapan pelacak serta mempertahankan keadaan timer pihak yang memulai; konfigurasi yang tidak kompatibel menolak penautan. Setiap anggota menerima peristiwa selesainya sendiri. Putus koneksi membuat pelacak bersama tidak tersedia dan menolak kontrol timer sampai otoritas terbaru kembali. Saat tautan diputus, setiap anggota menyimpan penggunaan bersama dan keadaan timer terakhir, memulihkan targetnya sendiri, serta membuang perintah dari tautan lama. Hub menyimpan snapshot akhir sampai anggota yang kembali menyimpan dan mengakuinya; serah terima tertunda diselesaikan sebelum tautan baru tersedia.
+
+Objek bernama bertahan melewati Run dan restart dalam `v.state.$vaultTime` yang dicadangkan; jangan sunting field itu secara langsung. Hapus secara eksplisit dengan `v.removeTime(id)`. ID terdiri dari 1–80 huruf ASCII, digit, `_` atau `-`; nama properti cadangan ditolak. Maksimal 32 objek berbagi batas state aturan sebesar 64 KiB UTF-8. Durasi berupa milidetik bulat hingga 365 hari. Riwayat bergulir dibatasi hingga 1024 bucket menit dan 2048 interval gabungan. Kesalahan kapasitas riwayat membuat pelacak tidak tersedia sampai direset secara eksplisit; konfigurasi tidak valid dan penyimpanan terlalu besar melaporkan kesalahan tanpa menghapus data tersimpan.
+
+```js
+(on, v) => {
+  const timer = v.timer("focus", {durationMs: 300000});
+  v.panel("focus", {controls: [
+    {type: "timer", timerId: "focus", label: "Focus"},
+    {id: "start", type: "button", label: "Start"},
+    {id: "pause", type: "button", label: "Pause"},
+    {id: "reset", type: "button", label: "Reset"}
+  ]});
+  on("panel", ev => {
+    if (ev.data.eventName !== "click") return;
+    if (ev.data.controlId === "start") timer.start();
+    if (ev.data.controlId === "pause") timer.pause();
+    if (ev.data.controlId === "reset") timer.reset();
+  });
+  on("timerEnded", ev => v.log("Finished", ev.data.id));
+}
+```
+
 ## API
 
 - `on(type, handler)` → boolean. Mendaftarkan `handler(ev)`; beberapa handler berjalan sesuai urutan pendaftaran. False berarti argumen tidak valid atau batas handler tercapai. `ev = { type: string, now: number, data }`; `now` adalah Unix milliseconds.
 - `v.state`: objek JSON yang dapat diubah, disimpan setelah dispatch. Inisialisasi field hilang alih-alih menimpa state lama. Nilai non-object atau array meresetnya menjadi `{}`; update tak dapat diserialisasi/terlalu besar tidak disimpan.
-- `v.log(...values)`: satu-satunya pembuat Log grup ini. Logs/Clear terpisah per grup. Kesalahan pemuatan tampak di status Run; diagnostik handler tidak masuk Log.
+- `v.log(...values)`: menambahkan ke Log grup ini. Kegagalan eksekusi dan pengiriman muncul sebagai entri kesalahan eksplisit dalam feed yang sama. Logs/Clear terpisah per grup. Kesalahan pemuatan juga muncul di status Run; peristiwa yang baru dijalankan sebagian tidak dijalankan ulang secara otomatis.
 - `v.emit(type, data)`: mengantrekan salinan JSON `data` untuk handler grup ini setelah peristiwa saat ini, dengan `now` baru; bukan panggilan sinkron.
 - `v.panel(id, spec)`: mengganti panel mengambang bernama milik grup; `spec` null menghapusnya. Lihat Panel.
 - `v.file(op, path, payload?)` → string ID permintaan. Lihat Files.
@@ -24,7 +57,7 @@ Sumber: satu ekspresi fungsi `(on, v) => { ... }`. Hanya JavaScript sinkron dan 
 - `v.quit(appId)`: satu permintaan quit biasa dengan kebijakan perlindungan/coba ulang yang sama; tanpa blok berkelanjutan.
 - `v.open(appId)`: meminta macOS membuka app terpasang; tanpa callback sukses.
 
-Pemanggilan lain mengembalikan `undefined`. ID app adalah bundle identifier (contoh `com.valvesoftware.steam`) yang tersedia di peristiwa. Block/Quit mengabaikan `com.apple.*`, browser, Vault dan pembantunya, serta ID kosong. ID/state panel milik satu grup, bukan nama tampilannya.
+Pemanggilan lain mengembalikan `undefined`. ID app adalah bundle identifier (contoh `com.valvesoftware.steam`) yang tersedia dalam peristiwa. Block/Quit dapat menargetkan app Apple dan browser secara keseluruhan. Keduanya mengabaikan bundle identifier Mac Vault dan pembantunya, termasuk app lain yang memakai identitas yang sama, serta ID kosong. ID/state panel milik satu grup, bukan nama tampilannya.
 
 ## Peristiwa
 
@@ -93,7 +126,7 @@ Field hasil yang tak dipakai bernilai null; sukses memiliki error kosong. Kegaga
 
 ## Batas
 
-Per event/grup: 256 aksi antrean, 200 panggilan log, 64 emit; selebihnya dibuang. Per aturan: 1000 handler, 24 panel; setiap daftar kontrol berisi 32 entri dan tiap pilihan 64 opsi; selebihnya diabaikan/dipotong. Rantai emit berhenti setelah 16 generasi. Batas state terserialisasi 65536 karakter string JavaScript. Jaga registrasi dan gabungan handler setiap event di bawah 1 detik; kelebihan berulang atau timeout keras menghentikan aturan sampai Run. Log menyimpan 200 entri per grup. Waktu/balasan best-effort, bukan jaminan real-time.
+Per peristiwa per grup: 256 tindakan dalam antrean, 200 pemanggilan log, 64 emit; kelebihannya dibuang. Per aturan: 1000 handler, 24 panel; tiap daftar kontrol memiliki 32 entri dan tiap pilihan 64 opsi; kelebihannya diabaikan/dipotong. Rantai emit berhenti setelah 16 generasi. Batas state terserialisasi: 65536 byte UTF-8. Pendaftaran dan gabungan handler tiap peristiwa harus selesai dalam kurang dari 1 detik; pelampauan berulang atau timeout paksa menghentikan aturan sampai Run. Log menyimpan 200 entri per grup. Waktu/balasan bersifat upaya terbaik, bukan jaminan waktu nyata.
 
 ## Aturan lengkap
 

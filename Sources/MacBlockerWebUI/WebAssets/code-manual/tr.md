@@ -4,7 +4,7 @@
 
 ## Kural sözleşmesi
 
-Source: tek bir function expression `(on, v) => { ... }`. Yalnızca eşzamanlı JavaScript ve aşağıdaki API desteklenir; timers, network, native system APIs veya browser sayfasına erişim yoktur. Zamana dayalı kurallar `ev.now` ve events kullanır. Safari kuralları browser code manual kullanır ve Safari Vault'un kendi container app'i içinde çalışır.
+Source: tek bir function expression `(on, v) => { ... }`. Yalnızca eşzamanlı JavaScript ve aşağıdaki API desteklenir; JavaScript zamanlama geri çağrıları, ağ, yerel sistem API’leri veya tarayıcı sayfasına erişim yoktur. Zamana dayalı kurallar aşağıdaki yönetilen zamanlayıcıları/izleyicileri veya `ev.now` ve olayları kullanır. Safari kuralları browser code manual kullanır ve Safari Vault'un kendi container app'i içinde çalışır.
 
 - Düzenleme taslak kaydeder; **Run** kuralı etkinleştirip grubu açar. Dondurulmuş gruplar Run çalıştıramaz. Boş source kuralı kaldırır.
 - Başarılı Run handlers/panels öğelerini değiştirir ve `v.state` değerini koruyarak bu grubun app-block set değerini temizler. Derleme/kayıt başarısızsa önceki kural korunur; timeout kuralı durdurabilir. Restart son etkinleştirilen source değerini yeniden kaydeder; closure variables ve app-block sets sıfırlanır.
@@ -12,11 +12,44 @@ Source: tek bir function expression `(on, v) => { ... }`. Yalnızca eşzamanlı 
 - Disable handlers değerlerini bastırır, panels/app blocks değerlerini kaldırır. Enable yüklü rule ile saklanan panels/blocks değerlerini geri yükler. Delete handlers/state/effects değerlerini kaldırır. Önceden kapatılan uygulamalar yeniden açılmaz; file writes geri alınmaz.
 - Events normal grup targets değerleriyle sınırlı değildir; uygulamaları rule içinde seçin. Actions kuyruğa alınır ve dispatch sonrasında uygulanır. Exceptions, state/actions değerlerini geri almadan ilgili handler'ı durdurur; sonraki handlers çalışabilir. Yalnızca file actions result events içerir.
 
+## Yönetilen zamanlayıcılar ve kayan kullanım
+
+`v.timer(id, {direction:"down", durationMs:300000})` başlangıçta duraklatılmış, adlandırılmış bir geri sayım oluşturur veya mevcut olanı döndürür. İleri sayan bir zamanlayıcı için `{direction:"up"}` kullanın. Döndürülen nesne `start()`, `pause()`, `resume()`, `reset()` ve `snapshot()` yöntemlerini sunar. Start/resume idempotenttir; reset, geçen süreyi sıfırlayıp duraklatılmış duruma döndürür. Anlık görüntü alanları `ready`, `error`, `elapsedMs`, `remainingMs` (ileri sayımda null), `running` ve `completed` içerir.
+
+Çalışan zamanlayıcılar, uygulama/tarayıcı kapalıyken veya kural devre dışıyken gerçek zamanla ilerler. Tamamlanan geri sayım, `timerEnded` olayını `{id, direction, durationMs, generation, incarnation}` verisiyle, her zamanlayıcı örneklenmesi ve nesli için her üyeye kuralı bir sonraki kez çalıştığında bir kez iletir; Run bunu yeniden oynatmaz. İletim, ana sistemin olaylarına bağlıdır; bu gerçek zamanlı bir alarm değildir. Mevcut metin denetimi üzerinden göstermek için bir panele `{type:"timer", timerId:"focus", label:"Focus"}` ekleyin.
+
+`v.rolling(id, {windowMs:3600000, limitMs:600000})` adlandırılmış bir aktif kullanım izleyicisi oluşturur veya mevcut olanı döndürür. `assign({websites:["youtube.com","reddit.com"], apps:[]})` bu üyenin hedef atamalarını değiştirir. Yerel kurallar bunun yerine platforma ait uygulama kimliklerini atayabilir. Alan adları alt alan adlarını da kapsar. Bir izleyici hedeflerinin kullanımını ortak havuzda toplar; diğer kimliklerin bağımsız hakları vardır. `snapshot()`, `ready`, `error`, `usedMs`, `remainingMs`, `available` ve `nextReturnAtMs` (kaydedilmiş herhangi bir kullanımın geçerliliğini yitireceği en yakın milisaniye) döndürür. `available(target?)`, bir hedef verildiğinde atamayı da denetler. `reset()` bu nesnenin geçmişini temizler.
+
+Hak sınırını aşan kullanım dahil, gözlemlenen uygun kullanımın tamamı sayılır; izleyici kendi başına sayfa/uygulama engellemez. Görünür sayfaların çakışan aralıkları bir kez sayılır; yerel uygulamalarda gözlemlenen ön plan kullanımı sayılır. Devre dışı kurallar kullanım eklemez; geçmişin süresi yine aralıkların tam sınırlarında dolar. Kullanılabilirlik, yalnızca kalan geçmiş limitin altına düştüğünde geri gelir. Düzenli etkinlik sinyali örnekleri beş saniyeyle sınırlıdır; kapatma/devre dışı kalma boşlukları etkinlik üretmez. Kullanıcının yaydığı olaylar kullanım eklemez.
+
+Bağlı özel gruplardaki aynı nesne kimlikleri, tek bir yerel merkez yetkili durum kaynağını paylaşır. Bağlama, izleyici geçmişini ve atamalarını birleştirir ve bağlantıyı başlatan üyenin zamanlayıcı durumunu korur; uyumsuz yapılandırmalarda bağlama reddedilir. Her üye kendi tamamlanma olayını alır. Bağlantının kopması, güncel yetkili kaynak geri gelene kadar paylaşılan izleyicileri kullanılamaz kılar ve zamanlayıcı denetimlerini reddeder. Bağ kaldırıldığında her üye son paylaşılan kullanımı ve zamanlayıcı durumunu korur, kendi hedeflerini geri yükler ve eski bağdan gelen komutları bırakır. Merkez, geri dönen üye son anlık görüntüyü kaydedip onaylayana kadar onu saklar; yeni bir bağlantı kullanılabilir olmadan önce bekleyen devirler tamamlanır.
+
+Adlandırılmış nesneler, ayrılmış `v.state.$vaultTime` alanında Run ve yeniden başlatma sonrasında korunur; bu alanı doğrudan düzenlemeyin. Açıkça kaldırmak için `v.removeTime(id)` kullanın. Kimlikler 1–80 ASCII harfi, rakam, `_` veya `-` içerir; ayrılmış özellik adları reddedilir. En fazla 32 nesne, kuralın 64 KiB UTF-8 durum limitini paylaşır. Süreler, en fazla 365 gün olmak üzere tam sayı milisaniyelerle belirtilir. Kayan geçmiş 1024 dakikalık kova ve 2048 birleştirilmiş aralıkla sınırlıdır. Geçmiş kapasitesi hataları, açıkça sıfırlanana kadar izleyiciyi kullanılamaz durumda bırakır; geçersiz yapılandırmalar ve aşırı büyük kayıtlar, kayıtlı verileri silmeden hata bildirir.
+
+```js
+(on, v) => {
+  const timer = v.timer("focus", {durationMs: 300000});
+  v.panel("focus", {controls: [
+    {type: "timer", timerId: "focus", label: "Focus"},
+    {id: "start", type: "button", label: "Start"},
+    {id: "pause", type: "button", label: "Pause"},
+    {id: "reset", type: "button", label: "Reset"}
+  ]});
+  on("panel", ev => {
+    if (ev.data.eventName !== "click") return;
+    if (ev.data.controlId === "start") timer.start();
+    if (ev.data.controlId === "pause") timer.pause();
+    if (ev.data.controlId === "reset") timer.reset();
+  });
+  on("timerEnded", ev => v.log("Finished", ev.data.id));
+}
+```
+
 ## API
 
 - `on(type, handler)` → boolean. `handler(ev)` kaydeder; handlers kayıt sırasıyla çalışır. False, geçersiz arguments veya handler limitine ulaşıldığı anlamına gelir. `ev = { type: string, now: number, data }`; `now` Unix milisaniyesidir.
 - `v.state`: event dispatch sonrasında kaydedilen değiştirilebilir JSON object. Mevcut state üzerine yazmak yerine eksik fields değerlerini başlatın. Non-object veya array atamak `{}` değerine sıfırlar; serileştirilemeyen/aşırı büyük güncellemeler kaydedilmez.
-- `v.log(...values)`: bu grubun Log kaydının tek kaynağı. Logs/Clear her grupta bağımsızdır. Yükleme hataları Run durumunda görünür; handler diagnostics Log'u doldurmaz.
+- `v.log(...values)`: bu grubun Log kaydına ekleme yapar. Yürütme ve iletim hataları aynı akışta açık hata girdileri olarak görünür. Logs/Clear her grup için bağımsızdır. Yükleme hataları Run durumunda da görünür; kısmen yürütülmüş olaylar otomatik olarak yeniden oynatılmaz.
 - `v.emit(type, data)`: geçerli event sonrasında bu grubun handlers değerlerine `data` öğesinin JSON kopyasını yeni bir `now` ile kuyruğa alır; eşzamanlı çağrı değildir.
 - `v.panel(id, spec)`: grubun adlandırılmış floating panel değerini değiştirir; null `spec` paneli kaldırır. Panels'e bakın.
 - `v.file(op, path, payload?)` → request ID string. Files'a bakın.
@@ -24,7 +57,7 @@ Source: tek bir function expression `(on, v) => { ... }`. Yalnızca eşzamanlı 
 - `v.quit(appId)`: aynı koruma/yeniden deneme ilkesiyle bir normal kapatma isteği; sürekli engelleme değildir.
 - `v.open(appId)`: macOS'tan yüklü bir uygulamayı açmasını ister; başarı callback'i yoktur.
 
-Diğer çağrılar `undefined` döndürür. App IDs bundle identifiers (örneğin `com.valvesoftware.steam`) olup events içinde bulunur. Block/Quit `com.apple.*`, tarayıcıları, Vault'u ve yardımcılarını ve boş IDs değerlerini yok sayar. Panel IDs/state grubuna aittir, görünen adına değil.
+Diğer çağrılar `undefined` döndürür. App IDs, olaylarda bulunan paket tanımlayıcılarıdır (örneğin `com.valvesoftware.steam`). Block/Quit, Apple uygulamalarını ve tarayıcıların tamamını hedefleyebilir. Mac Vault’un paket tanımlayıcısını ve yardımcılarını, bu kimliği paylaşan diğer uygulamalar dahil olmak üzere, ve boş kimlikleri yok sayarlar. Panel IDs/state gruba aittir, görünen adına değil.
 
 ## Events
 
@@ -93,7 +126,7 @@ Kullanılmayan result fields null; başarıda error boş olur. Hatalara invalid-
 
 ## Sınırlar
 
-Her event/grup için: 256 queued actions, 200 log calls, 64 emits; fazlası atılır. Her rule için: 1000 handlers, 24 panels; her control list 32 entries ve her choice 64 options içerir; fazlası yok sayılır/kısaltılır. Emit chains 16 generation sonrasında durur. Serialized state limit: 65536 JavaScript string characters. Kayıt işlemi ve her event'in birleşik handlers süresini 1 saniyenin altında tutun; tekrarlanan aşımlar veya hard timeout rule'u Run'a kadar durdurur. Log grup başına 200 entries tutar. Timing/replies best-effort çalışır; gerçek zamanlılık garantisi değildir.
+Grup başına her olay için: kuyrukta 256 eylem, 200 günlük çağrısı, 64 olay yayımı; fazlası atılır. Kural başına: 1000 işleyici, 24 panel; her denetim listesi 32 girdi ve her seçim 64 seçenek içerir; fazlası yok sayılır/kesilir. Olay yayım zincirleri 16 nesilden sonra durur. Serileştirilmiş durum limiti: 65536 UTF-8 baytı. Kayıt işlemini ve her olayın işleyicilerinin toplam süresini 1 saniyenin altında tutun; tekrarlanan aşımlar veya kesin zaman aşımı, Run çalıştırılana kadar kuralı durdurur. Log grup başına 200 girdi tutar. Zamanlama/yanıtlar olanaklar ölçüsünde çalışır; gerçek zaman garantisi yoktur.
 
 ## Tam kural
 

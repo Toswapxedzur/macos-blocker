@@ -4,7 +4,7 @@
 
 ## Zasady działania reguły
 
-Source: jedno wyrażenie funkcji `(on, v) => { ... }`. Obsługiwane są tylko synchroniczne JavaScript i poniższe API; bez timers, network, native system APIs i dostępu do strony browser. Reguły czasowe używają `ev.now` i events. Reguły Safari korzystają z browser code manual i działają we własnej aplikacji kontenerowej Safari Vault.
+Source: jedno wyrażenie funkcji `(on, v) => { ... }`. Obsługiwane są tylko synchroniczny JavaScript i poniższe API; bez wywołań zwrotnych harmonogramu JavaScript, sieci, natywnych API systemowych i dostępu do stron przeglądarki. Reguły czasowe używają opisanych poniżej zarządzanych timerów/liczników lub `ev.now` i zdarzeń. Safari korzystają z browser code manual i działają we własnej aplikacji kontenerowej Safari Vault.
 
 - Edycja zapisuje wersję roboczą; **Run** aktywuje ją i włącza grupę. Zamrożonych grup nie można uruchomić przyciskiem Run. Pusty source wyładowuje regułę.
 - Udany Run zastępuje handlers/panels i czyści app-block set tej grupy, zachowując `v.state`. Błąd kompilacji/rejestracji pozostawia poprzednią regułę; timeout może ją zatrzymać. Restart rejestruje ponownie ostatni aktywowany source; closure variables i app-block sets są resetowane.
@@ -12,11 +12,44 @@ Source: jedno wyrażenie funkcji `(on, v) => { ... }`. Obsługiwane są tylko sy
 - Disable wstrzymuje handlers i usuwa panels/app blocks. Enable przywraca załadowaną regułę i zachowane panels/blocks. Delete usuwa handlers/state/effects. Wcześniej zamknięte aplikacje nie są otwierane ponownie; zapisy plików nie są cofane.
 - Events nie są ograniczone zwykłymi celami grupy; wybieraj aplikacje w regule. Actions trafiają do kolejki i są stosowane po dispatch. Wyjątki zatrzymują handler bez cofania state/actions; kolejne handlers mogą nadal działać. Tylko file actions mają result events.
 
+## Zarządzane timery i użycie w ruchomym oknie
+
+`v.timer(id, {direction:"down", durationMs:300000})` tworzy lub zwraca nazwany licznik odliczający, początkowo wstrzymany. Użyj `{direction:"up"}` dla licznika zliczającego w górę. Uchwyt udostępnia `start()`, `pause()`, `resume()`, `reset()` i `snapshot()`. Start/resume są idempotentne; reset przywraca stan wstrzymany z zerowym czasem, który upłynął. Pola migawki obejmują `ready`, `error`, `elapsedMs`, `remainingMs` (null przy zliczaniu w górę), `running` i `completed`.
+
+Uruchomione timery odmierzają czas zegarowy także wtedy, gdy aplikacja/przeglądarka jest zamknięta lub reguła wyłączona. Zakończone odliczanie dostarcza `timerEnded` z `{id, direction, durationMs, generation, incarnation}` raz na wcielenie i generację timera każdemu członkowi przy następnym wykonaniu jego reguły; Run nie powtarza tego zdarzenia. Dostarczenie zależy od zdarzeń hosta; nie jest to alarm czasu rzeczywistego. Umieść `{type:"timer", timerId:"focus", label:"Focus"}` w panelu, aby wyświetlić timer przez istniejącą kontrolkę tekstową.
+
+`v.rolling(id, {windowMs:3600000, limitMs:600000})` tworzy lub zwraca nazwany licznik aktywnego użycia. `assign({websites:["youtube.com","reddit.com"], apps:[]})` zastępuje przypisania celów tego członka. Reguły natywne mogą zamiast tego przypisywać identyfikatory aplikacji danej platformy. Domeny obejmują subdomeny. Jeden licznik sumuje użycie swoich celów; inne identyfikatory mają niezależne limity. `snapshot()` zwraca `ready`, `error`, `usedMs`, `remainingMs`, `available` i `nextReturnAtMs` (najbliższą milisekundę, w której wygasa dowolne zapisane użycie). `available(target?)` sprawdza również przypisanie, jeśli podano cel. `reset()` czyści historię tego obiektu.
+
+Liczy się całe zaobserwowane użycie spełniające warunki, także ponad przyznany limit; sam licznik nie blokuje strony/aplikacji. Nakładające się przedziały widoczności stron liczą się raz, a aplikacje natywne zliczają zaobserwowane użycie na pierwszym planie. Wyłączone reguły nie dodają użycia; historia nadal wygasa na dokładnych granicach przedziałów. Dostępność wraca dopiero wtedy, gdy pozostała historia jest poniżej limitu. Próbki sygnału aktywności są ograniczone do pięciu sekund; przerwy wynikające z zamknięcia/wyłączenia nie tworzą aktywności. Zdarzenia emitowane przez użytkownika nie dodają użycia.
+
+Te same identyfikatory obiektów w połączonych grupach niestandardowych współdzielą jeden lokalny natywny hub jako źródło rozstrzygające. Łączenie scala historię i przypisania liczników oraz zachowuje stan timera inicjującego członka; niezgodne konfiguracje uniemożliwiają połączenie. Każdy członek otrzymuje własne zdarzenie zakończenia. Utrata połączenia powoduje niedostępność wspólnych liczników i odrzucanie poleceń timera do czasu powrotu aktualnego źródła rozstrzygającego. Po rozłączeniu każdy członek zachowuje końcowe wspólne użycie i stan timera, przywraca własne cele i odrzuca polecenia ze starego połączenia. Hub przechowuje końcową migawkę, dopóki powracający członek jej nie zapisze i nie potwierdzi; oczekujące przekazania kończą się przed udostępnieniem nowego połączenia.
+
+Nazwane obiekty przetrwają Run i ponowne uruchomienie w zarezerwowanym `v.state.$vaultTime`; nie edytuj tego pola bezpośrednio. Usuwaj je jawnie przez `v.removeTime(id)`. Identyfikatory mają 1–80 liter ASCII, cyfr, `_` lub `-`; zarezerwowane nazwy właściwości są odrzucane. Do 32 obiektów współdzieli limit stanu reguły wynoszący 64 KiB UTF-8. Czas trwania to całkowita liczba milisekund, maksymalnie 365 dni. Historia ruchomego okna jest ograniczona do 1024 koszyków minutowych i 2048 scalonych przedziałów. Błędy pojemności historii pozostawiają licznik niedostępny do jawnego zresetowania; nieprawidłowe konfiguracje i zbyt duże zapisy zgłaszają błędy bez usuwania zapisanych danych.
+
+```js
+(on, v) => {
+  const timer = v.timer("focus", {durationMs: 300000});
+  v.panel("focus", {controls: [
+    {type: "timer", timerId: "focus", label: "Focus"},
+    {id: "start", type: "button", label: "Start"},
+    {id: "pause", type: "button", label: "Pause"},
+    {id: "reset", type: "button", label: "Reset"}
+  ]});
+  on("panel", ev => {
+    if (ev.data.eventName !== "click") return;
+    if (ev.data.controlId === "start") timer.start();
+    if (ev.data.controlId === "pause") timer.pause();
+    if (ev.data.controlId === "reset") timer.reset();
+  });
+  on("timerEnded", ev => v.log("Finished", ev.data.id));
+}
+```
+
 ## API
 
 - `on(type, handler)` → boolean. Rejestruje `handler(ev)`; wiele handlers działa w kolejności rejestracji. False oznacza nieprawidłowe argumenty lub osiągnięcie limitu handlerów. `ev = { type: string, now: number, data }`; `now` to milisekundy Unix.
 - `v.state`: modyfikowalny obiekt JSON, zapisywany po event dispatch. Inicjalizuj brakujące fields zamiast nadpisywać istniejący state. Przypisanie non-object lub tablicy resetuje go do `{}`; aktualizacje niepodlegające serializacji lub zbyt duże nie są zapisywane.
-- `v.log(...values)`: jedyny twórca Log tej grupy. Logs/Clear są niezależne dla grup. Błędy ładowania pojawiają się w statusie Run; diagnostyka handlerów nie trafia do Log.
+- `v.log(...values)`: dopisuje wpisy do Log tej grupy. Błędy wykonania i dostarczenia pojawiają się jako jawne wpisy błędów w tym samym strumieniu. Logs/Clear są niezależne dla grup. Błędy ładowania pojawiają się także w statusie Run; częściowo wykonane zdarzenia nie są automatycznie powtarzane.
 - `v.emit(type, data)`: umieszcza kopię JSON `data` w kolejce handlers tej grupy po bieżącym evencie, ze świeżym `now`; to nie jest wywołanie synchroniczne.
 - `v.panel(id, spec)`: zastępuje nazwany pływający panel grupy; null `spec` go usuwa. Zobacz Panels.
 - `v.file(op, path, payload?)` → string request ID. Zobacz Files.
@@ -24,7 +57,7 @@ Source: jedno wyrażenie funkcji `(on, v) => { ... }`. Obsługiwane są tylko sy
 - `v.quit(appId)`: jedna prośba o normalne zamknięcie zgodnie z tą samą ochroną/zasadami ponawiania; bez stałej blokady.
 - `v.open(appId)`: prosi macOS o otwarcie zainstalowanej aplikacji; nie ma callbacku powodzenia.
 
-Pozostałe wywołania zwracają `undefined`. App IDs to bundle identifiers (np. `com.valvesoftware.steam`), dostępne w events. Block/Quit ignorują `com.apple.*`, przeglądarki, Vault i jego helpery oraz puste IDs. Panel IDs/state należą do grupy, nie do wyświetlanej nazwy.
+Pozostałe wywołania zwracają `undefined`. App IDs to identyfikatory pakietów (np. `com.valvesoftware.steam`), dostępne w zdarzeniach. Block/Quit mogą obejmować aplikacje Apple i całe przeglądarki. Ignorują identyfikator pakietu Mac Vault i jego helpery, w tym każdą inną aplikację o tej samej tożsamości, oraz puste identyfikatory. Panel IDs/state należą do grupy, nie do wyświetlanej nazwy.
 
 ## Events
 
@@ -93,7 +126,7 @@ Nieużywane result fields są null; sukces ma pusty error. Błędy obejmują inv
 
 ## Limity
 
-Na event na group: 256 queued actions, 200 log calls, 64 emits; nadmiar jest odrzucany. Na rule: 1000 handlers, 24 panels; każda control list ma 32 entries, a każdy choice 64 options; nadmiar ignorowany/obcinany. Emit chains zatrzymują się po 16 generacjach. Serialized state limit: 65536 JavaScript string characters. Utrzymuj registration i łączne handlers każdego event poniżej 1 sekundy; powtarzające się przekroczenia lub hard timeout zatrzymują regułę do Run. Log przechowuje 200 entries na grupę. Timing/replies są best-effort, bez gwarancji czasu rzeczywistego.
+Na zdarzenie na grupę: 256 działań w kolejce, 200 wywołań logowania, 64 emisje zdarzeń; nadmiar jest odrzucany. Na regułę: 1000 procedur obsługi, 24 panele; każda lista kontrolek ma 32 wpisy, a każdy wybór 64 opcje; nadmiar jest ignorowany/obcinany. Łańcuchy emisji kończą się po 16 generacjach. Limit serializowanego stanu: 65536 bajtów UTF-8. Rejestracja oraz łączne wykonanie procedur obsługi każdego zdarzenia powinny trwać poniżej 1 sekundy; powtarzające się przekroczenia lub twardy limit czasu zatrzymują regułę do ponownego Run. Log przechowuje 200 wpisów na grupę. Odmierzanie czasu/odpowiedzi działają w miarę możliwości, bez gwarancji czasu rzeczywistego.
 
 ## Pełna reguła
 

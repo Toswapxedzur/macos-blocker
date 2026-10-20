@@ -4,7 +4,7 @@
 
 ## Contrato de las reglas
 
-Código fuente: una expresión de función `(on, v) => { ... }`. Solo se admite JavaScript síncrono y la API indicada abajo; no hay temporizadores, red, APIs nativas del sistema ni acceso a páginas del navegador. Las reglas basadas en el tiempo usan `ev.now` y eventos. Las reglas de Safari usan el manual de código del navegador y se ejecutan en la propia aplicación contenedora de Safari Vault.
+Código fuente: una expresión de función `(on, v) => { ... }`. Solo se admite JavaScript síncrono y la API indicada abajo; no hay callbacks de programación temporal de JavaScript, red, APIs nativas del sistema ni acceso a páginas del navegador. Las reglas basadas en el tiempo usan los temporizadores/rastreadores administrados descritos abajo, o `ev.now` y eventos. Las reglas de Safari usan el manual de código del navegador y se ejecutan en la propia aplicación contenedora de Safari Vault.
 
 - La edición guarda un borrador; **Ejecutar** lo activa y activa el grupo. Los grupos congelados no pueden ejecutar. Un código fuente vacío descarga la regla.
 - Una ejecución correcta sustituye los manejadores/paneles y borra el conjunto de bloqueos de aplicaciones de este grupo, conservando `v.state`. Un fallo de compilación/registro conserva la regla anterior; un tiempo de espera agotado puede detenerla. Reiniciar vuelve a registrar el último código activado; las variables de los cierres y los conjuntos de bloqueo de aplicaciones se restablecen.
@@ -12,11 +12,44 @@ Código fuente: una expresión de función `(on, v) => { ... }`. Solo se admite 
 - Desactivar suprime los manejadores y retira los paneles/bloqueos de aplicaciones. Activar reanuda la regla cargada y sus paneles/bloqueos retenidos. Eliminar quita sus manejadores/estado/efectos. Las aplicaciones cerradas previamente no se vuelven a abrir; las escrituras de archivos no se deshacen.
 - Los eventos no están restringidos por los objetivos habituales del grupo; seleccione aplicaciones en la regla. Las acciones se encolan y se aplican después de distribuir el evento. Las excepciones detienen ese manejador sin revertir su estado/acciones; los manejadores posteriores pueden seguir ejecutándose. Solo las acciones de archivo tienen eventos de resultado.
 
+## Temporizadores administrados y uso en ventana móvil
+
+`v.timer(id, {direction:"down", durationMs:300000})` crea o devuelve una cuenta atrás con nombre, inicialmente en pausa. Use `{direction:"up"}` para un temporizador de cuenta ascendente. El objeto ofrece `start()`, `pause()`, `resume()`, `reset()` y `snapshot()`. Iniciar/reanudar son idempotentes; restablecer lo deja en pausa con cero tiempo transcurrido. Los campos de la instantánea incluyen `ready`, `error`, `elapsedMs`, `remainingMs` (null para la cuenta ascendente), `running` y `completed`.
+
+Los temporizadores en marcha avanzan según el tiempo real transcurrido mientras la aplicación/el navegador están cerrados o la regla está desactivada. Una cuenta atrás completada entrega `timerEnded` con `{id, direction, durationMs, generation, incarnation}` una vez por encarnación y generación del temporizador a cada miembro cuando su regla vuelve a ejecutarse; Ejecutar no lo repite. La entrega depende de los eventos del anfitrión; no es una alarma en tiempo real. Añada `{type:"timer", timerId:"focus", label:"Focus"}` a un panel para mostrarlo mediante el control de texto existente.
+
+`v.rolling(id, {windowMs:3600000, limitMs:600000})` crea o devuelve un rastreador con nombre del uso activo. `assign({websites:["youtube.com","reddit.com"], apps:[]})` sustituye las asignaciones de destinos de este miembro. Las reglas nativas pueden asignar en su lugar identificadores de aplicaciones de la plataforma. Los dominios incluyen los subdominios. Un rastreador agrupa sus destinos; otros identificadores tienen cuotas independientes. `snapshot()` devuelve `ready`, `error`, `usedMs`, `remainingMs`, `available` y `nextReturnAtMs` (el próximo milisegundo en que caduca cualquier uso registrado). `available(target?)` también comprueba la asignación si se proporciona un destino. `reset()` borra el historial de este objeto.
+
+Todo uso observado que reúna los requisitos cuenta, incluido el que supera la cuota; el rastreador por sí solo no bloquea páginas ni aplicaciones. Los intervalos superpuestos de páginas visibles cuentan una vez, y las aplicaciones nativas cuentan el uso observado en primer plano. Las reglas desactivadas no añaden uso; el historial sigue caducando en los límites exactos de los intervalos. La disponibilidad solo se recupera cuando el historial restante está por debajo del límite. Las muestras periódicas se limitan a cinco segundos; los huecos por cierre o desactivación no generan actividad. Los eventos emitidos por el usuario no añaden uso.
+
+Los mismos identificadores de objeto en grupos personalizados vinculados comparten una autoridad local en el concentrador nativo. La vinculación combina el historial y las asignaciones de los rastreadores y conserva el estado del temporizador iniciador; las configuraciones incompatibles impiden vincular. Cada miembro recibe su propio evento de finalización. La desconexión deja los rastreadores compartidos no disponibles y rechaza los controles de temporizador hasta que vuelven a estar disponibles los datos actuales de la autoridad. Al desvincular, cada miembro conserva el uso compartido final y el estado del temporizador, restaura sus propios destinos y descarta los comandos del vínculo anterior. El concentrador conserva la instantánea final hasta que el miembro que regresa la guarda y confirma; las transferencias pendientes terminan antes de que haya un nuevo vínculo disponible.
+
+Los objetos con nombre se conservan al Ejecutar y reiniciar en el campo reservado `v.state.$vaultTime`; no edite ese campo directamente. Elimínelos explícitamente con `v.removeTime(id)`. Los identificadores tienen de 1 a 80 letras ASCII, dígitos, `_` o `-`; se rechazan los nombres de propiedad reservados. Hasta 32 objetos comparten el límite de estado de la regla de 64 KiB en UTF-8. Las duraciones son milisegundos enteros de hasta 365 días. El historial móvil se limita a 1024 bloques de un minuto y 2048 intervalos combinados. Los errores de capacidad del historial dejan el rastreador no disponible hasta que se restablece explícitamente; las configuraciones no válidas y los guardados demasiado grandes notifican errores sin borrar los datos guardados.
+
+```js
+(on, v) => {
+  const timer = v.timer("focus", {durationMs: 300000});
+  v.panel("focus", {controls: [
+    {type: "timer", timerId: "focus", label: "Focus"},
+    {id: "start", type: "button", label: "Start"},
+    {id: "pause", type: "button", label: "Pause"},
+    {id: "reset", type: "button", label: "Reset"}
+  ]});
+  on("panel", ev => {
+    if (ev.data.eventName !== "click") return;
+    if (ev.data.controlId === "start") timer.start();
+    if (ev.data.controlId === "pause") timer.pause();
+    if (ev.data.controlId === "reset") timer.reset();
+  });
+  on("timerEnded", ev => v.log("Finished", ev.data.id));
+}
+```
+
 ## API
 
 - `on(type, handler)` → booleano. Registra `handler(ev)`; varios manejadores se ejecutan en orden de registro. False significa argumentos inválidos o límite de manejadores alcanzado. `ev = { type: string, now: number, data }`; `now` son milisegundos Unix.
 - `v.state`: objeto JSON mutable, persistido después de distribuir el evento. Inicialice los campos ausentes en lugar de sobrescribir el estado existente. Asignar un valor que no sea objeto o un array lo restablece a `{}`; las actualizaciones no serializables/demasiado grandes no se persisten.
-- `v.log(...values)`: único productor del Registro de este grupo. Los registros/Borrar son independientes por grupo. Los errores de carga aparecen en el estado de ejecución; los diagnósticos de los manejadores no rellenan el Registro.
+- `v.log(...values)`: añade entradas al Registro de este grupo. Los fallos de ejecución y entrega aparecen como entradas de error explícitas en el mismo registro. Los registros/Borrar son independientes por grupo. Los errores de carga también aparecen en el estado de ejecución; los eventos ejecutados parcialmente no se repiten automáticamente.
 - `v.emit(type, data)`: encola una copia JSON de `data` para los manejadores de este grupo después del evento actual, con un `now` nuevo; no es una llamada síncrona.
 - `v.panel(id, spec)`: sustituye el panel flotante con nombre de este grupo; un `spec` null lo elimina. Véase Paneles.
 - `v.file(op, path, payload?)` → cadena con el ID de solicitud. Véase Archivos.
@@ -24,7 +57,7 @@ Código fuente: una expresión de función `(on, v) => { ... }`. Solo se admite 
 - `v.quit(appId)`: una solicitud de cierre normal, sujeta a la misma política de protección/reintento; sin bloqueo continuo.
 - `v.open(appId)`: solicita a macOS abrir una aplicación instalada; sin callback de éxito.
 
-Las demás llamadas devuelven `undefined`. Los IDs de aplicaciones son identificadores de paquete (por ejemplo, `com.valvesoftware.steam`), disponibles en los eventos. Block/Quit ignora `com.apple.*`, los navegadores, Vault y sus auxiliares, y los IDs vacíos. Los IDs de panel/estado pertenecen a un grupo, no a su nombre visible.
+Las demás llamadas devuelven `undefined`. Los IDs de aplicaciones son identificadores de paquete (por ejemplo, `com.valvesoftware.steam`), disponibles en los eventos. Block/Quit puede dirigirse a aplicaciones de Apple y navegadores completos. Ignora el identificador de paquete de Mac Vault y sus auxiliares, incluida cualquier otra aplicación que comparta esa identidad, y los IDs vacíos. Los IDs de panel/estado pertenecen a un grupo, no a su nombre visible.
 
 ## Eventos
 
@@ -93,7 +126,7 @@ Los campos de resultado sin usar son null; con éxito, error está vacío. Los f
 
 ## Límites
 
-Por evento y grupo: 256 acciones en cola, 200 llamadas de registro, 64 emisiones; el exceso se descarta. Por regla: 1000 manejadores, 24 paneles; cada lista de controles tiene 32 entradas y cada selección 64 opciones; el exceso se ignora/trunca. Las cadenas de emisiones se detienen tras 16 generaciones. Límite de estado serializado: 65536 caracteres de cadena JavaScript. Mantenga el registro y los manejadores combinados de cada evento por debajo de 1 segundo; los excesos repetidos o un tiempo de espera estricto agotado detienen la regla hasta Ejecutar. El registro conserva 200 entradas por grupo. Los tiempos/respuestas son de mejor esfuerzo, sin garantías de tiempo real.
+Por evento y grupo: 256 acciones en cola, 200 llamadas de registro, 64 emisiones; el exceso se descarta. Por regla: 1000 manejadores, 24 paneles; cada lista de controles tiene 32 entradas y cada selección 64 opciones; el exceso se ignora/trunca. Las cadenas de emisiones se detienen tras 16 generaciones. Límite de estado serializado: 65536 bytes UTF-8. Mantenga el registro de la regla y los manejadores combinados de cada evento por debajo de 1 segundo; los excesos repetidos o un tiempo de espera estricto agotado detienen la regla hasta Ejecutar. El registro conserva 200 entradas por grupo. Los tiempos/respuestas funcionan según el mejor esfuerzo, sin garantías de tiempo real.
 
 ## Regla completa
 
