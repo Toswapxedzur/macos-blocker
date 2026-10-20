@@ -1,5 +1,6 @@
 #if os(macOS)
 import Foundation
+import CoreFoundation
 import CryptoKit
 import struct VaultClassifierCore.StorageSchemaPolicy
 import struct VaultClassifierCore.StorageProduct
@@ -93,6 +94,7 @@ final class ConnectionHub: ObservableObject {
         var program: String
         var connected: Bool
         var browserIdentity: BrowserApplicationIdentity?
+        var supportsOriginalUsage = false
         var browserIdentitySnapshots: [String: BrowserIdentitySnapshot] = [:]
         let challenge: String
         let connection: NWConnection
@@ -327,6 +329,7 @@ final class ConnectionHub: ObservableObject {
         guard VaultClassifierBridge.LocalHubAuthentication.verifyProof(
             program: program, challenge: challenge, proof: proof, secret: secret
         ) else { return "authentication-failed" }
+        if obj.keys.contains("originalUsageVersion"), !isOriginalUsageVersion(obj["originalUsageVersion"]) { return "invalid-original-usage-version" }
         let hasVersion = obj.keys.contains("browserIdentityVersion")
         let hasIdentity = obj.keys.contains("browserIdentity")
         guard hasVersion || hasIdentity else {
@@ -339,6 +342,12 @@ final class ConnectionHub: ObservableObject {
                 object, program: program, challenge: challenge, secret: secret),
               identity.kind == "mac-bundle-id" else { return "invalid-browser-identity" }
         return nil
+    }
+
+    static func isOriginalUsageVersion(_ value: Any?) -> Bool {
+        guard let number = value as? NSNumber, CFGetTypeID(number) != CFBooleanGetTypeID(),
+              ["c", "s", "i", "l", "q", "C", "S", "I", "L", "Q"].contains(String(cString: number.objCType)) else { return false }
+        return number.int64Value == 1
     }
 
     /// One connection per browser (owner 2026-09-25): a second instance of a
@@ -493,6 +502,9 @@ final class ConnectionHub: ObservableObject {
         /// The members that have contributed their definition: a member's FIRST
         /// contribution unions its lines into the shared ones.
         var contributed: Set<String> = []
+        /// A definition-only old client has not transferred its original budget.
+        /// Keep this bounded join admission distinct from configuration replay.
+        var originalUsagePending: Set<String> = []
         // Hub-authoritative shared state: the one group definition every
         // member adopts. Scalars and scopes are latest-edit-wins (see applySync).
         var sharedScalars: [String: Any] = [:]
@@ -555,6 +567,7 @@ final class ConnectionHub: ObservableObject {
             copy.members = members
             copy.memberGroupIds = memberGroupIds
             copy.contributed = contributed
+            copy.originalUsagePending = originalUsagePending
             copy.sharedTs = sharedTs
             copy.scopeOrigins = scopeOrigins
             copy.sharedUsageMs = sharedUsageMs
@@ -871,7 +884,7 @@ final class ConnectionHub: ObservableObject {
     }
 
     func admitAuthenticatedPeer(_ connection: NWConnection, program: String,
-                                browserIdentity: BrowserApplicationIdentity? = nil) -> String? {
+                                browserIdentity: BrowserApplicationIdentity? = nil, supportsOriginalUsage: Bool = false) -> String? {
         lock.lock(); defer { lock.unlock() }
         let key = ObjectIdentifier(connection)
         guard peers[key] != nil, Self.remotePrograms.contains(program) else { return "invalid-program" }
@@ -879,7 +892,11 @@ final class ConnectionHub: ObservableObject {
         if activityStoreValue != nil && publishedActivitySnapshot == nil { return "activity-initializing" }
         let connectedPrograms = peers.values.filter { $0.connected }.map(\.program)
         guard !Self.isDuplicateBrowser(program, connectedPrograms: connectedPrograms) else { return "duplicate-program" }
+        if !supportsOriginalUsage, clusters.values.contains(where: { unsafeLegacyRollingOriginalLocked($0, program: program) }) {
+            return "browser-upgrade-required"
+        }
         peers[key]?.program = program
+        peers[key]?.supportsOriginalUsage = supportsOriginalUsage
         peers[key]?.browserIdentity = browserIdentity
         peers[key]?.connected = true
         welcomeAuthenticatedPeerLocked(connection, program: program)
@@ -936,7 +953,7 @@ final class ConnectionHub: ObservableObject {
                 secret.flatMap { VaultClassifierBridge.LocalHubAuthentication.verifyBrowserIdentityAttestation(
                     object, program: program, challenge: challenge, secret: $0) }
             }
-            if let reason = admitAuthenticatedPeer(conn, program: program, browserIdentity: identity) {
+            if let reason = admitAuthenticatedPeer(conn, program: program, browserIdentity: identity, supportsOriginalUsage: Self.isOriginalUsageVersion(obj["originalUsageVersion"])) {
                 rejectAndClose(conn, reason: reason)
             }
         case "groups-announce":
@@ -1593,7 +1610,8 @@ final class ConnectionHub: ObservableObject {
         cluster.members.remove(program)
         cluster.memberGroupIds.removeValue(forKey: program)
         cluster.contributed.remove(program)
-        if cluster.members.isSubset(of: cluster.contributed) {
+        cluster.originalUsagePending.remove(program)
+        if Self.originalsReady(cluster) {
             cluster.joiningUsageBaseMs = nil
             cluster.joiningUsageDeltaMs = 0
             cluster.joiningSeedFloorMs = 0
@@ -1813,6 +1831,19 @@ final class ConnectionHub: ObservableObject {
         let initiatingProgram = existing?.initiator.isEmpty == false ? existing!.initiator : program
         let firstScalars = initiatingProgram == Self.localProgram ? native?.scalars : verifiedBrowserDefinitions[initiatingProgram]?.scalars
         let browserScopes = verifiedBrowserDefinitions.values.flatMap { $0.scopes.filter { Self.lineOwner(line: $0) != "desktop" } }
+        let initialPolicy = existing?.sharedScalars.isEmpty == false ? existing!.sharedScalars : firstScalars ?? [:]
+        if initialPolicy["mode"] as? String == "after-minutes", initialPolicy["groupType"] as? String != "custom",
+           initialPolicy["rollingLimit"] as? Bool == true {
+            let unsafe = peers.filter { _, peer in
+                peer.connected && !peer.supportsOriginalUsage && Self.browserPrograms.contains(peer.program) && members.contains(peer.program)
+                    && (existing?.members.contains(peer.program) != true || existing?.originalUsagePending.contains(peer.program) == true)
+            }
+            if !unsafe.isEmpty {
+                for (key, peer) in unsafe { retireOriginalUsagePeerLocked(key, peer: peer) }
+                broadcastPeersLocked()
+                return "browser-upgrade-required"
+            }
+        }
         if browserIdentityPauseRequiredLocked(scalars: existing?.sharedScalars.isEmpty == false ? existing!.sharedScalars : firstScalars ?? [:],
                                              scopes: (existing?.sharedScopes ?? []) + nativeScopes + browserScopes, members: members) {
             return "browser-upgrade-required"
@@ -1850,6 +1881,9 @@ final class ConnectionHub: ObservableObject {
             cluster.joiningSeedFloorMs = 0
             cluster.joiningBucketsBase = cluster.sharedBuckets
             cluster.joiningBucketDeltas = [:]
+        }
+        for member in [program, targetProgram] where !cluster.members.contains(member) && Self.browserPrograms.contains(member) {
+            cluster.originalUsagePending.insert(member)
         }
         cluster.members.formUnion([program, targetProgram])
         cluster.memberGroupIds[program] = groupId
@@ -1934,6 +1968,7 @@ final class ConnectionHub: ObservableObject {
         }
 
         let before = clusterJSONObject(cluster)
+        let pendingBefore = cluster.originalUsagePending.contains(program) ? cluster.editorCopy() : nil
         var contribution = contribution
         let paused = browserIdentityPauseRequiredLocked(cluster)
         let alreadyContributed = cluster.contributed.contains(program)
@@ -2087,27 +2122,36 @@ final class ConnectionHub: ObservableObject {
         // they were measured while the native sampler was unavailable.
         let browserCoveredByApp = deltaPeriod == nil && transferKey == nil &&
             Self.browserPrograms.contains(program) && Self.countsWholeBrowser(cluster.sharedScopes, program: program, browserIdentity: browserIdentity)
+        let rollingOriginal = (cluster.sharedScalars["rollingLimit"] as? Bool) == true
+        let absoluteSeed = contribution["usageMs"] as? Double
+        let historySeed = UsageBudget.parseBuckets(contribution["usageBucketsSeed"])
+        let firstUsageOriginal = cluster.originalUsagePending.contains(program) && transferKey == nil
+            && (rollingOriginal ? historySeed != nil : absoluteSeed.map { $0.isFinite && $0 >= 0 } == true)
+        var admittedOriginalUsage = false
         if !duplicateTransfer, !browserCoveredByApp,
            let delta = contribution["usageDeltaMs"] as? Double, delta != 0,
            deltaPeriod == nil || deltaPeriod!.rounded(.down) == cluster.sharedUsageResetAtMs.rounded(.down) {
+            // An old usage report's absolute includes this same increment.
+            // Preserve its existing delta-or-seed contract, never both.
             if (cluster.sharedScalars["rollingLimit"] as? Bool) != true {
                 Self.countBudgetSnoozeLocked(cluster, beforeMs: cluster.sharedUsageMs, addedMs: delta, nowMs: nowMs)
             }
             cluster.sharedUsageMs = max(0, cluster.sharedUsageMs + delta)
             if cluster.joiningUsageBaseMs != nil { cluster.joiningUsageDeltaMs += delta }
             cluster.usageSeeded = true
-        } else if !duplicateTransfer, (!browserCoveredByApp || firstContribution),
-                  let seed = contribution["usageMs"] as? Double,
-                  seed.isFinite, seed >= 0,
-                  (!cluster.usageSeeded || firstContribution),
-                  (cluster.joiningSeedFloorMs == 0 || ((contribution["usageResetAtMs"] as? Double) ?? 0) >= cluster.joiningSeedFloorMs) {
-            // Initial seeds take the maximum original usage. During joining,
-            // retain increments already accrued instead of losing either side
-            // when a member's original arrives later.
-            if let base = cluster.joiningUsageBaseMs {
-                cluster.joiningUsageBaseMs = max(base, seed)
-                cluster.sharedUsageMs = max(0, max(base, seed) + cluster.joiningUsageDeltaMs)
-            } else if seed > cluster.sharedUsageMs { cluster.sharedUsageMs = seed }
+        } else if !duplicateTransfer, (!browserCoveredByApp || firstContribution || firstUsageOriginal),
+                  let seed = absoluteSeed, seed.isFinite, seed >= 0,
+                  (!cluster.usageSeeded || firstContribution || firstUsageOriginal) {
+            // An observed expired original completes retention, but cannot seed
+            // usage back into a later authoritative period.
+            if cluster.joiningSeedFloorMs == 0 || ((contribution["usageResetAtMs"] as? Double) ?? 0) >= cluster.joiningSeedFloorMs {
+                if let base = cluster.joiningUsageBaseMs {
+                    cluster.joiningUsageBaseMs = max(base, seed)
+                    cluster.sharedUsageMs = max(0, max(base, seed) + cluster.joiningUsageDeltaMs)
+                } else if seed > cluster.sharedUsageMs { cluster.sharedUsageMs = seed }
+                cluster.usageSeeded = true
+            }
+            if !rollingOriginal { admittedOriginalUsage = firstUsageOriginal }
         }
         let rollingPolicy = BlockGroup(
             id: "", groupType: .site, name: "", enabled: true, mode: .afterMinutes,
@@ -2120,9 +2164,11 @@ final class ConnectionHub: ObservableObject {
             var bucketContribution = contribution
             if browserCoveredByApp {
                 bucketContribution.removeValue(forKey: "usageBuckets")
-                if !firstContribution { bucketContribution.removeValue(forKey: "usageBucketsSeed") }
+                if !firstContribution && !firstUsageOriginal { bucketContribution.removeValue(forKey: "usageBucketsSeed") }
             }
-            applyBucketContributionLocked(cluster, bucketContribution, firstContribution: firstContribution)
+            applyBucketContributionLocked(cluster, bucketContribution, firstContribution: firstContribution || firstUsageOriginal)
+            if rollingOriginal && firstUsageOriginal,
+               (UsageBudget.parseBuckets(bucketContribution["usageBuckets"]) ?? [:]).isEmpty { admittedOriginalUsage = true }
         }
         if !duplicateTransfer, !browserCoveredByApp, (cluster.sharedScalars["rollingLimit"] as? Bool) == true,
            let deltas = UsageBudget.parseBuckets(contribution["usageBuckets"]), !deltas.isEmpty {
@@ -2146,7 +2192,9 @@ final class ConnectionHub: ObservableObject {
         // Persist only on config-bearing syncs (scalars/scopes/snooze), not
         // on per-tick usage pings, so the on-disk registry tracks structural and
         // settings changes without hammering the disk every second.
-        if cluster.members.isSubset(of: cluster.contributed) {
+        if admittedOriginalUsage { cluster.originalUsagePending.remove(program) }
+        if cluster.members.isSubset(of: cluster.contributed), !Self.requiresOriginalBudgetUsage(cluster) { cluster.originalUsagePending.removeAll() }
+        if Self.originalsReady(cluster) {
             cluster.joiningUsageBaseMs = nil
             cluster.joiningUsageDeltaMs = 0
             cluster.joiningSeedFloorMs = 0
@@ -2156,8 +2204,14 @@ final class ConnectionHub: ObservableObject {
         if let transferKey { cluster.usageTransferReceipts[transferKey] = nowMs }
         // Receipts and the usage they acknowledge are saved together before
         // the snapshot lets a sender remove its durable outbox batch.
-        if carriesConfig || transferKey != nil { persistClustersLocked() }
-
+        if carriesConfig || transferKey != nil || admittedOriginalUsage { persistClustersLocked() }
+        if admittedOriginalUsage, !clusterStorageWritable, let pendingBefore {
+            clusters[cluster.id] = pendingBefore
+            enqueueLocked(["kind": "group-sync-refused", "groupId": groupId, "reason": "local-storage-unavailable"],
+                          to: peers.values.filter { $0.connected && $0.program == program }.map(\.connection))
+            return
+        }
+        retireUnsafeRollingOriginalPeersLocked(cluster)
         let after = clusterJSONObject(cluster)
         if !NSDictionary(dictionary: before).isEqual(to: after) || paused != browserIdentityPauseRequiredLocked(cluster) {
             broadcastClusterLocked(after)
@@ -2448,7 +2502,7 @@ final class ConnectionHub: ObservableObject {
             // A recognizable unsupported registry cannot be overwritten by
             // an editor transaction. UserDefaults has no physical durability
             // acknowledgment; successful file commit retains its existing API.
-            let schema = StorageSchemaPolicy(format: "hub.clusters", currentSchema: 2)
+            let schema = StorageSchemaPolicy(format: "hub.clusters", currentSchema: 3)
             guard self.clusterStorageWritable,
                   self.registryDefaults.data(forKey: Self.clustersDefaultsKey).map({ (try? schema.payload(from: $0)) != nil }) ?? true else {
                 throw GroupStoreError.invalidInput("cluster-storage-unavailable")
@@ -2858,7 +2912,7 @@ final class ConnectionHub: ObservableObject {
             // UserDefaults is the existing cluster writer. Verify its exact
             // supported envelope; a refusal freezes new requests until repair.
             let saved = self.registryDefaults.data(forKey: Self.clustersDefaultsKey)
-                .flatMap { try? StorageSchemaPolicy(format: "hub.clusters", currentSchema: 2).payload(from: $0) }
+                .flatMap { try? StorageSchemaPolicy(format: "hub.clusters", currentSchema: 3).payload(from: $0) }
                 .flatMap { try? JSONSerialization.jsonObject(with: $0) as? [[String: Any]] }
             guard let stored = saved?.first(where: { $0["id"] as? String == cluster.id })?["sharedRuleTime"] as? [String: Any],
                   WebStoreDocument.canonicalJSON(stored) == WebStoreDocument.canonicalJSON(state) else {
@@ -2960,6 +3014,7 @@ final class ConnectionHub: ObservableObject {
                 "members": Array(c.members),
                 "memberGroupIds": c.memberGroupIds,
                 "contributed": Array(c.contributed),
+                "originalUsagePending": Array(c.originalUsagePending),
                 "sharedScalars": c.sharedScalars,
                 "sharedScopes": c.sharedScopes,
                 "scopeOrigins": c.scopeOrigins,
@@ -2984,7 +3039,7 @@ final class ConnectionHub: ObservableObject {
                 "bucketsSeeded": c.bucketsSeeded
             ]
         }
-        let schema = StorageSchemaPolicy(format: "hub.clusters", currentSchema: 2)
+        let schema = StorageSchemaPolicy(format: "hub.clusters", currentSchema: 3)
         guard clusterStorageWritable else { return }
         guard let payload = try? JSONSerialization.data(withJSONObject: arr, options: [.sortedKeys]),
               let data = try? schema.wrap(payload) else { clusterStorageWritable = false; return }
@@ -3010,11 +3065,14 @@ final class ConnectionHub: ObservableObject {
             self.registryDefaults.removeObject(forKey: ConnectionHub.droppedClustersDefaultsKey)
         }
         guard let data = self.registryDefaults.data(forKey: ConnectionHub.clustersDefaultsKey),
-              let payload = try? StorageSchemaPolicy(format: "hub.clusters", currentSchema: 2).payload(from: data),
+              let payload = try? StorageSchemaPolicy(format: "hub.clusters", currentSchema: 3).payload(from: data),
               let arr = (try? JSONSerialization.jsonObject(with: payload)) as? [[String: Any]] else {
             if self.registryDefaults.data(forKey: ConnectionHub.clustersDefaultsKey) != nil { clusterStorageWritable = false }
             return
         }
+        let storedRoot = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+        let storedSchema = ((storedRoot?["storageMetadata"] as? [String: Any])?["schemaVersion"] as? Int) ?? 0
+        if storedSchema >= 3 && arr.contains(where: { $0["originalUsagePending"] == nil }) { clusterStorageWritable = false; return }
         let retainedRows = arr.compactMap { $0["detachedRuleTime"] as? [String: Any] }
         guard retainedRows.reduce(0, { $0 + $1.count }) <= 1024,
               let retainedBytes = try? JSONSerialization.data(withJSONObject: retainedRows), retainedBytes.count <= 8 * 1024 * 1024 else { clusterStorageWritable = false; return }
@@ -3041,6 +3099,15 @@ final class ConnectionHub: ObservableObject {
             // (Registries before 2026-09-26 kept each whole contribution.)
             cluster.contributed = Set(obj["contributed"] as? [String]
                 ?? ((obj["contributions"] as? [String: Any]).map { Array($0.keys) } ?? []))
+            if obj.keys.contains("originalUsagePending") {
+                guard let pending = obj["originalUsagePending"] as? [String], pending.count <= Self.browserPrograms.count,
+                      Set(pending).count == pending.count,
+                      pending.allSatisfy({ Self.browserPrograms.contains($0) && cluster.members.contains($0) }) else { clusterStorageWritable = false; return }
+                cluster.originalUsagePending = Set(pending)
+            } else if !cluster.members.isSubset(of: cluster.contributed) {
+                // Established historical rows already pooled their originals.
+                cluster.originalUsagePending = cluster.members.intersection(Self.browserPrograms).subtracting(cluster.contributed)
+            }
             if let scalars = obj["sharedScalars"] as? [String: Any] { cluster.sharedScalars = scalars }
             if let scopes = obj["sharedScopes"] as? [[String: Any]] { cluster.sharedScopes = scopes }
             let surviving = Set(cluster.sharedScopes.filter { ($0["surface"] as? String) == "site" }.map(Self.scopeEntryKey))
@@ -3070,7 +3137,7 @@ final class ConnectionHub: ObservableObject {
             cluster.usageSeeded = (obj["usageSeeded"] as? Bool) ?? false
             cluster.usageTransferReceipts = (obj["usageTransferReceipts"] as? [String: Double]) ?? [:]
             cluster.bucketsSeeded = (obj["bucketsSeeded"] as? Bool) ?? false
-            if !cluster.members.isSubset(of: cluster.contributed) {
+            if !Self.originalsReady(cluster) {
                 cluster.joiningUsageBaseMs = (obj["joiningUsageBaseMs"] as? Double) ?? cluster.sharedUsageMs
                 cluster.joiningUsageDeltaMs = (obj["joiningUsageDeltaMs"] as? Double) ?? 0
                 cluster.joiningSeedFloorMs = (obj["joiningSeedFloorMs"] as? Double) ?? 0
@@ -3088,6 +3155,41 @@ final class ConnectionHub: ObservableObject {
     /// members online/offline.
     private func onlineProgramsLocked() -> Set<String> {
         Set(peers.values.filter { $0.connected && !$0.program.isEmpty }.map(\.program)).union([Self.localProgram])
+    }
+
+    private static func requiresOriginalBudgetUsage(_ cluster: ClusterState) -> Bool {
+        cluster.sharedScalars["groupType"] as? String != "custom" && cluster.sharedScalars["mode"] as? String == "after-minutes"
+    }
+
+    private static func originalsReady(_ cluster: ClusterState) -> Bool {
+        cluster.members.isSubset(of: cluster.contributed)
+            && (!requiresOriginalBudgetUsage(cluster) || cluster.originalUsagePending.isEmpty)
+    }
+
+    private func unsafeLegacyRollingOriginalLocked(_ cluster: ClusterState, program: String) -> Bool {
+        cluster.originalUsagePending.contains(program) && Self.requiresOriginalBudgetUsage(cluster)
+            && cluster.sharedScalars["rollingLimit"] as? Bool == true
+            && cluster.contributed.contains(cluster.initiator)
+    }
+
+    private func retireOriginalUsagePeerLocked(_ key: ObjectIdentifier, peer: Peer) {
+        peers[key]?.connected = false
+        peers[key]?.browserIdentity = nil
+        peers[key]?.browserIdentitySnapshots = [:]
+        enqueueLocked(["kind": "rejected", "reason": "browser-upgrade-required"], to: [peer.connection])
+        queue.asyncAfter(deadline: .now() + .milliseconds(100)) { peer.connection.cancel() }
+    }
+
+    /// A legacy rolling consumer cannot pause without replacing its unsent
+    /// history. Close before any shared projection; completed links are safe.
+    private func retireUnsafeRollingOriginalPeersLocked(_ cluster: ClusterState) {
+        var retired = false
+        for (key, peer) in peers where peer.connected && !peer.supportsOriginalUsage
+            && unsafeLegacyRollingOriginalLocked(cluster, program: peer.program) {
+            retireOriginalUsagePeerLocked(key, peer: peer)
+            retired = true
+        }
+        if retired { broadcastPeersLocked() }
     }
 
     private func browserIdentityPauseRequiredLocked(scalars: [String: Any], scopes: [[String: Any]], members: Set<String>) -> Bool {
@@ -3113,7 +3215,7 @@ final class ConnectionHub: ObservableObject {
             guard let peer = live.first(where: { $0.program == program }) else { return "browser-connect-required" }
             guard !Self.requiresBrowserIdentityProof(program) || peer.browserIdentity != nil else { return "browser-upgrade-required" }
             guard let snapshot = peer.browserIdentitySnapshots[cluster.id], snapshot.applied,
-                  snapshot.definitionReady, cluster.members.isSubset(of: cluster.contributed),
+                  snapshot.definitionReady, Self.originalsReady(cluster),
                   snapshot.paused == browserIdentityPauseRequiredLocked(cluster) else { return "browser-sync-required" }
         }
         return nil
@@ -3154,7 +3256,7 @@ final class ConnectionHub: ObservableObject {
 
     private func browserIdentityTransitionPendingLocked(_ cluster: ClusterState) -> Bool {
         let paused = browserIdentityPauseRequiredLocked(cluster)
-        let ready = cluster.members.isSubset(of: cluster.contributed)
+        let ready = Self.originalsReady(cluster)
         return peers.values.contains { peer in
             peer.connected && Self.browserPrograms.contains(peer.program)
                 && peer.browserIdentitySnapshots[cluster.id].map { $0.paused != paused || $0.definitionReady != ready } == true
@@ -3185,7 +3287,7 @@ final class ConnectionHub: ObservableObject {
               let cluster = clusterLocked(program: peer.program, groupId: groupID),
               let expected = peer.browserIdentitySnapshots[cluster.id],
               expected.paused == browserIdentityPauseRequiredLocked(cluster),
-              expected.definitionReady == cluster.members.isSubset(of: cluster.contributed),
+              expected.definitionReady == Self.originalsReady(cluster),
               let ack = contribution["browserIdentitySnapshotApplied"] as? [String: Any],
               Set(ack.keys) == ["generation"],
               let generation = ack["generation"] as? String else { return false }
@@ -3202,7 +3304,12 @@ final class ConnectionHub: ObservableObject {
                                                  effectivePause: Bool = false) -> [String: Any] {
         guard let id = snapshot["id"] as? String, let cluster = clusters[id] else { return snapshot }
         let paused = browserIdentityPauseRequiredLocked(cluster)
-        let ready = cluster.members.isSubset(of: cluster.contributed)
+        let ready = Self.originalsReady(cluster)
+        if let peerKey, let peer = peers[peerKey], !peer.supportsOriginalUsage,
+           cluster.originalUsagePending.contains(peer.program),
+           (!cluster.members.isSubset(of: cluster.contributed) || unsafeLegacyRollingOriginalLocked(cluster, program: peer.program)) {
+            var retained = snapshot; retained.removeValue(forKey: "shared"); return retained
+        }
         var generation = "local"
         if let peerKey, let peer = peers[peerKey], Self.browserPrograms.contains(peer.program) {
             let prior = peer.browserIdentitySnapshots[id]
@@ -3219,6 +3326,10 @@ final class ConnectionHub: ObservableObject {
             "canonicalEnabled": (scalars["enabled"] as? Bool) ?? true, "affectsBrowserBudget": affectsBrowserBudgetLocked(cluster)]
         if effectivePause && paused { scalars["enabled"] = false }
         shared["scalars"] = scalars
+        if let peerKey, let peer = peers[peerKey], !peer.supportsOriginalUsage,
+           cluster.originalUsagePending.contains(peer.program), Self.requiresOriginalBudgetUsage(cluster) {
+            for field in ["usageMs", "usageResetAtMs", "usageBuckets"] { shared.removeValue(forKey: field) }
+        }
         result["shared"] = shared
         return result
     }
@@ -3241,7 +3352,7 @@ final class ConnectionHub: ObservableObject {
                     "online": online.contains($0),
                     // False until the member sent its definition: a browser then
                     // contributes it (its lines join the link's).
-                    "contributed": cluster.contributed.contains($0)
+                    "contributed": cluster.contributed.contains($0) && (!Self.requiresOriginalBudgetUsage(cluster) || !cluster.originalUsagePending.contains($0))
                 ] as [String: Any]
             }
         ]

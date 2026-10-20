@@ -60,17 +60,17 @@ final class BrowserIdentityRuntimeTests: XCTestCase {
             "usageResetAtMs": (Date().timeIntervalSince1970 * 1000).rounded(.down)
         ], ts: 0)
         if browserContributed {
-            hub.applySync(program: program, groupId: "b", contribution: ["scopes": [["surface": "site", "sites": ["example.com"]]]], ts: 0)
+            hub.applySync(program: program, groupId: "b", contribution: ["scopes": [["surface": "site", "sites": ["example.com"]]], "usageMs": 0.0, "usageResetAtMs": Date().timeIntervalSince1970 * 1000], ts: 0)
         }
     }
 
-    private func peer(_ hub: ConnectionHub, program: String = "chrome", identity: Bool = false) throws -> NWConnection {
+    private func peer(_ hub: ConnectionHub, program: String = "chrome", identity: Bool = false, supportsOriginalUsage: Bool? = nil) throws -> NWConnection {
         let connection = NWConnection(host: "127.0.0.1", port: 18787, using: .tcp)
         connections.append(connection)
         hub.registerPendingPeer(connection, challenge: String(repeating: "a", count: 43))
         let appID = ["chrome": "com.google.chrome", "edge": "com.microsoft.edgemac", "safari": "com.apple.safari"][program] ?? "com.example.browser"
         let app = identity ? try XCTUnwrap(BrowserApplicationIdentity(kind: "mac-bundle-id", value: appID)) : nil
-        XCTAssertNil(hub.admitAuthenticatedPeer(connection, program: program, browserIdentity: app))
+        XCTAssertNil(hub.admitAuthenticatedPeer(connection, program: program, browserIdentity: app, supportsOriginalUsage: supportsOriginalUsage ?? identity))
         return connection
     }
 
@@ -170,7 +170,7 @@ final class BrowserIdentityRuntimeTests: XCTestCase {
     func testFirstOriginalAfterRecoveryRetainsScopesAndCanonicalEnable() throws {
         let (hub, frames, _) = hub(); try linked(hub, browserContributed: false, nativeEnabled: false)
         let legacy = try peer(hub)
-        XCTAssertEqual(try frames.status()["state"] as? String, "upgrade-required")
+        XCTAssertNil(frames.latestCluster()?["shared"])
         hub.removePeer(ObjectIdentifier(legacy))
         let updated = try peer(hub, identity: true)
         let generation = try XCTUnwrap(try frames.status()["generation"] as? String)
@@ -329,7 +329,7 @@ final class BrowserIdentityRuntimeTests: XCTestCase {
         try linked(hub, browserContributed: false)
         let connection = try peer(hub, identity: true)
         let originalGeneration = try acknowledge(hub, frames, connection)
-        try sync(hub, connection, ["scopes": [["surface": "site", "sites": ["example.com"]]], "ts": 0.0], generation: originalGeneration)
+        try sync(hub, connection, ["scopes": [["surface": "site", "sites": ["example.com"]]], "usageMs": 0.0, "usageResetAtMs": Date().timeIntervalSince1970 * 1000, "ts": 0.0], generation: originalGeneration)
         let fullGeneration = try XCTUnwrap(try frames.status()["generation"] as? String)
         XCTAssertFalse(fullGeneration == originalGeneration)
         XCTAssertEqual(hub.unlinkGroup(program: "chrome", groupId: "b"), "browser-sync-required")
@@ -343,7 +343,7 @@ final class BrowserIdentityRuntimeTests: XCTestCase {
         let (hub, frames, _) = hub(); try linked(hub)
         hub.setRoster(program: "edge", groups: [["id": "e", "name": "Edge"]])
         XCTAssertNil(hub.linkGroups(program: "macapp", groupId: "m", targetProgram: "edge", targetGroupId: "e"))
-        hub.applySync(program: "edge", groupId: "e", contribution: ["scopes": [["surface": "site", "sites": ["edge.example"]]]], ts: 0)
+        hub.applySync(program: "edge", groupId: "e", contribution: ["scopes": [["surface": "site", "sites": ["edge.example"]]], "usageMs": 0.0, "usageResetAtMs": Date().timeIntervalSince1970 * 1000], ts: 0)
         let chrome = try peer(hub, identity: true)
         let edge = try peer(hub, program: "edge", identity: true)
         _ = try acknowledge(hub, frames, chrome)
@@ -408,7 +408,7 @@ final class BrowserIdentityRuntimeTests: XCTestCase {
         hub.removePeer(ObjectIdentifier(legacy))
         hub.setRoster(program: "chrome", groups: [["id": "b", "name": "Browser"]])
         XCTAssertNil(hub.linkGroups(program: "macapp", groupId: "m", targetProgram: "chrome", targetGroupId: "b"))
-        hub.applySync(program: "chrome", groupId: "b", contribution: ["scopes": [["surface": "site", "sites": ["example.com"]]]], ts: 0)
+        hub.applySync(program: "chrome", groupId: "b", contribution: ["scopes": [["surface": "site", "sites": ["example.com"]]], "usageMs": 0.0, "usageResetAtMs": Date().timeIntervalSince1970 * 1000], ts: 0)
         hub.contributeLocalDefinitions(document: [:], nowMs: Date().timeIntervalSince1970 * 1000)
         let connection = try peer(hub, identity: true)
         _ = try acknowledge(hub, frames, connection)
@@ -479,16 +479,16 @@ final class BrowserIdentityRuntimeTests: XCTestCase {
     func testOrdinarySafariRequiresCurrentFullUnionAckForAffectedUnlink() throws {
         let (hub, frames, _) = hub(narrow: true, candidates: ["com.apple.safari"])
         try linked(hub, browserContributed: false, apps: [["id": "com.apple.Safari"]], program: "safari")
-        let original = try peer(hub, program: "safari")
+        let original = try peer(hub, program: "safari", supportsOriginalUsage: true)
         let originalGeneration = try acknowledge(hub, frames, original)
-        try sync(hub, original, ["scopes": [["surface": "site", "sites": ["example.com"]]], "ts": 0.0], generation: originalGeneration)
+        try sync(hub, original, ["scopes": [["surface": "site", "sites": ["example.com"]]], "usageMs": 0.0, "usageResetAtMs": Date().timeIntervalSince1970 * 1000, "ts": 0.0], generation: originalGeneration)
         XCTAssertEqual(try frames.status()["state"] as? String, "ready")
         XCTAssertEqual(hub.unlinkGroup(program: "safari", groupId: "b"), "browser-sync-required")
         let completedGeneration = try acknowledge(hub, frames, original)
         XCTAssertFalse(completedGeneration == originalGeneration)
         hub.removePeer(ObjectIdentifier(original))
         XCTAssertEqual(hub.unlinkGroup(program: "macapp", groupId: "m"), "browser-connect-required")
-        let updated = try peer(hub, program: "safari")
+        let updated = try peer(hub, program: "safari", supportsOriginalUsage: true)
         try sync(hub, updated, [:], generation: completedGeneration)
         XCTAssertEqual(hub.unlinkGroup(program: "macapp", groupId: "m"), "browser-sync-required")
         _ = try acknowledge(hub, frames, updated)

@@ -9,3 +9,5 @@
 - `WebUI/`: native contract test sources.
 
 `MacBlockerAppFeatureTests/ManagedRuleTimeChecks.swift` shares native timer/hub/persistence checks between XCTest and a disposable CLI probe on hosts without XCTest. `ManagedRuleTimeTests.swift` registers them with XCTest. These checks do not start a listener or a GUI app.
+
+`MacBlockerAppFeatureTests/BootstrapUsageTests.swift` exercises split definition/original-usage admission, pending retention across restart and failed saves, fixed/rolling expiry, schema migration and legacy rolling refusal. It is also run unchanged through the Mini2 CLI adapter.

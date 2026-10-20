@@ -32,6 +32,18 @@ final class BrowserIdentityAdmissionTests: XCTestCase {
         XCTAssertNil(rejection(try hello(program: "classifier"), appMajor: 4))
     }
 
+    func testOriginalUsageCapabilityIsIndependentStrictNumericDeclaration() throws {
+        var value = try hello(program: "safari")
+        value["originalUsageVersion"] = 1
+        XCTAssertNil(rejection(value, appMajor: 5))
+        for malformed: Any in [true, false, "1", 1.0, 1.25, 0, 2, NSNull()] {
+            value["originalUsageVersion"] = malformed
+            XCTAssertEqual(rejection(value), "invalid-original-usage-version")
+        }
+        value.removeValue(forKey: "originalUsageVersion")
+        XCTAssertNil(rejection(value, appMajor: 5))
+    }
+
     func testOrdinarySafariNeedsBaseProofButNoIdentityAtFutureMajors() throws {
         let value = try hello(program: "safari")
         XCTAssertNil(rejection(value, appMajor: 4))
