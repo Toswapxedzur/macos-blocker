@@ -1831,7 +1831,8 @@ final class ConnectionHub: ObservableObject {
         let initiatingProgram = existing?.initiator.isEmpty == false ? existing!.initiator : program
         let firstScalars = initiatingProgram == Self.localProgram ? native?.scalars : verifiedBrowserDefinitions[initiatingProgram]?.scalars
         let browserScopes = verifiedBrowserDefinitions.values.flatMap { $0.scopes.filter { Self.lineOwner(line: $0) != "desktop" } }
-        let initialPolicy = existing?.sharedScalars.isEmpty == false ? existing!.sharedScalars : firstScalars ?? [:]
+        let initiatorPolicyKnown = existing.map { $0.contributed.contains($0.initiator) && !$0.sharedScalars.isEmpty } ?? false
+        let initialPolicy = initiatorPolicyKnown ? existing!.sharedScalars : firstScalars ?? [:]
         if initialPolicy["mode"] as? String == "after-minutes", initialPolicy["groupType"] as? String != "custom",
            initialPolicy["rollingLimit"] as? Bool == true {
             let unsafe = peers.filter { _, peer in
@@ -2128,11 +2129,11 @@ final class ConnectionHub: ObservableObject {
         let firstUsageOriginal = cluster.originalUsagePending.contains(program) && transferKey == nil
             && (rollingOriginal ? historySeed != nil : absoluteSeed.map { $0.isFinite && $0 >= 0 } == true)
         var admittedOriginalUsage = false
-        if !duplicateTransfer, !browserCoveredByApp,
+        if !duplicateTransfer, !browserCoveredByApp, !(firstUsageOriginal && !rollingOriginal),
            let delta = contribution["usageDeltaMs"] as? Double, delta != 0,
            deltaPeriod == nil || deltaPeriod!.rounded(.down) == cluster.sharedUsageResetAtMs.rounded(.down) {
-            // An old usage report's absolute includes this same increment.
-            // Preserve its existing delta-or-seed contract, never both.
+            // Nonpending/native reports keep their delta-or-seed contract.
+            // A pending browser absolute includes its delta and seeds once.
             if (cluster.sharedScalars["rollingLimit"] as? Bool) != true {
                 Self.countBudgetSnoozeLocked(cluster, beforeMs: cluster.sharedUsageMs, addedMs: delta, nowMs: nowMs)
             }
