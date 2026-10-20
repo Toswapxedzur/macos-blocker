@@ -13,7 +13,7 @@ enum BrowserIdentityBudgetPolicy {
     static func affects(_ scalars: [String: Any], scopes: [[String: Any]], browserBundleIDs: Set<String>) -> Bool {
         guard (scalars["groupType"] as? String) != "custom",
               (scalars["mode"] as? String) == BlockingMode.afterMinutes.rawValue,
-              scopes.contains(where: { ["site", "items", "pages", "home", "shelf"].contains($0["surface"] as? String ?? "") }) else { return false }
+              scopes.contains(where: canCountBrowserUsage) else { return false }
         return scopes.contains { line in
             guard line["surface"] as? String == "apps", (line["action"] as? String ?? "block") == "block" else { return false }
             let listed = Set((line["apps"] as? [[String: Any]] ?? []).compactMap { $0["id"] as? String })
@@ -21,6 +21,19 @@ enum BrowserIdentityBudgetPolicy {
                 return browserBundleIDs.contains { !BlockGroup.lists(listed, $0) }
             }
             return browserBundleIDs.contains { BlockGroup.lists(listed, $0) }
+        }
+    }
+
+    private static func canCountBrowserUsage(_ line: [String: Any]) -> Bool {
+        let surface = line["surface"] as? String ?? ""
+        guard surface == "site" else { return ["items", "pages", "home", "shelf"].contains(surface) }
+        // Empty blocklists match no page; empty allowlists cover the whole web.
+        // Use the shared scope normalizer instead of inventing a native host
+        // grammar. Both block and pause page actions consume the same budget.
+        if line["sitesExcept"] as? Bool == true { return true }
+        return (line["sites"] as? [Any] ?? []).contains { site in
+            guard let normalized = GroupActionsRuntime.shared.call("normalizeSiteInput", [site], module: "CBGroupScopes") as? String else { return false }
+            return !normalized.isEmpty
         }
     }
 
