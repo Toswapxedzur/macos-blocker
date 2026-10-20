@@ -44,15 +44,46 @@ final class ConnectionHub: ObservableObject {
         var applied = false
     }
 
-    /// Only a native-attested application can establish overlap with an Apps
-    /// target. Program families and contribution payloads are not identities.
+    /// Safari uses the owner-approved ordinary-app association. It is a
+    /// declared accounting choice, never an attested identity or proof.
+    enum BrowserUsageAssociation: Equatable {
+        case attested(BrowserApplicationIdentity)
+        case ordinarySafari
+        var bundleID: String {
+            switch self {
+            case .attested(let identity): return identity.value
+            case .ordinarySafari: return "com.apple.safari"
+            }
+        }
+    }
+
+    static func browserUsageAssociation(program: String, browserIdentity: BrowserApplicationIdentity?) -> BrowserUsageAssociation? {
+        if let browserIdentity, browserIdentity.kind == "mac-bundle-id" { return .attested(browserIdentity) }
+        return program == "safari" && browserIdentity == nil ? .ordinarySafari : nil
+    }
+
+    private static func requiresBrowserIdentityProof(_ program: String) -> Bool {
+        browserPrograms.contains(program) && program != "safari"
+    }
+
+    /// Exact proof remains required for Chromium-family accounting. Safari's
+    /// explicit ordinary-app association does not claim STP/WebApp detection.
+    static func countsWholeBrowser(_ scopes: [[String: Any]], program: String, browserIdentity: BrowserApplicationIdentity?) -> Bool {
+        guard let association = browserUsageAssociation(program: program, browserIdentity: browserIdentity) else { return false }
+        return countsWholeBrowser(scopes, bundleID: association.bundleID)
+    }
+
     static func countsWholeBrowser(_ scopes: [[String: Any]], browserIdentity: BrowserApplicationIdentity?) -> Bool {
         guard let browserIdentity, browserIdentity.kind == "mac-bundle-id" else { return false }
+        return countsWholeBrowser(scopes, bundleID: browserIdentity.value)
+    }
+
+    private static func countsWholeBrowser(_ scopes: [[String: Any]], bundleID: String) -> Bool {
         return scopes.contains { line in
             guard (line["surface"] as? String) == "apps",
                   (line["action"] as? String ?? "block") == "block" else { return false }
             let listed = Set((line["apps"] as? [[String: Any]] ?? []).compactMap { $0["id"] as? String })
-            let included = BlockGroup.lists(listed, browserIdentity.value)
+            let included = BlockGroup.lists(listed, bundleID)
             return (line["appsExcept"] as? Bool) == true ? !included : included
         }
     }
@@ -299,7 +330,7 @@ final class ConnectionHub: ObservableObject {
         let hasVersion = obj.keys.contains("browserIdentityVersion")
         let hasIdentity = obj.keys.contains("browserIdentity")
         guard hasVersion || hasIdentity else {
-            return browserPrograms.contains(program) && !(0...3).contains(appMajor) ? "browser-upgrade-required" : nil
+            return requiresBrowserIdentityProof(program) && !(0...3).contains(appMajor) ? "browser-upgrade-required" : nil
         }
         guard browserPrograms.contains(program), hasVersion && hasIdentity,
               VaultClassifierBridge.LocalHubAuthentication.isBrowserIdentityVersion(obj["browserIdentityVersion"]),
@@ -936,8 +967,11 @@ final class ConnectionHub: ObservableObject {
                     || ((obj["snoozeTs"] as? Double) ?? 0) > cluster.sharedSnoozeTs) {
                     enqueueLocked(["kind": "group-sync-refused", "groupId": groupID, "reason": "browser-upgrade-required"], to: [conn])
                 }
-                if peer.browserIdentity != nil,
-                   !browserIdentitySnapshotAppliedLocked(peerKey: key, groupID: (obj["groupId"] as? String) ?? "", contribution: obj) {
+                // Safari's durable ACK identifies an updated consumer without
+                // demanding an unneeded identity proof. Baseline Safari config
+                // remains available; affected unlink still requires this ACK.
+                let snapshotApplied = browserIdentitySnapshotAppliedLocked(peerKey: key, groupID: groupID, contribution: obj)
+                if peer.browserIdentity != nil && !snapshotApplied {
                     // A reconnect may still hold the effective disabled value
                     // saved by an older client. Only a durable current snapshot
                     // adoption authorizes its definitions and initial seeds.
@@ -1672,7 +1706,7 @@ final class ConnectionHub: ObservableObject {
                 let members = Set(selected.keys)
                 let nativeID = selected[Self.localProgram] ?? ""
                 let native = self.nativeLinkDefinitionLocked(document: document, groupID: nativeID)
-                let legacy = self.peers.values.filter { $0.connected && $0.browserIdentity == nil && Self.browserPrograms.contains($0.program) && members.contains($0.program) }
+                let legacy = self.peers.values.filter { $0.connected && $0.browserIdentity == nil && Self.requiresBrowserIdentityProof($0.program) && members.contains($0.program) }
                 // This hypothetical Website only decides whether a read is
                 // necessary. Admission below uses the real returned scopes.
                 var potential = native?.scalars ?? existing?.sharedScalars ?? [:]
@@ -2052,7 +2086,7 @@ final class ConnectionHub: ObservableObject {
         // covers any website time from that browser. Keep offline handovers:
         // they were measured while the native sampler was unavailable.
         let browserCoveredByApp = deltaPeriod == nil && transferKey == nil &&
-            Self.browserPrograms.contains(program) && Self.countsWholeBrowser(cluster.sharedScopes, browserIdentity: browserIdentity)
+            Self.browserPrograms.contains(program) && Self.countsWholeBrowser(cluster.sharedScopes, program: program, browserIdentity: browserIdentity)
         if !duplicateTransfer, !browserCoveredByApp,
            let delta = contribution["usageDeltaMs"] as? Double, delta != 0,
            deltaPeriod == nil || deltaPeriod!.rounded(.down) == cluster.sharedUsageResetAtMs.rounded(.down) {
@@ -3059,7 +3093,7 @@ final class ConnectionHub: ObservableObject {
     private func browserIdentityPauseRequiredLocked(scalars: [String: Any], scopes: [[String: Any]], members: Set<String>) -> Bool {
         peers.values.contains { peer in
             peer.connected && Self.browserPrograms.contains(peer.program) && members.contains(peer.program)
-                && peer.browserIdentity == nil && browserIdentityBudgetPredicate(scalars, scopes, peer.program)
+                && Self.requiresBrowserIdentityProof(peer.program) && peer.browserIdentity == nil && browserIdentityBudgetPredicate(scalars, scopes, peer.program)
         }
     }
 
@@ -3077,7 +3111,7 @@ final class ConnectionHub: ObservableObject {
         let live = peers.values.filter { $0.connected }
         for program in browsers {
             guard let peer = live.first(where: { $0.program == program }) else { return "browser-connect-required" }
-            guard peer.browserIdentity != nil else { return "browser-upgrade-required" }
+            guard !Self.requiresBrowserIdentityProof(program) || peer.browserIdentity != nil else { return "browser-upgrade-required" }
             guard let snapshot = peer.browserIdentitySnapshots[cluster.id], snapshot.applied,
                   snapshot.definitionReady, cluster.members.isSubset(of: cluster.contributed),
                   snapshot.paused == browserIdentityPauseRequiredLocked(cluster) else { return "browser-sync-required" }

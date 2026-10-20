@@ -35,13 +35,13 @@ final class BrowserIdentityRuntimeTests: XCTestCase {
         func latestRequest() throws -> [String: Any] { try XCTUnwrap(all().last { $0["kind"] as? String == "browser-request" }) }
     }
 
-    private func hub(narrow: Bool = false) -> (ConnectionHub, Frames, UserDefaults) {
+    private func hub(narrow: Bool = false, candidates: Set<String> = ["com.google.chrome"]) -> (ConnectionHub, Frames, UserDefaults) {
         let name = "Agentic.IdentityRuntime." + UUID().uuidString
         suites.append(name)
         let defaults = UserDefaults(suiteName: name)!
         let frames = Frames()
         let hub = ConnectionHub(testOutboundQueue: frames.queue, registryDefaults: defaults, browserIdentityBudgetPredicate: { scalars, scopes, _ in
-            if narrow { return BrowserIdentityBudgetPolicy.affects(scalars, scopes: scopes, browserBundleIDs: ["com.google.chrome"]) }
+            if narrow { return BrowserIdentityBudgetPolicy.affects(scalars, scopes: scopes, browserBundleIDs: candidates) }
             return (scalars["mode"] as? String) == "after-minutes" && (scalars["groupType"] as? String) != "custom"
                 && scopes.contains { ($0["surface"] as? String) == "apps" && (($0["appsExcept"] as? Bool) == true
                     || (($0["apps"] as? [[String: Any]]) ?? []).contains { ($0["id"] as? String) == "com.google.Chrome" }) }
@@ -50,17 +50,17 @@ final class BrowserIdentityRuntimeTests: XCTestCase {
     }
 
     private func linked(_ hub: ConnectionHub, browserContributed: Bool = true, nativeEnabled: Bool = true,
-                        apps: [[String: Any]] = [["id": "com.google.Chrome"]], custom: Bool = false) throws {
+                        apps: [[String: Any]] = [["id": "com.google.Chrome"]], custom: Bool = false, program: String = "chrome") throws {
         hub.setRoster(program: "macapp", groups: [["id": "m", "name": "Focus"]])
-        hub.setRoster(program: "chrome", groups: [["id": "b", "name": "Focus"]])
-        XCTAssertNil(hub.linkGroups(program: "macapp", groupId: "m", targetProgram: "chrome", targetGroupId: "b"))
+        hub.setRoster(program: program, groups: [["id": "b", "name": "Focus"]])
+        XCTAssertNil(hub.linkGroups(program: "macapp", groupId: "m", targetProgram: program, targetGroupId: "b"))
         hub.applySync(program: "macapp", groupId: "m", contribution: [
             "scalars": ["groupType": custom ? "custom" : "site", "mode": "after-minutes", "enabled": nativeEnabled, "allowedMinutes": 30],
             "scopes": [["surface": "apps", "apps": apps]], "usageMs": 5_000.0,
             "usageResetAtMs": (Date().timeIntervalSince1970 * 1000).rounded(.down)
         ], ts: 0)
         if browserContributed {
-            hub.applySync(program: "chrome", groupId: "b", contribution: ["scopes": [["surface": "site", "sites": ["example.com"]]]], ts: 0)
+            hub.applySync(program: program, groupId: "b", contribution: ["scopes": [["surface": "site", "sites": ["example.com"]]]], ts: 0)
         }
     }
 
@@ -424,16 +424,16 @@ final class BrowserIdentityRuntimeTests: XCTestCase {
         XCTAssertEqual(hub.activeClusterCount(), 1)
     }
 
-    private func preflightFixture(nativeMode: String = "after-minutes") throws -> (ConnectionHub, Frames, UserDefaults, BlockerWebStore, URL, NWConnection) {
-        let (hub, frames, defaults) = hub(narrow: true)
+    private func preflightFixture(nativeMode: String = "after-minutes", program: String = "chrome", nativeAppID: String = "com.google.Chrome") throws -> (ConnectionHub, Frames, UserDefaults, BlockerWebStore, URL, NWConnection) {
+        let (hub, frames, defaults) = hub(narrow: true, candidates: [nativeAppID.lowercased()])
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("Agentic.LinkPreflight." + UUID().uuidString)
         let store = BlockerWebStore(shared: SharedAppGroupStore(baseDirectory: directory))
         store.save(rawStore: ["blockedGroups": [["id": "m", "name": "Native", "groupType": "site", "mode": nativeMode, "enabled": true,
-            "allowedMinutes": 30, "scopes": [["surface": "apps", "apps": [["id": "com.google.Chrome"]]]]]], "usageTimersMs": ["m": 5_000.0]])
+            "allowedMinutes": 30, "scopes": [["surface": "apps", "apps": [["id": nativeAppID]]]]]], "usageTimersMs": ["m": 5_000.0]])
         hub.localWebStore = store; hub.hostingLocalHub = true
         hub.contributeLocalDefinitions(document: [:], nowMs: Date().timeIntervalSince1970 * 1000)
-        let connection = try peer(hub)
-        hub.setRoster(program: "chrome", groups: [["id": "b", "name": "Browser"]])
+        let connection = try peer(hub, program: program)
+        hub.setRoster(program: program, groups: [["id": "b", "name": "Browser"]])
         return (hub, frames, defaults, store, directory, connection)
     }
 
@@ -441,6 +441,59 @@ final class BrowserIdentityRuntimeTests: XCTestCase {
         let response: [String: Any] = ["kind": "browser-response", "operation": "settings-get", "requestID": try XCTUnwrap(request["requestID"] as? String),
             "body": ["groups": [["id": "b", "name": "Browser", "groupType": "site", "mode": mode, "enabled": true, "allowedMinutes": 30, "scopes": scopes]]]]
         hub.handleIncoming(connection, key: ObjectIdentifier(connection), data: try JSONSerialization.data(withJSONObject: response))
+    }
+
+    func testOrdinarySafariFirstLinkAndLegacyConfigDoNotRequireIdentityProof() throws {
+        let (hub, frames, _, store, directory, connection) = try preflightFixture(program: "safari", nativeAppID: "com.apple.Safari")
+        defer { hub.localWebStore = nil; try? FileManager.default.removeItem(at: directory) }
+        let signal = DispatchSemaphore(value: 0); var result: String?
+        hub.linkGroupsWithBrowserIdentityPreflight(program: "macapp", groupId: "m", targetProgram: "safari", targetGroupId: "b") { result = $0; signal.signal() }
+        XCTAssertEqual(signal.wait(timeout: .now() + 3), .success)
+        XCTAssertNil(result)
+        hub.contributeLocalDefinitions(document: [:], nowMs: Date().timeIntervalSince1970 * 1000)
+        XCTAssertFalse(frames.all().contains { $0["kind"] as? String == "browser-request" })
+        try sync(hub, connection, ["scopes": [["surface": "site", "sites": ["example.com"]]], "ts": 0.0])
+        XCTAssertEqual(try frames.status()["state"] as? String, "ready")
+        XCTAssertEqual(try frames.status()["affectsBrowserBudget"] as? Bool, true)
+        hub.reportLocalUsage(groupID: "m", deltaMs: 1_000, resetAtMs: 0)
+        let nativeUsage = try XCTUnwrap(hub.sharedUsage(groupID: "m")).ms
+        try sync(hub, connection, ["program": "chrome", "usageDeltaMs": 1_000.0, "browserIdentity": ["kind": "mac-bundle-id", "value": "com.google.chrome"]])
+        XCTAssertEqual(try XCTUnwrap(hub.sharedUsage(groupID: "m")).ms, nativeUsage)
+        // Ordinary Safari's baseline editing remains supported before an ACK;
+        // only affected topology removal requires the updated durable consumer.
+        try sync(hub, connection, ["scalars": ["groupType": "site", "mode": "after-minutes", "allowedMinutes": 30, "enabled": false], "ts": Date().timeIntervalSince1970 * 1000])
+        XCTAssertEqual((try canonical(hub)["scalars"] as? [String: Any])?["enabled"] as? Bool, false)
+        XCTAssertEqual(hub.unlinkGroup(program: "safari", groupId: "b"), "browser-sync-required")
+        XCTAssertNotNil(store.loadRawJSON())
+    }
+
+    func testLegacyChromeAckCannotReplaceRequiredIdentityProof() throws {
+        let (hub, frames, _) = hub(); try linked(hub)
+        let legacy = try peer(hub)
+        _ = try acknowledge(hub, frames, legacy)
+        XCTAssertEqual(try frames.status()["state"] as? String, "upgrade-required")
+        XCTAssertEqual(hub.unlinkGroup(program: "chrome", groupId: "b"), "browser-upgrade-required")
+        XCTAssertEqual(hub.activeClusterCount(), 1)
+    }
+
+    func testOrdinarySafariRequiresCurrentFullUnionAckForAffectedUnlink() throws {
+        let (hub, frames, _) = hub(narrow: true, candidates: ["com.apple.safari"])
+        try linked(hub, browserContributed: false, apps: [["id": "com.apple.Safari"]], program: "safari")
+        let original = try peer(hub, program: "safari")
+        let originalGeneration = try acknowledge(hub, frames, original)
+        try sync(hub, original, ["scopes": [["surface": "site", "sites": ["example.com"]]], "ts": 0.0], generation: originalGeneration)
+        XCTAssertEqual(try frames.status()["state"] as? String, "ready")
+        XCTAssertEqual(hub.unlinkGroup(program: "safari", groupId: "b"), "browser-sync-required")
+        let completedGeneration = try acknowledge(hub, frames, original)
+        XCTAssertFalse(completedGeneration == originalGeneration)
+        hub.removePeer(ObjectIdentifier(original))
+        XCTAssertEqual(hub.unlinkGroup(program: "macapp", groupId: "m"), "browser-connect-required")
+        let updated = try peer(hub, program: "safari")
+        try sync(hub, updated, [:], generation: completedGeneration)
+        XCTAssertEqual(hub.unlinkGroup(program: "macapp", groupId: "m"), "browser-sync-required")
+        _ = try acknowledge(hub, frames, updated)
+        XCTAssertNil(hub.unlinkGroup(program: "safari", groupId: "b"))
+        XCTAssertEqual(hub.activeClusterCount(), 0)
     }
 
     func testLegacyFirstLinkReadsRealScopesAndKeepsNoWebsiteGroupWorking() throws {
