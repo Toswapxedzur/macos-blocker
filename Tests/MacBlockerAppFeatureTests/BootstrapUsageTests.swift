@@ -251,6 +251,30 @@ final class BootstrapUsageTests: XCTestCase {
         XCTAssertFalse(frames.all().contains { $0["kind"] as? String == "rejected" })
     }
 
+    func testDissolvedUncontributedCustomLinkRetainsFinalTimerAcrossRestart() throws {
+        let (hub, _, defaults) = hub(); hub.hostingLocalHub = true
+        let runtime = try RuleRuntime()
+        let source = "(on,v)=>{v.timer('clock',{durationMs:60000});}"
+        let loaded = try runtime.load(groupID: "b", source: source, stateJSON: "{}")
+        let object = try XCTUnwrap(try JSONSerialization.jsonObject(with: Data(try XCTUnwrap(loaded.states["b"]).utf8)) as? [String: Any])
+        let seed = try XCTUnwrap(object["$vaultTime"] as? [String: Any])
+        hub.setRoster(program: "chrome", groups: [["id": "b", "name": "Chrome", "timeState": seed]])
+        hub.setRoster(program: "edge", groups: [["id": "e", "name": "Edge", "timeState": seed]])
+        XCTAssertNil(hub.linkGroups(program: "chrome", groupId: "b", targetProgram: "edge", targetGroupId: "e"))
+        _ = hub.syncRuleTime(program: "chrome", groupID: "b", seed: seed, commands: [])
+        let shared = hub.syncRuleTime(program: "edge", groupID: "e", seed: seed, commands: [])
+        XCTAssertEqual(shared["ready"] as? Bool, true)
+        XCTAssertNil(hub.unlinkGroup(program: "chrome", groupId: "b"))
+        XCTAssertEqual(hub.activeClusterCount(), 0)
+        XCTAssertEqual(try row(defaults)["originalUsagePending"] as? [String], [])
+        let (restored, _, _) = self.hub(defaults); restored.restoreClustersLocked()
+        let final = restored.syncRuleTime(program: "edge", groupID: "e", seed: seed, commands: [])
+        XCTAssertEqual(final["detached"] as? Bool, true)
+        let objects = (final["state"] as? [String: Any])?["objects"] as? [String: [String: Any]]
+        XCTAssertEqual(objects?["clock"]?["generation"] as? Int, 0)
+        XCTAssertEqual((objects?["clock"]?["durationMs"] as? NSNumber)?.doubleValue, 60_000)
+    }
+
     func testKnownNewRollingPreflightRefusesBeforeLinkOrFileMutation() throws {
         let (hub, frames, defaults) = hub()
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("Agentic.BootstrapPreflight." + UUID().uuidString)

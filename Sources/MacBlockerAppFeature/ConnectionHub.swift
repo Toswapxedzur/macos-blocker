@@ -1625,6 +1625,7 @@ final class ConnectionHub: ObservableObject {
             }
             if cluster.detachedRuleTime.isEmpty { clusters.removeValue(forKey: cluster.id) }
             cluster.members.removeAll()
+            cluster.originalUsagePending.removeAll()
         }
     }
 
