@@ -21,6 +21,7 @@ public enum ToolRefusals {
         case "browser-lines": return "websites and platforms are a browser's (Mac Vault controls only apps); nothing was changed."
         case "invalid-groupType": return "a group can't turn into a custom group or back; nothing was changed."
         case "rules-not-running": return "Mac Vault's rule engine isn't running."
+        case "browser-upgrade-required": return "update the connected browser extension to resume this shared browser-app budget; saved settings and usage are retained."
         default: break
         }
         if code.hasPrefix("invalid-") { return "'\(code.dropFirst("invalid-".count))' has a value the editor refuses; nothing was changed." }

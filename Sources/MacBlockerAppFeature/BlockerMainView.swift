@@ -57,14 +57,14 @@ public struct BlockerMainView: View {
             onRunCustomGroup: { [weak enforcement] groupID, source in enforcement?.runRule(groupID: groupID, source: source) ?? ["ok": false] },
             onSnoozePress: { [weak enforcement] groupID in enforcement?.fireSnoozePress(groupID: groupID) },
             clustersJSON: { [weak connection] in connection?.clustersJSON() },
-            onLinkRequest: { [weak connection] kind, message in
-                guard let connection else { return "macapp-unavailable" }
+            onLinkRequest: { [weak connection] kind, message, completion in
+                guard let connection else { completion("macapp-unavailable"); return }
                 let groupId = (message["groupId"] as? String) ?? ""
-                return kind == "group-link"
-                    ? connection.linkGroups(program: ConnectionHub.localProgram, groupId: groupId,
-                                            targetProgram: (message["targetProgram"] as? String) ?? "",
-                                            targetGroupId: (message["targetGroupId"] as? String) ?? "")
-                    : connection.unlinkGroup(program: ConnectionHub.localProgram, groupId: groupId)
+                if kind == "group-link" {
+                    connection.linkGroupsWithBrowserIdentityPreflight(program: ConnectionHub.localProgram, groupId: groupId,
+                        targetProgram: (message["targetProgram"] as? String) ?? "", targetGroupId: (message["targetGroupId"] as? String) ?? "",
+                        completion: completion)
+                } else { completion(connection.unlinkGroup(program: ConnectionHub.localProgram, groupId: groupId)) }
             },
             tagNames: { platform in MainActor.assumeIsolated { VaultClassifierPage.shared.tagNames(platformID: platform) } },
             scenes: [
