@@ -193,7 +193,8 @@ rect.is-hot, path.is-hot, circle.is-hot { opacity: 0.72; }
 /* A section's range tabs (Today / A week / A month / Custom date). */
 .range-tabs { flex: none; }
 /* Our date picker (activity.js openPicker): a month, Monday first. */
-.date-picker { position: fixed; z-index: 31; width: 252px; padding: 10px; border-radius: 14px; background: #ffffff; box-shadow: 0 12px 34px rgba(15, 23, 42, 0.18); display: flex; flex-direction: column; gap: 6px; }
+.date-picker { position: fixed; z-index: 31; box-sizing: border-box; width: 272px; max-width: calc(100vw - 16px); max-height: calc(100vh - 16px); overflow-y: auto; padding: 10px; border-radius: 14px; background: #ffffff; box-shadow: 0 12px 34px rgba(15, 23, 42, 0.18); display: flex; flex-direction: column; gap: 6px; }
+.date-picker > * { flex-shrink: 0; }
 .picker-head { display: flex; align-items: center; gap: 2px; }
 .picker-title { flex: 1; text-align: center; font-weight: 700; }
 .picker-nav { background: none; color: var(--vui-text); padding: 2px 7px; font-size: 14px; line-height: 1; border-radius: 8px; }

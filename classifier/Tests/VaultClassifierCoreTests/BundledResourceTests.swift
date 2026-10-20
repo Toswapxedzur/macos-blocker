@@ -19,4 +19,20 @@ final class BundledResourceTests: XCTestCase {
     func testBundledSeedPackageUsesCurrentRuntimeResources() throws {
         XCTAssertFalse(try SeedPackageLoader.bundled().package.taxonomy.isEmpty)
     }
+
+    func testStorageProductVersionUsesPackagedResources() throws {
+        let directory = try XCTUnwrap(VaultBundledResources.directory(target: "VaultClassifierCore", subdirectory: "Resources"))
+        let data = try Data(contentsOf: directory.appendingPathComponent("storage-product-versions.json"))
+        let versions = try JSONDecoder().decode([String: String].self, from: data)
+        #if os(Windows)
+        let product = "windows"
+        #else
+        let product = "mac"
+        #endif
+        let bundleVersion = Bundle.main.bundleIdentifier?.hasPrefix("com.adamancia.vault.mac") == true
+            ? Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String : nil
+        XCTAssertEqual(StorageProduct.current.appVersion,
+                       ProcessInfo.processInfo.environment["VAULT_STORAGE_APP_VERSION"] ?? bundleVersion ?? versions[product])
+        XCTAssertGreaterThanOrEqual(StorageProduct.current.major, 0)
+    }
 }
