@@ -29,7 +29,8 @@ final class BrowserAppOverlapTests: XCTestCase {
             "usageResetAtMs": (Date().timeIntervalSince1970 * 1000).rounded(.down)
         ], ts: 0)
         apply(hub, program: program, groupId: "b", contribution: [
-            "scopes": [["surface": "site", "sites": ["example.com"], "action": "block"]]
+            "scopes": [["surface": "site", "sites": ["example.com"], "action": "block"]],
+            "usageMs": 0.0, "usageBucketsSeed": [String: Double](), "usageResetAtMs": Date().timeIntervalSince1970 * 1000
         ], ts: 0)
         return hub
     }
