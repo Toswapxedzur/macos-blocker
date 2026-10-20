@@ -1655,7 +1655,9 @@ final class ConnectionHub: ObservableObject {
                 var potential = native?.scalars ?? existing?.sharedScalars ?? [:]
                 potential["mode"] = "after-minutes"; potential["groupType"] = "site"
                 let appScopes = (existing?.sharedScopes ?? []) + (native?.scopes ?? [])
-                let needsRead = legacy.contains { self.browserIdentityBudgetPredicate(potential, appScopes + [["surface": "site"]], $0.program) }
+                let needsRead = legacy.contains {
+                    self.browserIdentityBudgetPredicate(potential, appScopes + [["surface": "site", "sites": [], "sitesExcept": true]], $0.program)
+                }
                 guard needsRead else {
                     immediate = self.linkGroupsLocked(program: program, groupId: groupId, targetProgram: targetProgram, targetGroupId: targetGroupId,
                                                       verifiedNativeDefinition: native)

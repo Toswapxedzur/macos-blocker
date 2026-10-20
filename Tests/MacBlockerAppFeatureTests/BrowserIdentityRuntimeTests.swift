@@ -292,7 +292,15 @@ final class BrowserIdentityRuntimeTests: XCTestCase {
     }
 
     func testLegacyFirstLinkReadsRealScopesAndKeepsNoWebsiteGroupWorking() throws {
-        for hasWebsite in [false, true] {
+        let cases: [([[String: Any]], Bool)] = [
+            ([], false),
+            ([["surface": "site", "sites": [], "sitesExcept": false, "action": "block"]], false),
+            ([["surface": "site", "sites": [" ", "https://"], "sitesExcept": false, "action": "block"]], false),
+            ([["surface": "site", "sites": ["example.com"], "sitesExcept": false, "action": "block"]], true),
+            ([["surface": "site", "sites": [], "sitesExcept": true, "action": "block"]], true),
+            ([["surface": "site", "sites": ["example.com"], "sitesExcept": false, "action": "pause"]], true)
+        ]
+        for (scopes, hasWebsite) in cases {
             let (hub, frames, _, store, directory, connection) = try preflightFixture()
             defer { hub.localWebStore = nil; try? FileManager.default.removeItem(at: directory) }
             let before = store.loadRawJSON()
@@ -300,12 +308,28 @@ final class BrowserIdentityRuntimeTests: XCTestCase {
             hub.linkGroupsWithBrowserIdentityPreflight(program: "macapp", groupId: "m", targetProgram: "chrome", targetGroupId: "b") { result = $0; signal.signal() }
             let request = try frames.latestRequest()
             XCTAssertEqual(hub.activeClusterCount(), 0)
-            try browserResponse(hub, connection, request: request, scopes: hasWebsite ? [["surface": "site", "sites": ["example.com"]]] : [])
+            try browserResponse(hub, connection, request: request, scopes: scopes)
             XCTAssertEqual(signal.wait(timeout: .now() + 3), .success)
             XCTAssertEqual(result, hasWebsite ? "browser-upgrade-required" : nil)
             XCTAssertEqual(hub.activeClusterCount(), hasWebsite ? 0 : 1)
             XCTAssertEqual(store.loadRawJSON(), before)
         }
+    }
+
+    func testEmptyNormalizedSiteScopesDoNotRequireIdentity() {
+        let scalars: [String: Any] = ["groupType": "site", "mode": "after-minutes"]
+        let apps: [String: Any] = ["surface": "apps", "apps": [["id": "com.google.Chrome"]]]
+        func affected(_ line: [String: Any]) -> Bool {
+            BrowserIdentityBudgetPolicy.affects(scalars, scopes: [apps, line], browserBundleIDs: ["com.google.chrome"])
+        }
+        XCTAssertFalse(affected(["surface": "site", "sites": [], "sitesExcept": false]))
+        XCTAssertFalse(affected(["surface": "site", "sites": [" ", "https://", "not a host"], "sitesExcept": false]))
+        XCTAssertTrue(affected(["surface": "site", "sites": [], "sitesExcept": true]))
+        XCTAssertTrue(affected(["surface": "site", "sites": [" https://www.Example.com/path/?query=yes#part "], "sitesExcept": false]))
+        XCTAssertTrue(affected(["surface": "site", "sites": ["example.com"], "action": "pause"]))
+        // Platform content filtering remains conservative: an empty include
+        // filter is not assumed to make every platform surface ineligible.
+        XCTAssertTrue(affected(["surface": "items", "platform": "youtube", "sources": [], "sourceMode": "include"]))
     }
 
     func testBrowserInitiatorUsesItsActualBudgetInLegacyPreflight() throws {
