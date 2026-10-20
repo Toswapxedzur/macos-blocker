@@ -74,6 +74,31 @@ final class BrowserAppOverlapTests: XCTestCase {
         XCTAssertEqual(try XCTUnwrap(hub.sharedUsage(groupID: "m")).buckets[minute], 1_000)
     }
 
+    func testOrdinarySafariAssociationCountsOnlyOrdinarySafariWithoutAttestation() throws {
+        XCTAssertEqual(ConnectionHub.browserUsageAssociation(program: "safari", browserIdentity: nil), .ordinarySafari)
+        XCTAssertNil(ConnectionHub.browserUsageAssociation(program: "chrome", browserIdentity: nil))
+        for appID in ["com.apple.Safari", "com.apple.SafariTechnologyPreview", "com.apple.Safari.WebApp.example", "com.example.CustomBrowser", "com.google.Chrome"] {
+            let hub = linkedHub(apps: [["id": appID]], program: "safari")
+            hub.applySync(program: "macapp", groupId: "m", contribution: ["usageDeltaMs": 1_000.0], ts: 0)
+            hub.applySync(program: "safari", groupId: "b", contribution: ["usageDeltaMs": 1_000.0], ts: 0)
+            XCTAssertEqual(try XCTUnwrap(hub.sharedUsage(groupID: "m")).ms, appID == "com.apple.Safari" ? 1_000 : 2_000)
+        }
+        let stp = try XCTUnwrap(BrowserApplicationIdentity(kind: "mac-bundle-id", value: "com.apple.safaritechnologypreview"))
+        XCTAssertEqual(ConnectionHub.browserUsageAssociation(program: "safari", browserIdentity: stp), .attested(stp))
+        XCTAssertFalse(ConnectionHub.countsWholeBrowser([["surface": "apps", "apps": [["id": "com.apple.Safari"]]]], program: "safari", browserIdentity: stp))
+        XCTAssertTrue(ConnectionHub.countsWholeBrowser([["surface": "apps", "apps": [["id": "com.apple.SafariTechnologyPreview"]]]], program: "safari", browserIdentity: stp))
+    }
+
+    func testOrdinarySafariAssociationKeepsTaggedOfflineUsageAdditive() throws {
+        let hub = linkedHub(apps: [["id": "com.apple.Safari"]], program: "safari")
+        let anchor = try XCTUnwrap(hub.sharedUsage(groupID: "m")).resetAtMs
+        hub.applySync(program: "macapp", groupId: "m", contribution: ["usageDeltaMs": 1_000.0], ts: 0)
+        let transfer: [String: Any] = ["usageDeltaMs": 2_000.0, "usageDeltaAnchorMs": anchor, "usageTransferId": "safari-offline"]
+        hub.applySync(program: "safari", groupId: "b", contribution: transfer, ts: 0)
+        hub.applySync(program: "safari", groupId: "b", contribution: transfer, ts: 0)
+        XCTAssertEqual(try XCTUnwrap(hub.sharedUsage(groupID: "m")).ms, 3_000)
+    }
+
     func testOnlyItsOwnBrowserProgramIsCoalesced() {
         let chromeLine: [[String: Any]] = [["surface": "apps", "apps": [["id": "com.google.Chrome"]]]]
         XCTAssertTrue(ConnectionHub.countsWholeBrowser(chromeLine, browserIdentity: BrowserApplicationIdentity(kind: "mac-bundle-id", value: "com.google.chrome")))

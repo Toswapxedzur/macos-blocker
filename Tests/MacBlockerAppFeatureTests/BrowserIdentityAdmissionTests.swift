@@ -32,6 +32,26 @@ final class BrowserIdentityAdmissionTests: XCTestCase {
         XCTAssertNil(rejection(try hello(program: "classifier"), appMajor: 4))
     }
 
+    func testOrdinarySafariNeedsBaseProofButNoIdentityAtFutureMajors() throws {
+        let value = try hello(program: "safari")
+        XCTAssertNil(rejection(value, appMajor: 4))
+        XCTAssertNil(rejection(value, appMajor: 5))
+        XCTAssertNil(rejection(value, appMajor: 9))
+        var invalid = value; invalid.removeValue(forKey: "proof")
+        XCTAssertEqual(rejection(invalid, appMajor: 5), "authentication-failed")
+        invalid = value; invalid["proof"] = String(repeating: "b", count: 43)
+        XCTAssertEqual(rejection(invalid, appMajor: 5), "authentication-failed")
+        invalid = value; invalid["browserIdentityVersion"] = 1
+        XCTAssertEqual(rejection(invalid, appMajor: 5), "invalid-browser-identity")
+        invalid = value; invalid["browserIdentity"] = ["v": 1, "kind": "mac-bundle-id", "value": "com.apple.safari", "proof": "invalid"]
+        XCTAssertEqual(rejection(invalid, appMajor: 5), "invalid-browser-identity")
+        let identity = try XCTUnwrap(BrowserApplicationIdentity(kind: "mac-bundle-id", value: "com.apple.safari"))
+        invalid = try hello(program: "safari", identity: identity)
+        var metadata = try XCTUnwrap(invalid["browserIdentity"] as? [String: Any]); metadata["value"] = "com.apple.safaritechnologypreview"; invalid["browserIdentity"] = metadata
+        XCTAssertEqual(rejection(invalid, appMajor: 5), "invalid-browser-identity")
+        XCTAssertEqual(rejection(try hello(program: "chrome"), appMajor: 4), "browser-upgrade-required")
+    }
+
     func testAttestedMacIdentityAcceptedAtCurrentAndFutureMajors() throws {
         let identity = try XCTUnwrap(BrowserApplicationIdentity(kind: "mac-bundle-id", value: "com.google.chrome"))
         let value = try hello(identity: identity)
