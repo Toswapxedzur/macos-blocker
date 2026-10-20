@@ -1279,5 +1279,9 @@
   "classifier.dictionary.termSummary": "পরিভাষা · {count}টি এন্ট্রি · {version}",
   "classifier.dictionary.creatorSummary": "নির্মাতা · {summary} · {version}",
   "classifier.dictionary.configure": "অভিধান কনফিগার করুন",
-  "safari.app.quit": "Safari Vault থেকে প্রস্থান"
+  "safari.app.quit": "Safari Vault থেকে প্রস্থান",
+  "link.browserUpgradeRequired": "এই বাজেট আবার চালু করতে browser Vault extension আপডেট করুন। এর সেটিংস ও ব্যবহার সংরক্ষিত আছে।",
+  "link.browserIdentitySyncPending": "এই linked বাজেট এখনও sync হচ্ছে। Sync শেষ হলে আবার চেষ্টা করুন।",
+  "link.browserIdentityPendingEditsInvalid": "সংরক্ষিত pending edit পড়া যায়নি। সংরক্ষিত সেটিংস ও ব্যবহার অক্ষুণ্ণ রাখা হয়েছে।",
+  "link.browserConnectRequired": "এই বাজেট unlink করার আগে browser Vault extension সংযুক্ত করুন। সংরক্ষিত সেটিংস ও ব্যবহার অক্ষুণ্ণ থাকবে।"
 }

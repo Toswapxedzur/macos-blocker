@@ -1279,5 +1279,9 @@
   "classifier.dictionary.termSummary": "Termes · {count} entrées · {version}",
   "classifier.dictionary.creatorSummary": "Créateurs · {summary} · {version}",
   "classifier.dictionary.configure": "Configurer les dictionnaires",
-  "safari.app.quit": "Quitter Safari Vault"
+  "safari.app.quit": "Quitter Safari Vault",
+  "link.browserUpgradeRequired": "Mettez à jour l’extension de navigateur Vault pour reprendre ce budget. Ses paramètres et son utilisation sont conservés.",
+  "link.browserIdentitySyncPending": "Ce budget lié est encore en cours de synchronisation. Réessayez une fois la synchronisation terminée.",
+  "link.browserIdentityPendingEditsInvalid": "Impossible de lire les modifications en attente enregistrées. Les paramètres et l’utilisation enregistrés ont été conservés.",
+  "link.browserConnectRequired": "Connectez l’extension de navigateur Vault avant de dissocier ce budget. Les paramètres et l’utilisation enregistrés sont conservés."
 }

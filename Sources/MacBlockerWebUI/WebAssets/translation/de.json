@@ -1279,5 +1279,9 @@
   "classifier.dictionary.termSummary": "Begriffe · {count} Einträge · {version}",
   "classifier.dictionary.creatorSummary": "Creator · {summary} · {version}",
   "classifier.dictionary.configure": "Wörterbücher konfigurieren",
-  "safari.app.quit": "Safari Vault beenden"
+  "safari.app.quit": "Safari Vault beenden",
+  "link.browserUpgradeRequired": "Aktualisieren Sie die Vault-Browsererweiterung, um dieses Budget fortzusetzen. Seine Einstellungen und Nutzungsdaten bleiben erhalten.",
+  "link.browserIdentitySyncPending": "Dieses verknüpfte Budget wird noch synchronisiert. Versuchen Sie es nach Abschluss der Synchronisierung erneut.",
+  "link.browserIdentityPendingEditsInvalid": "Gespeicherte ausstehende Änderungen konnten nicht gelesen werden. Die gespeicherten Einstellungen und Nutzungsdaten bleiben erhalten.",
+  "link.browserConnectRequired": "Verbinden Sie die Vault-Browsererweiterung, bevor Sie die Verknüpfung dieses Budgets aufheben. Gespeicherte Einstellungen und Nutzungsdaten bleiben erhalten."
 }

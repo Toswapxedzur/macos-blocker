@@ -1279,5 +1279,9 @@
   "classifier.dictionary.termSummary": "Thuật ngữ · {count} mục · {version}",
   "classifier.dictionary.creatorSummary": "Nhà sáng tạo · {summary} · {version}",
   "classifier.dictionary.configure": "Cấu hình từ điển",
-  "safari.app.quit": "Thoát Safari Vault"
+  "safari.app.quit": "Thoát Safari Vault",
+  "link.browserUpgradeRequired": "Cập nhật tiện ích trình duyệt Vault để tiếp tục ngân sách này. Cài đặt và mức sử dụng được giữ nguyên.",
+  "link.browserIdentitySyncPending": "Ngân sách được liên kết này vẫn đang đồng bộ. Thử lại khi đồng bộ xong.",
+  "link.browserIdentityPendingEditsInvalid": "Không thể đọc các chỉnh sửa đang chờ đã lưu. Cài đặt và mức sử dụng đã lưu được giữ nguyên.",
+  "link.browserConnectRequired": "Kết nối tiện ích trình duyệt Vault trước khi hủy liên kết ngân sách này. Cài đặt và mức sử dụng đã lưu được giữ nguyên."
 }

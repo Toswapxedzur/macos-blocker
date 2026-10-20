@@ -1279,5 +1279,9 @@
   "classifier.dictionary.termSummary": "مصطلحات · {count} إدخال · {version}",
   "classifier.dictionary.creatorSummary": "منشئون · {summary} · {version}",
   "classifier.dictionary.configure": "إعداد القواميس",
-  "safari.app.quit": "إنهاء Safari Vault"
+  "safari.app.quit": "إنهاء Safari Vault",
+  "link.browserUpgradeRequired": "حدّث إضافة Vault للمتصفح لاستئناف هذه الميزانية. إعداداتها واستخدامها محفوظان.",
+  "link.browserIdentitySyncPending": "لا تزال هذه الميزانية المرتبطة قيد المزامنة. حاول مجددًا بعد اكتمال المزامنة.",
+  "link.browserIdentityPendingEditsInvalid": "تعذرت قراءة التعديلات المعلقة المحفوظة. تم الاحتفاظ بالإعدادات والاستخدام المحفوظين.",
+  "link.browserConnectRequired": "صِل إضافة Vault للمتصفح قبل إلغاء ربط هذه الميزانية. تم الاحتفاظ بالإعدادات والاستخدام المحفوظين."
 }

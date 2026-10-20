@@ -1279,5 +1279,9 @@
   "classifier.dictionary.termSummary": "Términos · {count} entradas · {version}",
   "classifier.dictionary.creatorSummary": "Creadores · {summary} · {version}",
   "classifier.dictionary.configure": "Configurar diccionarios",
-  "safari.app.quit": "Salir de Safari Vault"
+  "safari.app.quit": "Salir de Safari Vault",
+  "link.browserUpgradeRequired": "Actualice la extensión de navegador Vault para reanudar este presupuesto. Su configuración y uso se conservan.",
+  "link.browserIdentitySyncPending": "Este presupuesto vinculado aún se está sincronizando. Vuelva a intentarlo cuando termine la sincronización.",
+  "link.browserIdentityPendingEditsInvalid": "No se pudieron leer las modificaciones pendientes guardadas. Se han conservado la configuración y el uso guardados.",
+  "link.browserConnectRequired": "Conecte la extensión de navegador Vault antes de desvincular este presupuesto. Se conservan la configuración y el uso guardados."
 }
