@@ -4,7 +4,7 @@
 
 ## Regelvertrag
 
-Quelle: ein einzelner Funktionsausdruck `(on, v) => { ... }`. Unterstützt werden ausschließlich synchrones JavaScript und die unten beschriebene API; keine Timer, Netzwerkzugriffe, nativen System-APIs oder Browserseitenzugriffe. Zeitabhängige Regeln verwenden `ev.now` und Ereignisse. Safari-Regeln verwenden das Browser-Codehandbuch und laufen in der eigenen übergeordneten App von Safari Vault.
+Quelle: ein einzelner Funktionsausdruck `(on, v) => { ... }`. Unterstützt werden ausschließlich synchrones JavaScript und die unten beschriebene API; keine JavaScript-Zeitplanungs-Callbacks, Netzwerkzugriffe, nativen System-APIs oder Browserseitenzugriffe. Zeitabhängige Regeln verwenden die unten beschriebenen verwalteten Timer/Tracker oder `ev.now` und Ereignisse. Safari-Regeln verwenden das Browser-Codehandbuch und laufen in der eigenen übergeordneten App von Safari Vault.
 
 - Bearbeiten speichert einen Entwurf; **Ausführen** aktiviert ihn und die Gruppe. Eingefrorene Gruppen können nicht ausgeführt werden. Leerer Quelltext entlädt die Regel.
 - Erfolgreiches Ausführen ersetzt Handler/Panels und leert die App-Blockierungsmenge dieser Gruppe, während `v.state` erhalten bleibt. Bei einem Kompilierungs-/Registrierungsfehler bleibt die vorherige Regel erhalten; ein Timeout kann sie stoppen. Neustarten registriert den zuletzt aktivierten Quelltext erneut; Closure-Variablen und App-Blockierungsmengen werden zurückgesetzt.
@@ -12,11 +12,44 @@ Quelle: ein einzelner Funktionsausdruck `(on, v) => { ... }`. Unterstützt werde
 - Deaktivieren unterdrückt Handler und hebt Panels/App-Blockierungen auf. Aktivieren setzt die geladene Regel und ihre erhaltenen Panels/Blockierungen fort. Löschen entfernt ihre Handler/ihren Zustand/ihre Wirkungen. Zuvor beendete Apps werden nicht erneut geöffnet; Dateischreibvorgänge werden nicht rückgängig gemacht.
 - Ereignisse sind nicht auf gewöhnliche Gruppenziele beschränkt; wählen Sie Apps in der Regel aus. Aktionen werden eingereiht und anschließend nach der Ereignisverteilung angewendet. Ausnahmen stoppen den betreffenden Handler, ohne seinen Zustand/seine Aktionen zurückzusetzen; spätere Handler können weiterlaufen. Nur Dateiaktionen haben Ergebnisereignisse.
 
+## Verwaltete Timer und gleitende Nutzung
+
+`v.timer(id, {direction:"down", durationMs:300000})` erstellt einen benannten Countdown oder gibt ihn zurück; anfangs ist er pausiert. Verwenden Sie `{direction:"up"}` für einen aufwärtszählenden Timer. Das Handle bietet `start()`, `pause()`, `resume()`, `reset()` und `snapshot()`. Start/Fortsetzen sind idempotent; Zurücksetzen pausiert den Timer mit null verstrichener Zeit. Die Snapshot-Felder umfassen `ready`, `error`, `elapsedMs`, `remainingMs` (null bei aufwärtszählenden Timern), `running` und `completed`.
+
+Laufende Timer laufen anhand der real verstrichenen Zeit weiter, während die App/der Browser geschlossen oder die Regel deaktiviert ist. Ein abgelaufener Countdown liefert `timerEnded` mit `{id, direction, durationMs, generation, incarnation}` einmal pro Timer-Inkarnation und Generation an jedes Mitglied, wenn dessen Regel das nächste Mal läuft; Ausführen wiederholt es nicht. Die Zustellung hängt von Ereignissen des Hosts ab; dies ist kein Echtzeitalarm. Fügen Sie `{type:"timer", timerId:"focus", label:"Focus"}` in ein Panel ein, um ihn über das vorhandene Text-Steuerelement anzuzeigen.
+
+`v.rolling(id, {windowMs:3600000, limitMs:600000})` erstellt einen benannten Tracker für aktive Nutzung oder gibt ihn zurück. `assign({websites:["youtube.com","reddit.com"], apps:[]})` ersetzt die Zielzuweisungen dieses Mitglieds. Native Regeln können stattdessen App-IDs der Plattform zuweisen. Domains schließen Subdomains ein. Ein Tracker fasst seine Ziele zusammen; andere IDs haben unabhängige Kontingente. `snapshot()` liefert `ready`, `error`, `usedMs`, `remainingMs`, `available` und `nextReturnAtMs` (die nächste Millisekunde, in der aufgezeichnete Nutzung verfällt). `available(target?)` prüft auch die Zuweisung, wenn ein Ziel angegeben ist. `reset()` löscht den Verlauf dieses Objekts.
+
+Jede beobachtete anrechenbare Nutzung zählt, auch über das Kontingent hinaus; der Tracker selbst blockiert keine Seite/App. Überlappende Intervalle sichtbarer Seiten zählen einmal, und native Apps zählen die beobachtete Vordergrundnutzung. Deaktivierte Regeln fügen keine Nutzung hinzu; der Verlauf verfällt weiterhin an den exakten Intervallgrenzen. Verfügbarkeit kehrt erst zurück, wenn der verbleibende Verlauf unter dem Limit liegt. Heartbeat-Stichproben sind auf fünf Sekunden begrenzt; Lücken durch Beenden oder Deaktivieren erzeugen keine Aktivität. Vom Benutzer ausgelöste Ereignisse fügen keine Nutzung hinzu.
+
+Gleiche Objekt-IDs in verknüpften benutzerdefinierten Gruppen teilen eine lokale maßgebliche Instanz im nativen Hub. Verknüpfen kombiniert Tracker-Verlauf und Zuweisungen und behält den Timer-Zustand des initiierenden Mitglieds; inkompatible Konfigurationen verhindern die Verknüpfung. Jedes Mitglied erhält sein eigenes Abschlussereignis. Bei einer Trennung sind gemeinsame Tracker nicht verfügbar und Timer-Steuerbefehle werden abgelehnt, bis wieder aktuelle maßgebliche Daten vorliegen. Beim Aufheben der Verknüpfung behält jedes Mitglied die endgültige gemeinsame Nutzung und den Timer-Zustand, stellt seine eigenen Ziele wieder her und verwirft Befehle der alten Verknüpfung. Der Hub behält den endgültigen Snapshot, bis das zurückkehrende Mitglied ihn speichert und bestätigt; ausstehende Übergaben werden abgeschlossen, bevor eine neue Verknüpfung verfügbar wird.
+
+Benannte Objekte überstehen Ausführen und Neustarts im reservierten Feld `v.state.$vaultTime`; bearbeiten Sie dieses Feld nicht direkt. Entfernen Sie sie ausdrücklich mit `v.removeTime(id)`. IDs bestehen aus 1–80 ASCII-Buchstaben, Ziffern, `_` oder `-`; reservierte Eigenschaftsnamen werden abgelehnt. Bis zu 32 Objekte teilen sich das Zustandslimit der Regel von 64 KiB UTF-8. Zeitdauern sind ganzzahlige Millisekunden bis zu 365 Tagen. Der gleitende Verlauf ist auf 1024 Minuten-Buckets und 2048 zusammengeführte Intervalle begrenzt. Fehler wegen ausgeschöpfter Verlaufskapazität lassen den Tracker bis zum ausdrücklichen Zurücksetzen nicht verfügbar; ungültige Konfigurationen und zu große Speichervorgänge melden Fehler, ohne gespeicherte Daten zu löschen.
+
+```js
+(on, v) => {
+  const timer = v.timer("focus", {durationMs: 300000});
+  v.panel("focus", {controls: [
+    {type: "timer", timerId: "focus", label: "Focus"},
+    {id: "start", type: "button", label: "Start"},
+    {id: "pause", type: "button", label: "Pause"},
+    {id: "reset", type: "button", label: "Reset"}
+  ]});
+  on("panel", ev => {
+    if (ev.data.eventName !== "click") return;
+    if (ev.data.controlId === "start") timer.start();
+    if (ev.data.controlId === "pause") timer.pause();
+    if (ev.data.controlId === "reset") timer.reset();
+  });
+  on("timerEnded", ev => v.log("Finished", ev.data.id));
+}
+```
+
 ## API
 
 - `on(type, handler)` → boolescher Wert. Registriert `handler(ev)`; mehrere Handler laufen in Registrierungsreihenfolge. False bedeutet ungültige Argumente oder erreichtes Handlerlimit. `ev = { type: string, now: number, data }`; `now` sind Unix-Millisekunden.
 - `v.state`: veränderliches JSON-Objekt, das nach der Ereignisverteilung gespeichert wird. Initialisieren Sie fehlende Felder, statt bestehenden Zustand zu überschreiben. Das Zuweisen eines Nicht-Objekts oder Arrays setzt es auf `{}` zurück; nicht serialisierbare/zu große Änderungen werden nicht gespeichert.
-- `v.log(...values)`: einziger Erzeuger des Protokolls dieser Gruppe. Protokolle/Leeren sind pro Gruppe unabhängig. Ladefehler erscheinen im Ausführungsstatus; Handlerdiagnosen füllen das Protokoll nicht.
+- `v.log(...values)`: hängt Einträge an das Log dieser Gruppe an. Ausführungs- und Zustellungsfehler erscheinen als ausdrückliche Fehlereinträge im selben Feed. Logs/Leeren sind pro Gruppe unabhängig. Ladefehler erscheinen auch im Ausführungsstatus; teilweise ausgeführte Ereignisse werden nicht automatisch wiederholt.
 - `v.emit(type, data)`: stellt eine JSON-Kopie von `data` nach dem aktuellen Ereignis für die Handler dieser Gruppe mit einem neuen `now` in die Warteschlange; kein synchroner Aufruf.
 - `v.panel(id, spec)`: ersetzt das benannte schwebende Panel dieser Gruppe; null als `spec` entfernt es. Siehe Panels.
 - `v.file(op, path, payload?)` → Anfrage-ID als Zeichenfolge. Siehe Dateien.
@@ -24,7 +57,7 @@ Quelle: ein einzelner Funktionsausdruck `(on, v) => { ... }`. Unterstützt werde
 - `v.quit(appId)`: eine normale Beenden-Anfrage unter derselben Schutz-/Wiederholungsrichtlinie; keine fortlaufende Blockierung.
 - `v.open(appId)`: fordert macOS auf, eine installierte App zu öffnen; kein Erfolgs-Callback.
 
-Andere Aufrufe geben `undefined` zurück. App-IDs sind Bundle-Kennungen (beispielsweise `com.valvesoftware.steam`), die in Ereignissen verfügbar sind. Block/Quit ignorieren `com.apple.*`, Browser, Vault und seine Helfer sowie leere IDs. Panel-IDs/Zustand gehören zu einer Gruppe, nicht zu ihrem Anzeigenamen.
+Andere Aufrufe geben `undefined` zurück. App-IDs sind Bundle-Kennungen (beispielsweise `com.valvesoftware.steam`), die in Ereignissen verfügbar sind. Block/Quit können Apple-Apps und ganze Browser als Ziele verwenden. Sie ignorieren die Bundle-Kennung von Mac Vault und seine Helfer, einschließlich anderer Apps mit derselben Identität, sowie leere IDs. Panel-IDs/Zustand gehören zu einer Gruppe, nicht zu ihrem Anzeigenamen.
 
 ## Ereignisse
 
@@ -93,7 +126,7 @@ Ungenutzte Ergebnisfelder sind null; bei Erfolg ist error leer. Fehler umfassen 
 
 ## Grenzen
 
-Pro Ereignis und Gruppe: 256 eingereihte Aktionen, 200 Protokollaufrufe, 64 Emits; Überschreitungen werden verworfen. Pro Regel: 1000 Handler, 24 Panels; jede Steuerelementliste hat 32 Einträge und jede Auswahl 64 Optionen; Überschreitungen werden ignoriert/abgeschnitten. Emit-Ketten stoppen nach 16 Generationen. Limit serialisierten Zustands: 65536 JavaScript-Zeichenfolgenzeichen. Halten Sie Registrierung und die kombinierten Handler jedes Ereignisses unter 1 Sekunde; wiederholte Überschreitungen oder ein harter Timeout stoppen die Regel bis zum Ausführen. Das Protokoll behält 200 Einträge pro Gruppe. Timing/Antworten sind bestmöglich, keine Echtzeitgarantien.
+Pro Ereignis und Gruppe: 256 eingereihte Aktionen, 200 Log-Aufrufe, 64 Emits; Überschreitungen werden verworfen. Pro Regel: 1000 Handler, 24 Panels; jede Steuerelementliste hat 32 Einträge und jede Auswahl 64 Optionen; Überschreitungen werden ignoriert/abgeschnitten. Emit-Ketten stoppen nach 16 Generationen. Limit des serialisierten Zustands: 65536 UTF-8-Bytes. Halten Sie die Registrierung und die kombinierten Handler jedes Ereignisses unter 1 Sekunde; wiederholte Überschreitungen oder ein harter Timeout stoppen die Regel bis zum Ausführen. Das Log behält 200 Einträge pro Gruppe. Zeitsteuerung/Antworten erfolgen nach bestem Bemühen, ohne Echtzeitgarantie.
 
 ## Vollständige Regel
 

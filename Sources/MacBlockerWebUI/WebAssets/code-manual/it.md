@@ -4,7 +4,7 @@
 
 ## Contratto della regola
 
-Source: una sola espressione di funzione `(on, v) => { ... }`. Sono supportati solo JavaScript sincrono e l'API seguente; niente timers, network, native system APIs o accesso alle pagine del browser. Le regole temporali usano `ev.now` ed events. Le regole Safari usano il manuale del codice browser e vengono eseguite nell'app contenitore di Safari Vault.
+Source: una sola espressione di funzione `(on, v) => { ... }`. Sono supportati solo JavaScript sincrono e l’API seguente; nessun callback di pianificazione JavaScript, accesso alla rete, API native di sistema o accesso alle pagine del browser. Le regole temporali usano i timer/tracciatori gestiti descritti di seguito, oppure `ev.now` ed eventi. Le regole Safari usano il manuale del codice browser e vengono eseguite nell'app contenitore di Safari Vault.
 
 - Le modifiche salvano una bozza; **Run** attiva la regola e abilita il gruppo. I gruppi congelati non possono eseguire Run. Una source vuota scarica la regola.
 - Un Run riuscito sostituisce handlers/panels e cancella l'app-block set del gruppo, mantenendo `v.state`. Se compilazione/registrazione fallisce, resta la regola precedente; un timeout può fermarla. Restart registra di nuovo l'ultima source attivata; closure variables e app-block sets vengono azzerati.
@@ -12,11 +12,44 @@ Source: una sola espressione di funzione `(on, v) => { ... }`. Sono supportati s
 - Disable sospende gli handlers e rimuove panels/app blocks. Enable ripristina la regola caricata e i panels/blocks conservati. Delete rimuove handlers/state/effects. Le app già chiuse non vengono riaperte; le scritture di file non vengono annullate.
 - Gli events non sono limitati agli obiettivi normali del gruppo; scegli le app nella regola. Gli actions vengono messi in coda e applicati dopo il dispatch. Le eccezioni fermano quell'handler senza ripristinare state/actions; gli handlers successivi possono ancora funzionare. Solo le azioni file hanno result events.
 
+## Timer gestiti e utilizzo a finestra mobile
+
+`v.timer(id, {direction:"down", durationMs:300000})` crea o restituisce un conto alla rovescia con nome, inizialmente in pausa. Usa `{direction:"up"}` per un timer crescente. L’oggetto offre `start()`, `pause()`, `resume()`, `reset()` e `snapshot()`. Avvio/ripresa sono idempotenti; il ripristino riporta il timer in pausa con zero tempo trascorso. I campi dello snapshot includono `ready`, `error`, `elapsedMs`, `remainingMs` (null per il timer crescente), `running` e `completed`.
+
+I timer in esecuzione avanzano in base al tempo reale trascorso mentre l’app/il browser è chiuso o la regola è disabilitata. Un conto alla rovescia completato invia `timerEnded` con `{id, direction, durationMs, generation, incarnation}` una volta per incarnazione e generazione del timer a ciascun membro quando la sua regola viene eseguita di nuovo; Run non lo ripete. La consegna dipende dagli eventi dell’host; non è una sveglia in tempo reale. Inserisci `{type:"timer", timerId:"focus", label:"Focus"}` in un pannello per visualizzarlo tramite il controllo di testo esistente.
+
+`v.rolling(id, {windowMs:3600000, limitMs:600000})` crea o restituisce un tracciatore con nome dell’utilizzo attivo. `assign({websites:["youtube.com","reddit.com"], apps:[]})` sostituisce le assegnazioni dei destinatari di questo membro. Le regole native possono invece assegnare identificatori di app della piattaforma. I domini includono i sottodomini. Un tracciatore raggruppa i propri destinatari; altri identificatori hanno quote indipendenti. `snapshot()` restituisce `ready`, `error`, `usedMs`, `remainingMs`, `available` e `nextReturnAtMs` (il prossimo millisecondo in cui scade un utilizzo registrato). `available(target?)` verifica anche l’assegnazione quando viene fornito un destinatario. `reset()` cancella la cronologia di questo oggetto.
+
+Tutto l’utilizzo idoneo osservato viene conteggiato, anche oltre la quota; il tracciatore da solo non blocca pagine/app. Gli intervalli sovrapposti delle pagine visibili contano una sola volta e le app native conteggiano l’utilizzo osservato in primo piano. Le regole disabilitate non aggiungono utilizzo; la cronologia continua a scadere ai confini esatti degli intervalli. La disponibilità torna solo quando la cronologia rimanente è inferiore al limite. I campioni periodici sono limitati a cinque secondi; le interruzioni dovute a chiusura o disabilitazione non generano attività. Gli eventi emessi dall’utente non aggiungono utilizzo.
+
+Gli stessi identificatori di oggetto nei gruppi personalizzati collegati condividono un’unica autorità locale nell’hub nativo. Il collegamento combina cronologia e assegnazioni dei tracciatori e mantiene lo stato del timer che avvia il collegamento; le configurazioni incompatibili impediscono il collegamento. Ogni membro riceve il proprio evento di completamento. La disconnessione rende indisponibili i tracciatori condivisi e rifiuta i comandi dei timer finché non torna disponibile un’autorità aggiornata. Quando il collegamento viene rimosso, ogni membro conserva l’utilizzo condiviso finale e lo stato del timer, ripristina i propri destinatari e scarta i comandi del vecchio collegamento. L’hub conserva lo snapshot finale finché il membro che ritorna non lo salva e ne conferma la ricezione; i trasferimenti in sospeso terminano prima che sia disponibile un nuovo collegamento.
+
+Gli oggetti con nome sopravvivono a Run e al riavvio nel campo riservato `v.state.$vaultTime`; non modificare direttamente questo campo. Rimuovili esplicitamente con `v.removeTime(id)`. Gli identificatori sono composti da 1–80 lettere ASCII, cifre, `_` o `-`; i nomi di proprietà riservati vengono rifiutati. Fino a 32 oggetti condividono il limite di stato della regola di 64 KiB in UTF-8. Le durate sono millisecondi interi fino a 365 giorni. La cronologia mobile è limitata a 1024 contenitori da un minuto e 2048 intervalli uniti. Gli errori di capacità della cronologia lasciano il tracciatore indisponibile fino al ripristino esplicito; le configurazioni non valide e i salvataggi troppo grandi segnalano errori senza cancellare i dati salvati.
+
+```js
+(on, v) => {
+  const timer = v.timer("focus", {durationMs: 300000});
+  v.panel("focus", {controls: [
+    {type: "timer", timerId: "focus", label: "Focus"},
+    {id: "start", type: "button", label: "Start"},
+    {id: "pause", type: "button", label: "Pause"},
+    {id: "reset", type: "button", label: "Reset"}
+  ]});
+  on("panel", ev => {
+    if (ev.data.eventName !== "click") return;
+    if (ev.data.controlId === "start") timer.start();
+    if (ev.data.controlId === "pause") timer.pause();
+    if (ev.data.controlId === "reset") timer.reset();
+  });
+  on("timerEnded", ev => v.log("Finished", ev.data.id));
+}
+```
+
 ## API
 
 - `on(type, handler)` → boolean. Registra `handler(ev)`; più handlers vengono eseguiti nell'ordine di registrazione. False indica argomenti non validi o limite degli handlers raggiunto. `ev = { type: string, now: number, data }`; `now` è Unix in millisecondi.
 - `v.state`: oggetto JSON modificabile, salvato dopo l'event dispatch. Inizializza i fields mancanti senza sovrascrivere lo state esistente. Assegnare un non-object o un array lo reimposta a `{}`; aggiornamenti non serializzabili/troppo grandi non vengono salvati.
-- `v.log(...values)`: unica fonte del Log del gruppo. Logs/Clear indipendenti per gruppo. Gli errori di caricamento appaiono nello stato Run; i diagnostici degli handlers non popolano Log.
+- `v.log(...values)`: aggiunge voci al Log di questo gruppo. Gli errori di esecuzione e consegna appaiono come voci di errore esplicite nello stesso flusso. Logs/Clear sono indipendenti per gruppo. Gli errori di caricamento appaiono anche nello stato Run; gli eventi eseguiti parzialmente non vengono ripetuti automaticamente.
 - `v.emit(type, data)`: mette in coda una copia JSON di `data` per gli handlers del gruppo dopo l'event corrente, con un nuovo `now`; non è una chiamata sincrona.
 - `v.panel(id, spec)`: sostituisce il panel floating nominato del gruppo; `spec` null lo rimuove. Vedi Panels.
 - `v.file(op, path, payload?)` → stringa request ID. Vedi Files.
@@ -24,7 +57,7 @@ Source: una sola espressione di funzione `(on, v) => { ... }`. Sono supportati s
 - `v.quit(appId)`: una richiesta di chiusura normale secondo la stessa policy di protezione/tentativo; non è un blocco continuo.
 - `v.open(appId)`: chiede a macOS di aprire un'app installata; non restituisce callback di successo.
 
-Le altre chiamate restituiscono `undefined`. Gli App IDs sono bundle identifiers (per esempio `com.valvesoftware.steam`), disponibili negli events. Block/Quit ignorano `com.apple.*`, i browser, Vault e i suoi helper, oltre agli ID vuoti. IDs/state dei panel appartengono al gruppo, non al nome visualizzato.
+Le altre chiamate restituiscono `undefined`. Gli identificatori delle app sono identificatori di bundle (per esempio `com.valvesoftware.steam`), disponibili negli eventi. Block/Quit possono agire su app Apple e interi browser. Ignorano l’identificatore di bundle di Mac Vault e i suoi helper, incluse altre app che condividono la stessa identità, oltre agli ID vuoti. IDs/state dei panel appartengono al gruppo, non al nome visualizzato.
 
 ## Events
 
@@ -93,7 +126,7 @@ I result fields inutilizzati sono null; il successo ha error vuoto. Gli errori i
 
 ## Limiti
 
-Per event per group: 256 queued actions, 200 log calls, 64 emits; l'eccesso viene scartato. Per rule: 1000 handlers, 24 panels; ogni control list ha 32 entries e ogni choice 64 options; l'eccesso viene ignorato/troncato. Le emit chains terminano dopo 16 generazioni. Serialized state limit: 65536 JavaScript string characters. Mantieni registration e handlers combinati di ogni event sotto 1 secondo; superamenti ripetuti o hard timeout fermano la regola fino a Run. Log conserva 200 entries per gruppo. Timing/replies sono best-effort, non garanzie real-time.
+Per evento e gruppo: 256 azioni in coda, 200 chiamate di log, 64 emissioni; l’eccesso viene scartato. Per regola: 1000 handler, 24 pannelli; ogni elenco di controlli ha 32 voci e ogni selezione 64 opzioni; l’eccesso viene ignorato/troncato. Le catene di emissioni si fermano dopo 16 generazioni. Limite dello stato serializzato: 65536 byte UTF-8. Mantieni la registrazione e gli handler combinati di ogni evento sotto 1 secondo; superamenti ripetuti o un timeout rigido fermano la regola fino a Run. Il Log conserva 200 voci per gruppo. Tempi/risposte sono forniti al meglio delle possibilità, senza garanzie in tempo reale.
 
 ## Regola completa
 

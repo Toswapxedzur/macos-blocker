@@ -4,7 +4,7 @@
 
 ## ข้อกำหนดของกฎ
 
-แหล่งที่มา: function expression หนึ่งรายการ `(on, v) => { ... }` รองรับเฉพาะ synchronous JavaScript และ API ด้านล่าง ไม่มี timers, network, native system APIs หรือการเข้าถึง browser-page กฎที่อิงเวลาใช้ `ev.now` และ events กฎของ Safari ใช้ browser code manual และทำงานในแอป container ของ Safari Vault เอง
+แหล่งที่มา: function expression หนึ่งรายการ `(on, v) => { ... }` รองรับเฉพาะ synchronous JavaScript และ API ด้านล่าง ไม่มี JavaScript scheduling callbacks, network, native system APIs หรือการเข้าถึงหน้าเบราว์เซอร์ กฎที่อิงเวลาใช้ timer/tracker ที่จัดการโดยระบบด้านล่าง หรือ `ev.now` และ events กฎของ Safari ใช้ browser code manual และทำงานใน containing app ของ Safari Vault เอง
 
 - การแก้ไขจะบันทึกเป็น draft; **Run** จะเปิดใช้และเปิดใช้กลุ่ม กลุ่มที่ตรึงไว้กด Run ไม่ได้ source ว่างจะ unload กฎ
 - Run ที่สำเร็จจะแทนที่ handlers/panels และล้าง app-block set ของกลุ่มนี้ โดยเก็บ `v.state` ไว้ หาก compilation/registration ล้มเหลวจะคงกฎก่อนหน้าไว้ แต่ timeout อาจหยุดได้ Restart จะ register source ที่เปิดใช้ล่าสุดอีกครั้ง; closure variables และ app-block sets จะ reset
@@ -12,11 +12,44 @@
 - Disable จะระงับ handlers และนำ panels/app blocks ออก Enable จะคืน rule ที่โหลดและ panels/blocks ที่เก็บไว้ Delete จะนำ handlers/state/effects ออก แอปที่ quit ไปแล้วจะไม่เปิดใหม่; file writes จะไม่ถูกย้อนกลับ
 - Events ไม่จำกัดตาม targets ทั่วไปของกลุ่ม ให้เลือกแอปในกฎ Actions จะถูก queue แล้วนำไปใช้หลัง dispatch หากเกิด exception handler นั้นหยุดโดยไม่ย้อน state/actions; handlers ถัดไปอาจยังทำงาน มีเพียง file actions ที่มี result events
 
+## ตัวจับเวลาที่จัดการโดยระบบและการใช้งานในช่วงเวลาเลื่อน
+
+`v.timer(id, {direction:"down", durationMs:300000})` สร้างหรือคืน countdown แบบมีชื่อ ซึ่งเริ่มต้นในสถานะ paused ใช้ `{direction:"up"}` สำหรับ timer แบบนับขึ้น Handle มี `start()`, `pause()`, `resume()`, `reset()` และ `snapshot()` การเรียก start/resume ซ้ำไม่มีผลเพิ่มเติม ส่วน reset จะกลับสู่สถานะ paused โดยมีเวลาที่ผ่านไปเป็นศูนย์ Fields ใน snapshot มี `ready`, `error`, `elapsedMs`, `remainingMs` (เป็น null สำหรับการนับขึ้น), `running` และ `completed`
+
+Timer ที่กำลังทำงานจะเดินตามเวลานาฬิกาจริงขณะ app/browser ปิดอยู่หรือ rule ถูกปิดใช้งาน Countdown ที่ครบเวลาจะส่ง `timerEnded` พร้อม `{id, direction, durationMs, generation, incarnation}` หนึ่งครั้งต่อ incarnation และ generation ของ timer ให้สมาชิกแต่ละรายเมื่อ rule ของรายนั้นทำงานครั้งถัดไป Run จะไม่ส่งซ้ำ การส่งขึ้นอยู่กับ host events จึงไม่ใช่นาฬิกาปลุกแบบ real-time ใส่ `{type:"timer", timerId:"focus", label:"Focus"}` ใน panel เพื่อแสดงผ่าน text control ที่มีอยู่
+
+`v.rolling(id, {windowMs:3600000, limitMs:600000})` สร้างหรือคืน tracker การใช้งานจริงแบบมีชื่อ `assign({websites:["youtube.com","reddit.com"], apps:[]})` แทนที่การกำหนด targets ของสมาชิกรายนี้ Native rules สามารถกำหนด app IDs ของแพลตฟอร์มแทนได้ Domains รวม subdomains ด้วย Tracker หนึ่งตัวรวมการใช้งานของ targets ทั้งหมด ส่วน IDs อื่นมีโควตาแยกกัน `snapshot()` คืน `ready`, `error`, `usedMs`, `remainingMs`, `available` และ `nextReturnAtMs` (millisecond ถัดไปที่การใช้งานที่บันทึกไว้รายการใดรายการหนึ่งหมดอายุ) `available(target?)` ตรวจสอบการกำหนด target ด้วยเมื่อระบุ target ส่วน `reset()` ล้าง history ของออบเจ็กต์นี้
+
+การใช้งานที่เข้าเกณฑ์และตรวจพบทั้งหมดจะถูกนับ รวมถึงส่วนที่เกินโควตา แต่ tracker ไม่ได้บล็อก page/app เอง ช่วงเวลาของหน้าที่มองเห็นซึ่งซ้อนทับกันจะนับเพียงครั้งเดียว และ native apps จะนับการใช้งาน foreground ที่ตรวจพบ Rules ที่ปิดใช้งานจะไม่เพิ่มการใช้งาน แต่ history ยังคงหมดอายุตามขอบเขต interval ที่แน่นอน Availability จะกลับมาเมื่อการใช้งานใน history ที่เหลือต่ำกว่า limit เท่านั้น Heartbeat samples จำกัดไว้ไม่เกินห้าวินาที ช่วงที่ปิดโปรแกรมหรือปิดใช้งานจะไม่สร้าง activity สมมติ Events ที่ผู้ใช้ emit เองจะไม่เพิ่มการใช้งาน
+
+Object IDs เดียวกันใน custom groups ที่เชื่อมโยงกันใช้ native hub ภายในเครื่องเป็นแหล่งข้อมูลหลักร่วมกัน การเชื่อมโยงจะรวม history และการกำหนด targets ของ tracker และเก็บ timer state ของฝ่ายที่เริ่มเชื่อมโยง หาก configurations ไม่เข้ากันจะปฏิเสธการเชื่อมโยง สมาชิกแต่ละรายได้รับ completion event ของตนเอง เมื่อขาดการเชื่อมต่อ shared trackers จะ unavailable และปฏิเสธ timer controls จนกว่าจะได้รับข้อมูลล่าสุดจากแหล่งข้อมูลหลัก เมื่อ unlink สมาชิกแต่ละรายเก็บ shared usage และ timer state สุดท้าย คืน targets ของตนเอง และทิ้ง commands จาก link เดิม Hub เก็บ snapshot สุดท้ายจนกว่าสมาชิกที่กลับมาจะบันทึกและยืนยันการรับ โดยต้องดำเนินการ handover ที่ค้างอยู่ให้เสร็จก่อนจึงจะเชื่อมโยงใหม่ได้
+
+ออบเจ็กต์แบบมีชื่อคงอยู่หลัง Run และ restart ใน field ที่สงวนไว้ `v.state.$vaultTime` อย่าแก้ไข field นี้โดยตรง ลบอย่างชัดเจนด้วย `v.removeTime(id)` IDs มีความยาว 1–80 ตัว ประกอบด้วยตัวอักษร ASCII ตัวเลข `_` หรือ `-` และไม่ยอมรับชื่อ properties ที่สงวนไว้ ออบเจ็กต์ได้สูงสุด 32 ตัวใช้ state limit ขนาด 64KiB UTF-8 ของ rule ร่วมกัน Durations เป็นจำนวนเต็ม millisecond สูงสุด 365 วัน Rolling history จำกัดไว้ที่ 1024 minute buckets และ 2048 merged intervals ข้อผิดพลาดความจุ history ทำให้ tracker unavailable จนกว่าจะ reset อย่างชัดเจน Configurations ที่ไม่ถูกต้องและการบันทึกที่ใหญ่เกินไปจะรายงานข้อผิดพลาดโดยไม่ลบข้อมูลที่บันทึกไว้
+
+```js
+(on, v) => {
+  const timer = v.timer("focus", {durationMs: 300000});
+  v.panel("focus", {controls: [
+    {type: "timer", timerId: "focus", label: "Focus"},
+    {id: "start", type: "button", label: "Start"},
+    {id: "pause", type: "button", label: "Pause"},
+    {id: "reset", type: "button", label: "Reset"}
+  ]});
+  on("panel", ev => {
+    if (ev.data.eventName !== "click") return;
+    if (ev.data.controlId === "start") timer.start();
+    if (ev.data.controlId === "pause") timer.pause();
+    if (ev.data.controlId === "reset") timer.reset();
+  });
+  on("timerEnded", ev => v.log("Finished", ev.data.id));
+}
+```
+
 ## API
 
 - `on(type, handler)` → boolean ลงทะเบียน `handler(ev)`; หลาย handlers ทำงานตามลำดับที่ลงทะเบียน False หมายถึง arguments ไม่ถูกต้องหรือถึงขีดจำกัด handlers `ev = { type: string, now: number, data }`; `now` คือ Unix milliseconds
 - `v.state`: JSON object ที่แก้ไขได้และบันทึกหลัง event dispatch ให้เริ่มเฉพาะ fields ที่หายไปแทนการเขียนทับ state เดิม การกำหนด non-object หรือ array จะ reset เป็น `{}`; การอัปเดตที่ serialize ไม่ได้หรือใหญ่เกินไปจะไม่ถูกบันทึก
-- `v.log(...values)`: วิธีเดียวที่สร้าง Log ของกลุ่มนี้ Logs/Clear แยกกันแต่ละกลุ่ม Load errors ปรากฏใน Run status; handler diagnostics ไม่ลงใน Log
+- `v.log(...values)`: เพิ่มรายการลงใน Log ของกลุ่มนี้ ความล้มเหลวในการทำงานและการส่งผลจะแสดงเป็นรายการข้อผิดพลาดที่ชัดเจนใน feed เดียวกัน Logs/Clear แยกกันในแต่ละกลุ่ม Load errors แสดงใน Run status ด้วย และ events ที่ทำงานไปบางส่วนจะไม่ถูกเรียกซ้ำโดยอัตโนมัติ
 - `v.emit(type, data)`: queue สำเนา JSON ของ `data` ให้ handlers กลุ่มนี้หลัง event ปัจจุบัน พร้อม `now` ใหม่; ไม่ใช่ synchronous call
 - `v.panel(id, spec)`: แทนที่ floating panel ที่ตั้งชื่อของกลุ่มนี้; หาก `spec` เป็น null จะนำออก ดู Panels
 - `v.file(op, path, payload?)` → request ID string ดู Files
@@ -24,7 +57,7 @@
 - `v.quit(appId)`: ขอปิดตามปกติหนึ่งครั้ง ภายใต้นโยบาย protection/retry เดียวกัน; ไม่ใช่ block ต่อเนื่อง
 - `v.open(appId)`: ขอให้ macOS เปิดแอปที่ติดตั้งไว้; ไม่มี success callback
 
-Calls อื่นคืน `undefined` App IDs คือ bundle identifiers (เช่น `com.valvesoftware.steam`) ที่มีให้ใน events Block/Quit จะละเว้น `com.apple.*`, browsers, Vault และ helpers ของ Vault รวมถึง IDs ว่าง Panel IDs/state เป็นของกลุ่ม ไม่ใช่ชื่อที่แสดง
+Calls อื่นคืน `undefined` App IDs คือ bundle identifiers (เช่น `com.valvesoftware.steam`) ที่มีให้ใน events Block/Quit สามารถกำหนดเป้าหมายเป็น Apple apps และ browsers ทั้งแอปได้ โดยจะละเว้น bundle identifier ของ Mac Vault และ helpers ของแอป รวมถึงแอปอื่นใดที่ใช้ identity เดียวกันและ IDs ว่าง Panel IDs/state เป็นของกลุ่ม ไม่ใช่ชื่อที่แสดง
 
 ## Events
 
@@ -93,7 +126,7 @@ result fields ที่ไม่ได้ใช้เป็น null; เมื�
 
 ## ขีดจำกัด
 
-ต่อ event ต่อ group: 256 queued actions, 200 log calls, 64 emits; ส่วนเกินจะถูกทิ้ง ต่อ rule: 1000 handlers, 24 panels; แต่ละ control list มี 32 entries และแต่ละ choice มี 64 options; ส่วนเกินจะถูกละเว้น/ตัด Emit chains หยุดหลัง 16 generations Serialized state limit: 65536 JavaScript string characters ให้ registration และ handlers รวมของแต่ละ event ใช้เวลาต่ำกว่า 1 second หากเกินซ้ำ ๆ หรือชน hard timeout rule จะหยุดจนกด Run Log เก็บ 200 entries ต่อกลุ่ม Timing/replies เป็น best-effort ไม่ใช่การรับประกันแบบ real-time
+ต่อ event ต่อ group: 256 queued actions, 200 log calls, 64 emits; ส่วนเกินจะถูกทิ้ง ต่อ rule: 1000 handlers, 24 panels; แต่ละ control list มี 32 entries และแต่ละ choice มี 64 options; ส่วนเกินจะถูกละเว้น/ตัด Emit chains หยุดหลัง 16 generations Serialized state limit: 65536 UTF-8 bytes ให้ registration และ handlers รวมของแต่ละ event ใช้เวลาต่ำกว่า 1 second หากเกินซ้ำ ๆ หรือชน hard timeout rule จะหยุดจนกด Run Log เก็บ 200 entries ต่อกลุ่ม Timing/replies เป็น best-effort ไม่ใช่การรับประกันแบบ real-time
 
 ## กฎฉบับเต็ม
 

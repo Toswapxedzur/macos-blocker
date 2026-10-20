@@ -4,7 +4,7 @@
 
 ## Contrato da regra
 
-Source: uma expressão de função `(on, v) => { ... }`. Apenas JavaScript síncrono e a API abaixo são compatíveis; não há timers, network, native system APIs nem acesso à página do navegador. Regras temporais usam `ev.now` e events. Regras do Safari usam o manual de código do navegador e são executadas no próprio app contêiner do Safari Vault.
+Source: uma expressão de função `(on, v) => { ... }`. Apenas JavaScript síncrono e a API abaixo são compatíveis; não há callbacks de agendamento JavaScript, acesso à rede, APIs nativas do sistema nem acesso a páginas do navegador. Regras temporais usam os temporizadores/rastreadores gerenciados abaixo, ou `ev.now` e eventos. Regras do Safari usam o manual de código do navegador e são executadas no próprio app contêiner do Safari Vault.
 
 - A edição salva um rascunho; **Run** ativa a regra e habilita o grupo. Grupos congelados não podem executar Run. Source vazio descarrega a regra.
 - Um Run bem-sucedido substitui handlers/panels e limpa o app-block set deste grupo, preservando `v.state`. Falha de compilação/inscrição mantém a regra anterior; um timeout pode interrompê-la. Restart registra novamente a última source ativada; closure variables e app-block sets são redefinidos.
@@ -12,11 +12,44 @@ Source: uma expressão de função `(on, v) => { ... }`. Apenas JavaScript sínc
 - Disable suspende handlers e remove panels/app blocks. Enable restaura a regra carregada e os panels/blocks retidos. Delete remove handlers/state/effects. Apps encerrados anteriormente não são reabertos; gravações de arquivos não são desfeitas.
 - Events não se restringem aos alvos comuns do grupo; selecione os apps na regra. Actions entram em fila e são aplicadas após dispatch. Exceptions interrompem aquele handler sem reverter seu state/actions; handlers posteriores podem continuar. Somente ações de arquivo têm result events.
 
+## Temporizadores gerenciados e uso em janela móvel
+
+`v.timer(id, {direction:"down", durationMs:300000})` cria ou retorna uma contagem regressiva com nome, inicialmente pausada. Use `{direction:"up"}` para um temporizador de contagem crescente. O objeto oferece `start()`, `pause()`, `resume()`, `reset()` e `snapshot()`. Iniciar/retomar são idempotentes; redefinir deixa o temporizador pausado com zero tempo decorrido. Os campos do snapshot incluem `ready`, `error`, `elapsedMs`, `remainingMs` (null para contagem crescente), `running` e `completed`.
+
+Os temporizadores em execução avançam de acordo com o tempo real decorrido enquanto o app/navegador está fechado ou a regra está desabilitada. Uma contagem regressiva concluída entrega `timerEnded` com `{id, direction, durationMs, generation, incarnation}` uma vez por encarnação e geração do temporizador para cada membro quando sua regra volta a executar; Run não repete o evento. A entrega depende dos eventos do host; não é um alarme em tempo real. Coloque `{type:"timer", timerId:"focus", label:"Focus"}` em um painel para exibi-lo pelo controle de texto existente.
+
+`v.rolling(id, {windowMs:3600000, limitMs:600000})` cria ou retorna um rastreador com nome de uso ativo. `assign({websites:["youtube.com","reddit.com"], apps:[]})` substitui as atribuições de alvos deste membro. Regras nativas podem atribuir identificadores de apps da plataforma em vez disso. Os domínios incluem subdomínios. Um rastreador reúne seus alvos; outros identificadores têm cotas independentes. `snapshot()` retorna `ready`, `error`, `usedMs`, `remainingMs`, `available` e `nextReturnAtMs` (o próximo milissegundo em que algum uso registrado expira). `available(target?)` também verifica a atribuição quando um alvo é fornecido. `reset()` limpa o histórico deste objeto.
+
+Todo uso elegível observado conta, inclusive o que ultrapassa a cota; o rastreador em si não bloqueia páginas/apps. Intervalos sobrepostos de páginas visíveis contam uma vez, e apps nativos contam o uso observado em primeiro plano. Regras desabilitadas não adicionam uso; o histórico continua expirando nos limites exatos dos intervalos. A disponibilidade só retorna quando o histórico restante fica abaixo do limite. As amostras periódicas são limitadas a cinco segundos; lacunas por encerramento ou desabilitação não geram atividade. Eventos emitidos pelo usuário não adicionam uso.
+
+Os mesmos identificadores de objeto em grupos personalizados vinculados compartilham uma única autoridade local no hub nativo. A vinculação combina o histórico e as atribuições dos rastreadores e mantém o estado do temporizador que iniciou a vinculação; configurações incompatíveis impedem a vinculação. Cada membro recebe seu próprio evento de conclusão. A desconexão deixa os rastreadores compartilhados indisponíveis e rejeita os comandos dos temporizadores até que uma autoridade atualizada volte a estar disponível. Ao desvincular, cada membro mantém o uso compartilhado final e o estado do temporizador, restaura seus próprios alvos e descarta os comandos do vínculo antigo. O hub mantém o snapshot final até que o membro que retorna o salve e confirme o recebimento; as transferências pendentes terminam antes que um novo vínculo fique disponível.
+
+Os objetos com nome sobrevivem a Run e à reinicialização no campo reservado `v.state.$vaultTime`; não edite esse campo diretamente. Remova-os explicitamente com `v.removeTime(id)`. Os identificadores contêm de 1 a 80 letras ASCII, dígitos, `_` ou `-`; nomes de propriedades reservados são rejeitados. Até 32 objetos compartilham o limite de estado da regra de 64 KiB em UTF-8. As durações são milissegundos inteiros de até 365 dias. O histórico móvel é limitado a 1024 blocos de um minuto e 2048 intervalos mesclados. Erros de capacidade do histórico deixam o rastreador indisponível até uma redefinição explícita; configurações inválidas e salvamentos grandes demais relatam erros sem apagar os dados salvos.
+
+```js
+(on, v) => {
+  const timer = v.timer("focus", {durationMs: 300000});
+  v.panel("focus", {controls: [
+    {type: "timer", timerId: "focus", label: "Focus"},
+    {id: "start", type: "button", label: "Start"},
+    {id: "pause", type: "button", label: "Pause"},
+    {id: "reset", type: "button", label: "Reset"}
+  ]});
+  on("panel", ev => {
+    if (ev.data.eventName !== "click") return;
+    if (ev.data.controlId === "start") timer.start();
+    if (ev.data.controlId === "pause") timer.pause();
+    if (ev.data.controlId === "reset") timer.reset();
+  });
+  on("timerEnded", ev => v.log("Finished", ev.data.id));
+}
+```
+
 ## API
 
 - `on(type, handler)` → boolean. Registra `handler(ev)`; vários handlers executam na ordem de inscrição. False indica argumentos inválidos ou limite de handlers atingido. `ev = { type: string, now: number, data }`; `now` é Unix em milissegundos.
 - `v.state`: objeto JSON mutável, salvo depois do event dispatch. Inicialize fields ausentes em vez de sobrescrever o state atual. Atribuir non-object ou array redefine para `{}`; atualizações não serializáveis/grandes demais não são salvas.
-- `v.log(...values)`: único produtor do Log deste grupo. Logs/Clear são independentes por grupo. Erros de carregamento aparecem no status Run; diagnósticos de handlers não preenchem Log.
+- `v.log(...values)`: adiciona entradas ao Log deste grupo. Falhas de execução e entrega aparecem como entradas de erro explícitas no mesmo fluxo. Logs/Clear são independentes por grupo. Erros de carregamento também aparecem no status Run; eventos parcialmente executados não são repetidos automaticamente.
 - `v.emit(type, data)`: coloca uma cópia JSON de `data` na fila de handlers deste grupo após o event atual, com novo `now`; não é chamada síncrona.
 - `v.panel(id, spec)`: substitui o panel flutuante nomeado deste grupo; `spec` null o remove. Consulte Panels.
 - `v.file(op, path, payload?)` → string request ID. Consulte Files.
@@ -24,7 +57,7 @@ Source: uma expressão de função `(on, v) => { ... }`. Apenas JavaScript sínc
 - `v.quit(appId)`: uma solicitação normal de encerramento, sob a mesma política de proteção/tentativa; sem bloqueio contínuo.
 - `v.open(appId)`: pede ao macOS para abrir um app instalado; sem callback de sucesso.
 
-Outras chamadas retornam `undefined`. App IDs são bundle identifiers (por exemplo, `com.valvesoftware.steam`), disponíveis em events. Block/Quit ignoram `com.apple.*`, navegadores, Vault e seus helpers, além de IDs vazios. Panel IDs/state pertencem ao grupo, não ao nome exibido.
+Outras chamadas retornam `undefined`. Os identificadores de apps são identificadores de bundle (por exemplo, `com.valvesoftware.steam`), disponíveis em eventos. Block/Quit podem ter como alvo apps da Apple e navegadores inteiros. Eles ignoram o identificador de bundle do Mac Vault e seus helpers, incluindo qualquer outro app que compartilhe essa identidade, além de IDs vazios. Panel IDs/state pertencem ao grupo, não ao nome exibido.
 
 ## Events
 
@@ -93,7 +126,7 @@ result fields não usados são null; sucesso tem error vazio. Falhas incluem inv
 
 ## Limites
 
-Por event por group: 256 queued actions, 200 log calls, 64 emits; excesso é descartado. Por rule: 1000 handlers, 24 panels; cada control list tem 32 entries e cada choice 64 options; excesso é ignorado/truncado. Emit chains param após 16 gerações. Serialized state limit: 65536 JavaScript string characters. Mantenha registration e handlers combinados de cada event abaixo de 1 segundo; excessos repetidos ou hard timeout param a regra até Run. Log mantém 200 entries por grupo. Timing/replies são best-effort, sem garantias real-time.
+Por evento e grupo: 256 ações em fila, 200 chamadas de log, 64 emissões; o excesso é descartado. Por regra: 1000 handlers, 24 painéis; cada lista de controles tem 32 entradas e cada seleção 64 opções; o excesso é ignorado/truncado. As cadeias de emissões param após 16 gerações. Limite do estado serializado: 65536 bytes UTF-8. Mantenha o registro da regra e os handlers combinados de cada evento abaixo de 1 segundo; excessos repetidos ou um timeout rígido param a regra até Run. O Log mantém 200 entradas por grupo. Tempos/respostas funcionam conforme o melhor esforço, sem garantias de tempo real.
 
 ## Regra completa
 
