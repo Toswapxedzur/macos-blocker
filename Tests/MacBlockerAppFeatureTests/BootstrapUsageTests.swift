@@ -105,15 +105,17 @@ final class BootstrapUsageTests: XCTestCase {
         XCTAssertEqual(try row(defaults)["originalUsagePending"] as? [String], [])
     }
 
-    func testFixedAbsoluteAndNonzeroDeltaRetainExistingDeltaOrSeedSemantics() throws {
+    func testPendingAbsoluteIncludesItsDeltaAndNativeKeepsDeltaOrSeedSemantics() throws {
         let (hub, frames, _) = hub(); let anchor = try stage(hub)
-        let (peer, refusal) = try register(hub, capability: true, identity: true); XCTAssertNil(refusal)
-        let generation = try frames.generation(); try send(hub, peer, [:], generation: generation)
-        var combined = definition(); combined["usageMs"] = 8_000.0; combined["usageDeltaMs"] = 1_000.0; combined["usageResetAtMs"] = anchor
-        try send(hub, peer, combined, generation: generation)
-        XCTAssertEqual(try XCTUnwrap(hub.sharedUsage(groupID: "m")).ms, 6_000)
+        let (peer, refusal) = try register(hub); XCTAssertNil(refusal)
+        // Tagged3.1 sends definitions separately and retains a prior link's
+        // baseline; its first later report includes current absolute+delta.
+        try send(hub, peer, definition())
         XCTAssertFalse(try frames.contributed())
-        try send(hub, peer, ["usageMs": 8_000.0, "usageResetAtMs": anchor], generation: generation)
+        try send(hub, peer, ["usageMs": 8_000.0, "usageResetAtMs": anchor, "usageDeltaMs": 1_000.0])
+        XCTAssertEqual(try XCTUnwrap(hub.sharedUsage(groupID: "m")).ms, 8_000)
+        XCTAssertTrue(try frames.contributed())
+        try send(hub, peer, ["usageMs": 9_000.0, "usageResetAtMs": anchor, "usageDeltaMs": 1_000.0])
         XCTAssertEqual(try XCTUnwrap(hub.sharedUsage(groupID: "m")).ms, 9_000)
         XCTAssertTrue(try frames.contributed())
         let (native, _, _) = self.hub(); _ = try stage(native, nativeFirst: false)
@@ -162,7 +164,7 @@ final class BootstrapUsageTests: XCTestCase {
         let good = try XCTUnwrap(defaults.data(forKey: "ConnectionHub.clusters.v2")), count = frames.all().count
         let unsupported = Data("unsupported original registry bytes".utf8)
         defaults.set(unsupported, forKey: "ConnectionHub.clusters.v2")
-        try send(hub, peer, ["usageMs": 8_000.0, "usageResetAtMs": anchor], generation: generation)
+        try send(hub, peer, ["usageMs": 8_000.0, "usageResetAtMs": anchor, "usageDeltaMs": 1_000.0], generation: generation)
         XCTAssertEqual(try XCTUnwrap(hub.sharedUsage(groupID: "m")).ms, 5_000)
         XCTAssertEqual(defaults.data(forKey: "ConnectionHub.clusters.v2"), unsupported)
         XCTAssertFalse(frames.all().dropFirst(count).contains { $0["kind"] as? String == "cluster-updated" })
@@ -171,7 +173,7 @@ final class BootstrapUsageTests: XCTestCase {
         let (restarted, fresh, _) = self.hub(defaults); restarted.restoreClustersLocked()
         let (replacement, retryRefusal) = try register(restarted, capability: true, identity: true); XCTAssertNil(retryRefusal)
         let retryGeneration = try fresh.generation()
-        try send(restarted, replacement, ["usageMs": 8_000.0, "usageResetAtMs": anchor], generation: retryGeneration)
+        try send(restarted, replacement, ["usageMs": 8_000.0, "usageResetAtMs": anchor, "usageDeltaMs": 1_000.0], generation: retryGeneration)
         XCTAssertEqual(try XCTUnwrap(restarted.sharedUsage(groupID: "m")).ms, 8_000)
         XCTAssertTrue(try fresh.contributed())
     }
@@ -236,6 +238,17 @@ final class BootstrapUsageTests: XCTestCase {
         XCTAssertEqual(refusing.activeClusterCount(), 0)
         refusing.setRoster(program: "chrome", groups: [])
         XCTAssertEqual(defaults.data(forKey: "ConnectionHub.clusters.v2"), invalid)
+    }
+
+    func testTentativeNoninitiatorRollingPolicyDoesNotRefuseFixedInitiator() throws {
+        let (hub, frames, _) = hub(); _ = try stage(hub, rolling: true, initiator: "chrome")
+        let (legacy, refusal) = try register(hub); XCTAssertNil(refusal)
+        hub.setRoster(program: "edge", groups: [["id": "e", "name": "Edge"]])
+        XCTAssertNil(hub.linkGroups(program: "chrome", groupId: "b", targetProgram: "edge", targetGroupId: "e"))
+        try send(hub, legacy, definition())
+        XCTAssertEqual((try canonical(hub)["scalars"] as? [String: Any])?["rollingLimit"] as? Bool, false)
+        XCTAssertEqual(hub.activityNotificationRecipients, ["chrome"])
+        XCTAssertFalse(frames.all().contains { $0["kind"] as? String == "rejected" })
     }
 
     func testKnownNewRollingPreflightRefusesBeforeLinkOrFileMutation() throws {
