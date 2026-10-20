@@ -174,7 +174,20 @@ public final class BlockerWebStore: @unchecked Sendable {
         guard !changes.keys.contains("blockedGroups") else {
             throw GroupStoreError.invalidInput("precise-editor-request-required")
         }
-        merge(changes: changes)
+        try groupStore.mutate(notify: false) { document in
+            var object = document.raw
+            Self.merge(changes: changes, into: &object)
+            document = WebStoreDocument(raw: object)
+        }
+    }
+
+    private static func merge(changes: [String: Any], into object: inout [String: Any]) {
+        for (key, value) in changes {
+            if value is NSNull { object.removeValue(forKey: key) }
+            else if WebStoreDocument.perGroupMapKeys.contains(key), let entries = value as? [String: Any] {
+                object[key] = (object[key] as? [String: Any] ?? [:]).merging(entries) { $1 }
+            } else { object[key] = value }
+        }
     }
 
     public func merge(changes: [String: Any]) {
@@ -424,9 +437,9 @@ public final class BlockerWebStore: @unchecked Sendable {
     /// An imported group starts fresh (owner 2026-09-27): its usage, snooze
     /// and snooze total go; a new budget period starts now. Mac Vault owns the
     /// runtime maps, so the editor asks for this rather than writing them.
-    public func resetRuntime(groupID: String, now: Date = Date()) {
-        GroupStore.withFileLock {
-            guard var object = loadStoreObject() else { return }
+    public func resetRuntime(groupID: String, now: Date = Date()) throws {
+        try groupStore.mutate { document in
+            var object = document.raw
             for key in ["usageTimersMs", "usageResetAtMs", "usageBucketsMs", "groupSnoozes", "groupSnoozeTotalsMs"] {
                 var map = object[key] as? [String: Any] ?? [:]
                 map.removeValue(forKey: groupID)
@@ -435,9 +448,8 @@ public final class BlockerWebStore: @unchecked Sendable {
             var anchors = object["usageResetAtMs"] as? [String: Any] ?? [:]
             anchors[groupID] = (now.timeIntervalSince1970 * 1000).rounded()
             object["usageResetAtMs"] = anchors
-            write(object)
+            document = WebStoreDocument(raw: object)
         }
-        GroupStore.postDidChange()
     }
 
     /// Uses this editor's canonical store, including the linked lock view.

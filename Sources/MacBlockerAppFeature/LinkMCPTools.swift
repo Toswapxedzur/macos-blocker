@@ -31,8 +31,18 @@ enum LinkMCPTools {
                     "required": ["program", "groupId", "targetProgram", "targetGroupId"],
                 ]
             ) { args in
-                let refusal = hub.linkGroups(program: string(args, "program"), groupId: string(args, "groupId"),
-                                             targetProgram: string(args, "targetProgram"), targetGroupId: string(args, "targetGroupId"))
+                // The MCP server owns its worker thread. Browser response and
+                // timeout processing remain free on the separate hub queue.
+                let signal = DispatchSemaphore(value: 0)
+                let outcome = LinkOutcome()
+                hub.linkGroupsWithBrowserIdentityPreflight(program: string(args, "program"), groupId: string(args, "groupId"),
+                    targetProgram: string(args, "targetProgram"), targetGroupId: string(args, "targetGroupId")) { refusal in
+                    outcome.set(refusal); signal.signal()
+                }
+                guard signal.wait(timeout: .now() + .seconds(ConnectionHub.browserRelayTimeoutSeconds + 3)) == .success else {
+                    return .failure("Refused: browser-timeout.")
+                }
+                let refusal = outcome.get()
                 return refusal.map { .failure("Refused: \($0).") } ?? .ok("Linked.")
             },
             MCPTool(
@@ -55,6 +65,13 @@ enum LinkMCPTools {
 
     private static func string(_ args: [String: Any], _ key: String) -> String {
         (args[key] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    }
+
+    private final class LinkOutcome {
+        private let lock = NSLock()
+        private var refusal: String?
+        func set(_ value: String?) { lock.lock(); refusal = value; lock.unlock() }
+        func get() -> String? { lock.lock(); defer { lock.unlock() }; return refusal }
     }
 }
 #endif

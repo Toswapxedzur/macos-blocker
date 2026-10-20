@@ -41,8 +41,8 @@ public struct BlockerWebView: NSViewRepresentable {
     /// pushed each second to `window.__cbClustersState`.
     private let clustersJSON: (() -> String?)?
     /// The editor's Link / Unlink ("group-link" | "group-unlink", its message);
-    /// returns the refusal, or nil.
-    private let onLinkRequest: ((String, [String: Any]) -> String?)?
+    /// completes with the refusal, or nil, after any authenticated preflight.
+    private let onLinkRequest: ((String, [String: Any], @escaping (String?) -> Void) -> Void)?
     private let tagNames: ((String) -> [String])?
 
     public init(
@@ -54,7 +54,7 @@ public struct BlockerWebView: NSViewRepresentable {
         onRunCustomGroup: ((String, String) -> [String: Any])? = nil,
         onSnoozePress: ((String) -> Void)? = nil,
         clustersJSON: (() -> String?)? = nil,
-        onLinkRequest: ((String, [String: Any]) -> String?)? = nil,
+        onLinkRequest: ((String, [String: Any], @escaping (String?) -> Void) -> Void)? = nil,
         tagNames: ((String) -> [String])? = nil,
         scenes: [WebScene] = []
     ) {
@@ -257,7 +257,7 @@ public struct BlockerWebView: NSViewRepresentable {
         private let onRunCustomGroup: ((String, String) -> [String: Any])?
         private let onSnoozePress: ((String) -> Void)?
         private let clustersJSON: (() -> String?)?
-        private let onLinkRequest: ((String, [String: Any]) -> String?)?
+        private let onLinkRequest: ((String, [String: Any], @escaping (String?) -> Void) -> Void)?
         private let tagNames: ((String) -> [String])?
         private let scenes: [WebScene]
         private let downloadDirectory: URL
@@ -278,7 +278,7 @@ public struct BlockerWebView: NSViewRepresentable {
             onRunCustomGroup: ((String, String) -> [String: Any])?,
             onSnoozePress: ((String) -> Void)?,
             clustersJSON: (() -> String?)?,
-            onLinkRequest: ((String, [String: Any]) -> String?)?,
+            onLinkRequest: ((String, [String: Any], @escaping (String?) -> Void) -> Void)?,
             tagNames: ((String) -> [String])?,
             scenes: [WebScene],
             downloadDirectory: URL = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask)[0]
@@ -436,7 +436,8 @@ public struct BlockerWebView: NSViewRepresentable {
                 nativeReply(body, ["ok": true, "names": names])
             case "reset-group-runtime":
                 if let payload = body["message"] as? [String: Any], let groupID = payload["groupId"] as? String {
-                    store.resetRuntime(groupID: groupID)
+                    do { try store.resetRuntime(groupID: groupID); nativeReply(body, ["ok": true]) }
+                    catch { nativeReply(body, ["ok": false, "error": Self.editorFailureMessage(error)]) }
                 }
             case "fire-snooze-press":
                 if let payload = body["message"] as? [String: Any],
@@ -447,12 +448,17 @@ public struct BlockerWebView: NSViewRepresentable {
                 pushClusters()
             case "group-link", "group-unlink":
                 let message = body["message"] as? [String: Any] ?? [:]
-                if let refusal = onLinkRequest?(kind, message),
-                   let data = try? JSONSerialization.data(withJSONObject: [refusal]),
-                   let json = String(data: data, encoding: .utf8) {
-                    webView?.evaluateJavaScript("window.__cbLinkRefused && window.__cbLinkRefused(\(json)[0]);", completionHandler: nil)
+                guard let onLinkRequest else { return }
+                onLinkRequest(kind, message) { [weak self] refusal in
+                    Task { @MainActor in
+                        guard let self else { return }
+                        if let refusal, let data = try? JSONSerialization.data(withJSONObject: [refusal]),
+                           let json = String(data: data, encoding: .utf8) {
+                            self.webView?.evaluateJavaScript("window.__cbLinkRefused && window.__cbLinkRefused(\(json)[0]);", completionHandler: nil)
+                        }
+                        self.pushClusters()
+                    }
                 }
-                pushClusters()
             case "save-rule-log":
                 guard message.frameInfo.isMainFrame, message.frameInfo.request.url?.scheme == WebAssetSchemeHandler.scheme,
                       message.frameInfo.request.url?.host == WebAssetSchemeHandler.host,

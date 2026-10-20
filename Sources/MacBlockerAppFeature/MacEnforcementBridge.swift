@@ -29,6 +29,7 @@ public final class MacEnforcementBridge: ObservableObject {
         // adoption must enter the same transaction as the hub's contribution.
         ConnectionHub.shared.localWebStore = bridge.webStore
         GroupStore.sharedOverlay = { ConnectionHub.shared.overlayShared(onto: $0) }
+        GroupStore.sharedMutationRefusal = { ConnectionHub.shared.mutationRefusal(before: $0, after: $1) }
         // A tool's snooze of a custom group is the rule's snooze press, as the editor's.
         VaultMCPTools.snoozePress = { id in Task { @MainActor in MacEnforcementBridge.shared.fireSnoozePress(groupID: id) } }
         // A tool's Run is the editor's Run.
@@ -271,7 +272,7 @@ public final class MacEnforcementBridge: ObservableObject {
         webStore.adoptShared()
         var view = BlockerWebStore.enforcementView(of: document)
         restartChangedBudgets(document: document, usage: &view.usage, nowMs: nowMs)
-        let groups = view.groups
+        let groups = ConnectionHub.shared.runtimeGroups(view.groups)
         let snoozes = view.snoozes
         let frontApp = NSWorkspace.shared.frontmostApplication
         activityRecorder?.sample(frontmost: frontApp, now: now)

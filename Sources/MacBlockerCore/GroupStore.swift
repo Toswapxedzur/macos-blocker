@@ -64,6 +64,10 @@ public final class GroupStore: @unchecked Sendable {
     /// by the app to the hub's overlay). The AI tools read and lock-check through
     /// it, exactly like enforcement and the user's view — never a stale copy.
     nonisolated(unsafe) public static var sharedOverlay: (([String: Any]) -> [String: Any])?
+    /// Explicit native/editor/tool mutations are admitted against the same
+    /// transient linked-budget policy. Engine accounting writes use their own
+    /// file-locked path and do not pass through this user-intent gate.
+    nonisolated(unsafe) public static var sharedMutationRefusal: (([String: Any], [String: Any]) -> String?)?
 
     /// The typed, read-only projection of the current groups, as linked devices
     /// share them.
@@ -97,7 +101,7 @@ public final class GroupStore: @unchecked Sendable {
     /// closure receives the current document; if it throws, nothing is written.
     /// Returns the persisted document so a caller can reconcile the live WebView.
     @discardableResult
-    public func mutate(_ body: (inout WebStoreDocument) throws -> Void) throws -> WebStoreDocument {
+    public func mutate(notify: Bool = true, _ body: (inout WebStoreDocument) throws -> Void) throws -> WebStoreDocument {
         lock.lock()
         let document: WebStoreDocument
         do {
@@ -106,7 +110,9 @@ public final class GroupStore: @unchecked Sendable {
             // Locks are judged on the shared view: a group locked on a linked
             // device is locked here too, even before the editor adopts it.
             Self.attachSharedView(&working)
+            let before = working.raw
             try body(&working)
+            if let refusal = Self.sharedMutationRefusal?(before, working.raw) { throw GroupStoreError.invalidInput(refusal) }
             try shared.writeDataThrowing(JSONSerialization.data(withJSONObject: working.raw, options: [.sortedKeys]), to: SharedAppGroupStore.webStoreFileName)
             document = working
         } catch {
@@ -114,7 +120,7 @@ public final class GroupStore: @unchecked Sendable {
             throw error
         }
         lock.unlock()
-        Self.postDidChange()
+        if notify { Self.postDidChange() }
         return document
     }
 
