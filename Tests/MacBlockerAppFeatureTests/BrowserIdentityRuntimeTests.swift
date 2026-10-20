@@ -68,7 +68,8 @@ final class BrowserIdentityRuntimeTests: XCTestCase {
         let connection = NWConnection(host: "127.0.0.1", port: 18787, using: .tcp)
         connections.append(connection)
         hub.registerPendingPeer(connection, challenge: String(repeating: "a", count: 43))
-        let app = identity ? try XCTUnwrap(BrowserApplicationIdentity(kind: "mac-bundle-id", value: "com.google.chrome")) : nil
+        let appID = ["chrome": "com.google.chrome", "edge": "com.microsoft.edgemac", "safari": "com.apple.safari"][program] ?? "com.example.browser"
+        let app = identity ? try XCTUnwrap(BrowserApplicationIdentity(kind: "mac-bundle-id", value: appID)) : nil
         XCTAssertNil(hub.admitAuthenticatedPeer(connection, program: program, browserIdentity: app))
         return connection
     }
@@ -84,6 +85,13 @@ final class BrowserIdentityRuntimeTests: XCTestCase {
         let object = try XCTUnwrap(try JSONSerialization.jsonObject(with: Data(hub.clustersJSON().utf8)) as? [String: Any])
         let cluster = try XCTUnwrap((object["clusters"] as? [[String: Any]])?.first)
         return try XCTUnwrap(cluster["shared"] as? [String: Any])
+    }
+
+    private func acknowledge(_ hub: ConnectionHub, _ frames: Frames, _ connection: NWConnection, groupID: String = "b") throws -> String {
+        hub.sendClustersSnapshot(connection)
+        let generation = try XCTUnwrap(try frames.status()["generation"] as? String)
+        try sync(hub, connection, [:], generation: generation, groupID: groupID)
+        return generation
     }
 
     func testLegacyPauseProjectsWireAndRuntimeWithoutChangingCanonicalState() throws {
@@ -207,7 +215,7 @@ final class BrowserIdentityRuntimeTests: XCTestCase {
         store.save(rawStore: ["blockedGroups": [group], "usageTimersMs": ["m": 5_000.0], "usageResetAtMs": ["m": anchor]])
         hub.localWebStore = store
         hub.contributeLocalDefinitions(document: [:], nowMs: Date().timeIntervalSince1970 * 1000)
-        _ = try peer(hub)
+        let legacy = try peer(hub)
         let generation = try XCTUnwrap(try frames.status()["generation"] as? String)
         store.adoptShared()
         let beforeJSON = try XCTUnwrap(store.loadRawJSON())
@@ -222,26 +230,41 @@ final class BrowserIdentityRuntimeTests: XCTestCase {
         XCTAssertTrue(refused)
         XCTAssertEqual(try XCTUnwrap(store.loadRawJSON()), beforeJSON)
         XCTAssertEqual(try frames.status()["generation"] as? String, generation)
+        let deletion = try GroupActionsRuntime.shared.callThrowing("editorChange", [saved, NSNull(), "desktop"], module: "CBGroupScopes")
+        var deleteRefused = false
+        do { _ = try store.applyEditorDefinitionRequest(["intent": "edit", "changes": [deletion]]) }
+        catch { deleteRefused = String(describing: error).contains("browser-upgrade-required") }
+        XCTAssertTrue(deleteRefused)
+        XCTAssertEqual(try XCTUnwrap(store.loadRawJSON()), beforeJSON)
         let oldGate = GroupStore.sharedMutationRefusal
         GroupStore.sharedMutationRefusal = { hub.mutationRefusal(before: $0, after: $1) }
         defer { GroupStore.sharedMutationRefusal = oldGate }
         for operation in [
             { try store.mergeEditorSideEffectChanges(["groupSnoozes": ["m": ["startsAtMs": 1, "untilMs": 9_999_999_999_999]]]) },
             { try store.resetRuntime(groupID: "m") },
-            { _ = try GroupStore(shared: SharedAppGroupStore(baseDirectory: directory)).mutate { _ = try $0.lockGroup(id: "m", waitHours: 1) } }
+            { _ = try GroupStore(shared: SharedAppGroupStore(baseDirectory: directory)).mutate { _ = try $0.lockGroup(id: "m", waitHours: 1) } },
+            { _ = try GroupStore(shared: SharedAppGroupStore(baseDirectory: directory)).mutate { try $0.deleteGroup(id: "m") } }
         ] {
             var denied = false
             do { try operation() } catch { denied = String(describing: error).contains("browser-upgrade-required") }
             XCTAssertTrue(denied)
             XCTAssertEqual(try XCTUnwrap(store.loadRawJSON()), beforeJSON)
         }
+        XCTAssertEqual(hub.unlinkGroup(program: "macapp", groupId: "m"), "browser-upgrade-required")
+        XCTAssertEqual(try XCTUnwrap(store.loadRawJSON()), beforeJSON)
+        hub.removePeer(ObjectIdentifier(legacy))
+        XCTAssertEqual(hub.unlinkGroup(program: "macapp", groupId: "m"), "browser-connect-required")
+        let updated = try peer(hub, identity: true)
+        XCTAssertEqual(hub.unlinkGroup(program: "macapp", groupId: "m"), "browser-sync-required")
+        _ = try acknowledge(hub, frames, updated)
         let beforeUnlinkFrame = frames.all().count
         XCTAssertNil(hub.unlinkGroup(program: "macapp", groupId: "m"))
         let unlinked = try XCTUnwrap(try JSONSerialization.jsonObject(with: Data(try XCTUnwrap(store.loadRawJSON()).utf8)) as? [String: Any])
         XCTAssertEqual(((unlinked["blockedGroups"] as? [[String: Any]])?.first)?["enabled"] as? Bool, true)
         XCTAssertEqual((unlinked["usageTimersMs"] as? [String: Any])?["m"] as? Double, 5_000)
         XCTAssertFalse(String(describing: unlinked).contains("browserIdentityStatus"))
-        // A native departure does not need the legacy-browser restore frame.
+        // A ready updated peer uses normal serialized unlink; no legacy repair
+        // definition is emitted before the membership removal.
         XCTAssertFalse(frames.all().dropFirst(beforeUnlinkFrame).contains { frame in
             guard let cluster = frame["cluster"] as? [String: Any] else { return false }
             return (cluster["members"] as? [[String: Any]])?.contains { $0["program"] as? String == "chrome" } == true
@@ -258,18 +281,147 @@ final class BrowserIdentityRuntimeTests: XCTestCase {
         XCTAssertEqual(try XCTUnwrap(hub.sharedUsage(groupID: "m")).ms, 5_000)
     }
 
-    func testLegacyUnlinkRestoresCanonicalBeforeMembershipRemoval() throws {
-        let (hub, frames, _) = hub(); try linked(hub)
-        _ = try peer(hub)
+    func testLegacyAndOfflineAffectedUnlinkRefuseWithoutRepairFrames() throws {
+        let (hub, frames, defaults) = hub(); try linked(hub)
+        let legacy = try peer(hub)
+        let registry = defaults.data(forKey: "ConnectionHub.clusters.v2")
+        let shared = try canonical(hub)
         let count = frames.all().count
-        XCTAssertNil(hub.unlinkGroup(program: "chrome", groupId: "b"))
-        let snapshots = frames.all().dropFirst(count).compactMap { $0["cluster"] as? [String: Any] }
-        XCTAssertEqual(snapshots.count, 2)
-        let restored = try XCTUnwrap(snapshots.first)
-        XCTAssertTrue((restored["members"] as? [[String: Any]])?.contains { $0["program"] as? String == "chrome" && $0["contributed"] as? Bool == true } == true)
-        XCTAssertEqual(((restored["shared"] as? [String: Any])?["scalars"] as? [String: Any])?["enabled"] as? Bool, true)
-        XCTAssertEqual((snapshots.last?["members"] as? [[String: Any]])?.count, 0)
+        XCTAssertEqual(hub.unlinkGroup(program: "chrome", groupId: "b"), "browser-upgrade-required")
+        XCTAssertEqual(hub.setRoster(program: "chrome", groups: []), "browser-upgrade-required")
+        XCTAssertEqual(frames.all().count, count)
+        XCTAssertEqual(defaults.data(forKey: "ConnectionHub.clusters.v2"), registry)
+        XCTAssertEqual(hub.activeClusterCount(), 1)
+        hub.removePeer(ObjectIdentifier(legacy))
+        let offlineFrames = frames.all().count
+        XCTAssertEqual(hub.unlinkGroup(program: "macapp", groupId: "m"), "browser-connect-required")
+        XCTAssertEqual(frames.all().count, offlineFrames)
+        XCTAssertEqual(defaults.data(forKey: "ConnectionHub.clusters.v2"), registry)
+        let after = try canonical(hub)
+        for field in ["scalars", "usageMs", "usageResetAtMs", "usageBuckets", "snooze", "snoozeTs"] {
+            XCTAssertEqual(WebStoreDocument.canonicalJSON(after[field]), WebStoreDocument.canonicalJSON(shared[field]))
+        }
+    }
+
+    func testAffectedUnlinkRequiresExactCurrentPeerGenerationAcknowledgement() throws {
+        let (hub, frames, defaults) = hub(); try linked(hub)
+        let original = try peer(hub, identity: true)
+        let oldGeneration = try acknowledge(hub, frames, original)
+        hub.removePeer(ObjectIdentifier(original))
+        let current = try peer(hub, identity: true)
+        let registry = defaults.data(forKey: "ConnectionHub.clusters.v2")
+        try sync(hub, current, [:], generation: oldGeneration)
+        XCTAssertEqual(hub.unlinkGroup(program: "macapp", groupId: "m"), "browser-sync-required")
+        hub.sendClustersSnapshot(current)
+        let generation = try XCTUnwrap(try frames.status()["generation"] as? String)
+        try sync(hub, current, [:], generation: generation, groupID: "unrelated")
+        XCTAssertEqual(hub.unlinkGroup(program: "chrome", groupId: "b"), "browser-sync-required")
+        XCTAssertEqual(defaults.data(forKey: "ConnectionHub.clusters.v2"), registry)
+        _ = try acknowledge(hub, frames, current)
+        XCTAssertEqual(hub.unlinkGroup(program: "chrome", groupId: "b", requestingPeerKey: ObjectIdentifier(original)), "browser-unavailable")
+        XCTAssertEqual(hub.activeClusterCount(), 1)
+        XCTAssertNil(hub.unlinkGroup(program: "chrome", groupId: "b", requestingPeerKey: ObjectIdentifier(current)))
         XCTAssertEqual(hub.activeClusterCount(), 0)
+    }
+
+    func testFirstOriginalAckDoesNotAuthorizeUnlinkBeforeFullUnionAck() throws {
+        let (hub, frames, _) = hub(narrow: true)
+        try linked(hub, browserContributed: false)
+        let connection = try peer(hub, identity: true)
+        let originalGeneration = try acknowledge(hub, frames, connection)
+        try sync(hub, connection, ["scopes": [["surface": "site", "sites": ["example.com"]]], "ts": 0.0], generation: originalGeneration)
+        let fullGeneration = try XCTUnwrap(try frames.status()["generation"] as? String)
+        XCTAssertFalse(fullGeneration == originalGeneration)
+        XCTAssertEqual(hub.unlinkGroup(program: "chrome", groupId: "b"), "browser-sync-required")
+        try sync(hub, connection, [:], generation: originalGeneration)
+        XCTAssertEqual(hub.unlinkGroup(program: "macapp", groupId: "m"), "browser-sync-required")
+        _ = try acknowledge(hub, frames, connection)
+        XCTAssertNil(hub.unlinkGroup(program: "chrome", groupId: "b"))
+    }
+
+    func testAffectedPartialAndFinalUnlinkRequireEveryBrowserReady() throws {
+        let (hub, frames, _) = hub(); try linked(hub)
+        hub.setRoster(program: "edge", groups: [["id": "e", "name": "Edge"]])
+        XCTAssertNil(hub.linkGroups(program: "macapp", groupId: "m", targetProgram: "edge", targetGroupId: "e"))
+        hub.applySync(program: "edge", groupId: "e", contribution: ["scopes": [["surface": "site", "sites": ["edge.example"]]]], ts: 0)
+        let chrome = try peer(hub, identity: true)
+        let edge = try peer(hub, program: "edge", identity: true)
+        _ = try acknowledge(hub, frames, chrome)
+        XCTAssertEqual(hub.unlinkGroup(program: "macapp", groupId: "m"), "browser-sync-required")
+        _ = try acknowledge(hub, frames, edge, groupID: "e")
+        XCTAssertNil(hub.unlinkGroup(program: "edge", groupId: "e"))
+        XCTAssertEqual(hub.activeClusterCount(), 1)
+        XCTAssertNil(hub.unlinkGroup(program: "macapp", groupId: "m"))
+        XCTAssertEqual(hub.activeClusterCount(), 0)
+    }
+
+    func testUnaffectedBudgetKindsKeepOfflineUnlink() throws {
+        let cases: [([String: Any], [[String: Any]], [[String: Any]])] = [
+            (["mode": "after-minutes"], [["surface": "apps", "apps": [["id": "com.google.Chrome"]]]], []),
+            (["mode": "after-minutes"], [], [["surface": "site", "sites": ["example.com"]]]),
+            (["mode": "after-minutes"], [["surface": "apps", "apps": [["id": "com.example.Editor"]]]], [["surface": "site", "sites": ["example.com"]]]),
+            (["mode": "after-minutes"], [["surface": "apps", "apps": [["id": "com.google.Chrome"]]]], [["surface": "site", "sites": [], "sitesExcept": false]]),
+            (["groupType": "custom", "mode": "after-minutes"], [["surface": "apps", "apps": [["id": "com.google.Chrome"]]]], [["surface": "site", "sites": ["example.com"]]])
+        ]
+        for (policy, apps, websites) in cases {
+            let (hub, _, _) = hub(narrow: true)
+            hub.setRoster(program: "macapp", groups: [["id": "m", "name": "Focus"]])
+            hub.setRoster(program: "chrome", groups: [["id": "b", "name": "Focus"]])
+            XCTAssertNil(hub.linkGroups(program: "macapp", groupId: "m", targetProgram: "chrome", targetGroupId: "b"))
+            hub.applySync(program: "macapp", groupId: "m", contribution: ["scalars": policy.merging(["enabled": true]) { a, _ in a }, "scopes": apps], ts: 0)
+            hub.applySync(program: "chrome", groupId: "b", contribution: ["scopes": websites], ts: 0)
+            XCTAssertNil(hub.unlinkGroup(program: "macapp", groupId: "m"))
+            XCTAssertEqual(hub.activeClusterCount(), 0)
+        }
+    }
+
+    func testCorrelatedUnlinkReceiptFollowsCommittedRemovalAndReportsRefusal() throws {
+        let (hub, frames, _) = hub(); try linked(hub)
+        let connection = try peer(hub, identity: true)
+        func request(_ id: String) throws {
+            let frame: [String: Any] = ["kind": "group-unlink", "groupId": "b", "requestID": id]
+            hub.handleIncoming(connection, key: ObjectIdentifier(connection), data: try JSONSerialization.data(withJSONObject: frame))
+        }
+        try request("pending")
+        let denied = try XCTUnwrap(frames.all().last { $0["requestID"] as? String == "pending" })
+        XCTAssertEqual(denied["ok"] as? Bool, false)
+        XCTAssertEqual(denied["error"] as? String, "browser-sync-required")
+        XCTAssertEqual(hub.activeClusterCount(), 1)
+        _ = try acknowledge(hub, frames, connection)
+        let start = frames.all().count
+        try request("ready")
+        let sent = Array(frames.all().dropFirst(start))
+        let receipt = try XCTUnwrap(sent.last)
+        XCTAssertEqual(receipt["kind"] as? String, "group-unlink-response")
+        XCTAssertEqual(receipt["requestID"] as? String, "ready")
+        XCTAssertEqual(receipt["ok"] as? Bool, true)
+        XCTAssertTrue(sent.dropLast().contains { ($0["cluster"] as? [String: Any])?["members"] as? [[String: Any]] != nil })
+        XCTAssertEqual(hub.activeClusterCount(), 0)
+    }
+
+    func testUnlinkSaveFailureHasFailureReceiptAndKeepsCanonicalBytes() throws {
+        let (hub, frames, defaults, store, directory, legacy) = try preflightFixture()
+        defer {
+            try? FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: directory.path)
+            hub.localWebStore = nil; try? FileManager.default.removeItem(at: directory)
+        }
+        hub.removePeer(ObjectIdentifier(legacy))
+        hub.setRoster(program: "chrome", groups: [["id": "b", "name": "Browser"]])
+        XCTAssertNil(hub.linkGroups(program: "macapp", groupId: "m", targetProgram: "chrome", targetGroupId: "b"))
+        hub.applySync(program: "chrome", groupId: "b", contribution: ["scopes": [["surface": "site", "sites": ["example.com"]]]], ts: 0)
+        hub.contributeLocalDefinitions(document: [:], nowMs: Date().timeIntervalSince1970 * 1000)
+        let connection = try peer(hub, identity: true)
+        _ = try acknowledge(hub, frames, connection)
+        let before = store.loadRawJSON(), registry = defaults.data(forKey: "ConnectionHub.clusters.v2")
+        try FileManager.default.setAttributes([.posixPermissions: 0o500], ofItemAtPath: directory.path)
+        let request: [String: Any] = ["kind": "group-unlink", "groupId": "b", "requestID": "save-failure"]
+        hub.handleIncoming(connection, key: ObjectIdentifier(connection), data: try JSONSerialization.data(withJSONObject: request))
+        let receipt = try XCTUnwrap(frames.all().last { $0["requestID"] as? String == "save-failure" })
+        XCTAssertEqual(receipt["ok"] as? Bool, false)
+        XCTAssertEqual(receipt["error"] as? String, "local-storage-unavailable")
+        XCTAssertEqual(store.loadRawJSON(), before)
+        XCTAssertEqual(defaults.data(forKey: "ConnectionHub.clusters.v2"), registry)
+        XCTAssertEqual(hub.activeClusterCount(), 1)
     }
 
     private func preflightFixture(nativeMode: String = "after-minutes") throws -> (ConnectionHub, Frames, UserDefaults, BlockerWebStore, URL, NWConnection) {
