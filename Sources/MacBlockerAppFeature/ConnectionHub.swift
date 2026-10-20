@@ -40,6 +40,8 @@ final class ConnectionHub: ObservableObject {
     private struct BrowserIdentitySnapshot {
         let generation: String
         let paused: Bool
+        let definitionReady: Bool
+        var applied = false
     }
 
     /// Only a native-attested application can establish overlap with an Apps
@@ -910,7 +912,9 @@ final class ConnectionHub: ObservableObject {
             lock.lock()
             let prog = peers[key]?.program ?? ((obj["program"] as? String) ?? "")
             lock.unlock()
-            setRoster(program: prog, groups: (obj["groups"] as? [[String: Any]]) ?? [])
+            if let refusal = setRoster(program: prog, groups: (obj["groups"] as? [[String: Any]]) ?? []) {
+                send(conn, dict: ["kind": "group-sync-refused", "reason": refusal])
+            }
         case "rule-time-request":
             lock.lock()
             let program = peers[key]?.program ?? ""
@@ -958,8 +962,20 @@ final class ConnectionHub: ObservableObject {
                     targetProgram: (obj["targetProgram"] as? String) ?? "", targetGroupId: (obj["targetGroupId"] as? String) ?? "") { [weak self] refusal in
                     if let refusal { self?.send(conn, dict: ["kind": "link-refused", "reason": refusal, "groupId": groupId]) }
                 }
-            } else if let refusal = unlinkGroup(program: prog, groupId: groupId) {
-                send(conn, dict: ["kind": "link-refused", "reason": refusal, "groupId": groupId])
+            } else {
+                var requestID: String?
+                if obj.keys.contains("requestID") {
+                    guard let value = obj["requestID"] as? String, Self.isVisibleBridgeIdentifier(value, maximumLength: 128) else {
+                        send(conn, dict: ["kind": "link-refused", "reason": "invalid-request", "groupId": groupId]); return
+                    }
+                    requestID = value
+                }
+                let refusal = unlinkGroup(program: prog, groupId: groupId, requestingPeerKey: key)
+                if let requestID {
+                    var response: [String: Any] = ["kind": "group-unlink-response", "requestID": requestID, "groupId": groupId, "ok": refusal == nil]
+                    if let refusal { response["error"] = refusal }
+                    send(conn, dict: response)
+                } else if let refusal { send(conn, dict: ["kind": "link-refused", "reason": refusal, "groupId": groupId]) }
             }
         case "classifier-request":
             lock.lock()
@@ -1432,16 +1448,20 @@ final class ConnectionHub: ObservableObject {
     /// updated/dissolved in the hub registry now, and the peer reconciles from
     /// the clusters snapshot on its next reconnect — and it stops a same-named
     /// group created later from silently re-joining a stale cluster, because the
-    /// cluster is gone once it drops below two members.
-    func setRoster(program: String, groups: [[String: Any]]) {
-        guard !program.isEmpty else { return }
+    /// cluster is gone once it drops below two members. A topology removal
+    /// from a browser-app/Website budget first requires updated, synced peers.
+    @discardableResult
+    func setRoster(program: String, groups: [[String: Any]]) -> String? {
+        guard !program.isEmpty else { return "invalid-program" }
         let infos = Self.rosterInfos(groups)
         do {
             try withMembershipDocument { document, save in
                 self.lock.lock(); defer { self.lock.unlock() }
                 try self.setRosterLocked(program: program, infos: infos, document: document, save: save)
             }
-        } catch { return }
+            return nil
+        } catch GroupStoreError.invalidInput(let reason) { return reason }
+        catch { return "local-storage-unavailable" }
     }
 
     private static func rosterInfos(_ groups: [[String: Any]]) -> [GroupInfo] {
@@ -1456,6 +1476,9 @@ final class ConnectionHub: ObservableObject {
             guard cluster.members.contains(program) else { return false }
             let pinned = cluster.memberGroupIds[program] ?? ""
             return pinned.isEmpty || !infos.contains(where: { $0.id == pinned })
+        }
+        for cluster in affected {
+            if let refusal = browserIdentityUnlinkRefusalLocked(cluster) { throw GroupStoreError.invalidInput(refusal) }
         }
         try preserveDetachedLocalLocked(affected, removing: program, document: document, save: save)
         rosters[program] = infos
@@ -1809,12 +1832,16 @@ final class ConnectionHub: ObservableObject {
     /// Takes a group out of its link (the Unlink button or a tool). Both keep
     /// the shared settings; each keeps only its own program's lines. Refused
     /// while the link is locked.
-    func unlinkGroup(program: String, groupId: String) -> String? {
+    func unlinkGroup(program: String, groupId: String, requestingPeerKey: ObjectIdentifier? = nil) -> String? {
         guard clusterStorageWritable else { return "unsupported-storage" }
         do {
             let refusal = try withMembershipDocument { document, save -> String? in
                 self.lock.lock(); defer { self.lock.unlock() }
+                if let requestingPeerKey {
+                    guard let requester = self.peers[requestingPeerKey], requester.connected, requester.program == program else { return "browser-unavailable" }
+                }
                 guard let cluster = self.clusterLocked(program: program, groupId: groupId) else { return "not-linked" }
+                if let refusal = self.browserIdentityUnlinkRefusalLocked(cluster) { return refusal }
                 if WebStoreDocument.isLocked(cluster.sharedLock) { return "group-locked" }
                 if let pinned = cluster.memberGroupIds[Self.localProgram],
                    let native = (document?["blockedGroups"] as? [[String: Any]])?.first(where: { ($0["id"] as? String) == pinned }),
@@ -1822,24 +1849,11 @@ final class ConnectionHub: ObservableObject {
                    WebStoreDocument.isLocked(native) { return "group-locked" }
                 let before = self.clusters.mapValues { $0.editorCopy() }
                 let oldUnlinked = self.unlinkedLocal, oldSeen = self.localDefinitionSeen
-                let departingLegacy = self.peers.values.first {
-                    $0.connected && $0.program == program && $0.browserIdentity == nil && Self.browserPrograms.contains(program)
-                }
-                let canonicalBeforeRemoval = self.clusterJSONObject(cluster)
-                let restoreLegacy = departingLegacy != nil && cluster.contributed.contains(program)
-                    && self.browserIdentityPauseRequiredLocked(cluster)
                 do {
                     try self.preserveDetachedLocalLocked([cluster], removing: program, document: document, save: save)
                     self.removeMemberLocked(cluster, program: program)
                     self.persistClustersLocked()
                     guard self.clusterStorageWritable else { throw GroupStoreError.invalidInput("cluster-storage-unavailable") }
-                    if restoreLegacy, let departingLegacy {
-                        // v4 legacy consumers persisted the effective disabled
-                        // wire value. Restore the canonical definition while
-                        // their contributed membership still matches, then
-                        // detach in the same FIFO. Never emit on failed save.
-                        self.enqueueLocked(["kind": "cluster-updated", "cluster": canonicalBeforeRemoval], to: [departingLegacy.connection])
-                    }
                     self.broadcastClusterLocked(self.clusterJSONObject(cluster))
                     return nil
                 } catch {
@@ -3053,6 +3067,30 @@ final class ConnectionHub: ObservableObject {
         browserIdentityPauseRequiredLocked(scalars: cluster.sharedScalars, scopes: cluster.sharedScopes, members: cluster.members)
     }
 
+    /// Structural recognition also applies while disconnected: a persisted
+    /// legacy disabled echo cannot be repaired safely by an offline unlink.
+    /// The ACK proves durable bootstrap/recovery adoption, not every later
+    /// usage tick. Updated clients serialize the final ordinary unlink state.
+    private func browserIdentityUnlinkRefusalLocked(_ cluster: ClusterState) -> String? {
+        let browsers = cluster.members.filter { Self.browserPrograms.contains($0) }.sorted()
+        guard affectsBrowserBudgetLocked(cluster) else { return nil }
+        let live = peers.values.filter { $0.connected }
+        for program in browsers {
+            guard let peer = live.first(where: { $0.program == program }) else { return "browser-connect-required" }
+            guard peer.browserIdentity != nil else { return "browser-upgrade-required" }
+            guard let snapshot = peer.browserIdentitySnapshots[cluster.id], snapshot.applied,
+                  snapshot.definitionReady, cluster.members.isSubset(of: cluster.contributed),
+                  snapshot.paused == browserIdentityPauseRequiredLocked(cluster) else { return "browser-sync-required" }
+        }
+        return nil
+    }
+
+    private func affectsBrowserBudgetLocked(_ cluster: ClusterState) -> Bool {
+        cluster.members.contains {
+            Self.browserPrograms.contains($0) && browserIdentityBudgetPredicate(cluster.sharedScalars, cluster.sharedScopes, $0)
+        }
+    }
+
     /// Called under the file lock by explicit native/MCP/side-effect writers.
     /// Ordinary clock expiry and engine accounting never enter this gate.
     func mutationRefusal(before: [String: Any], after: [String: Any]) -> String? {
@@ -3063,6 +3101,7 @@ final class ConnectionHub: ObservableObject {
             guard let id = cluster.memberGroupIds[Self.localProgram],
                   let original = old.first(where: { $0["id"] as? String == id }) else { continue }
             let candidate = updated.first(where: { $0["id"] as? String == id })
+            if candidate == nil, let refusal = browserIdentityUnlinkRefusalLocked(cluster) { return refusal }
             let definitionChanged = WebStoreDocument.canonicalJSON(original) != WebStoreDocument.canonicalJSON(candidate)
             let runtimeChanged = ["groupSnoozes", "usageTimersMs", "usageResetAtMs", "usageBucketsMs", "groupSnoozeTotalsMs"].contains { key in
                 WebStoreDocument.canonicalJSON((before[key] as? [String: Any])?[id]) != WebStoreDocument.canonicalJSON((after[key] as? [String: Any])?[id])
@@ -3081,9 +3120,10 @@ final class ConnectionHub: ObservableObject {
 
     private func browserIdentityTransitionPendingLocked(_ cluster: ClusterState) -> Bool {
         let paused = browserIdentityPauseRequiredLocked(cluster)
+        let ready = cluster.members.isSubset(of: cluster.contributed)
         return peers.values.contains { peer in
             peer.connected && Self.browserPrograms.contains(peer.program)
-                && peer.browserIdentitySnapshots[cluster.id].map { $0.paused != paused } == true
+                && peer.browserIdentitySnapshots[cluster.id].map { $0.paused != paused || $0.definitionReady != ready } == true
         }
     }
 
@@ -3111,33 +3151,38 @@ final class ConnectionHub: ObservableObject {
               let cluster = clusterLocked(program: peer.program, groupId: groupID),
               let expected = peer.browserIdentitySnapshots[cluster.id],
               expected.paused == browserIdentityPauseRequiredLocked(cluster),
+              expected.definitionReady == cluster.members.isSubset(of: cluster.contributed),
               let ack = contribution["browserIdentitySnapshotApplied"] as? [String: Any],
               Set(ack.keys) == ["generation"],
               let generation = ack["generation"] as? String else { return false }
-        return generation == expected.generation
+        guard generation == expected.generation else { return false }
+        peers[peerKey]?.browserIdentitySnapshots[cluster.id]?.applied = true
+        return true
     }
 
     /// Canonical serialization remains separate from the effective wire view.
     /// The generation belongs to one connection and cluster, and rotates only
-    /// on bootstrap or a pause/recovery transition, not on usage broadcasts.
+    /// on bootstrap/completion or a pause/recovery transition, not on usage
+    /// broadcasts. An original-retention ACK is not a full-union adoption ACK.
     private func browserIdentityProjectionLocked(_ snapshot: [String: Any], peerKey: ObjectIdentifier? = nil,
                                                  effectivePause: Bool = false) -> [String: Any] {
         guard let id = snapshot["id"] as? String, let cluster = clusters[id] else { return snapshot }
         let paused = browserIdentityPauseRequiredLocked(cluster)
+        let ready = cluster.members.isSubset(of: cluster.contributed)
         var generation = "local"
         if let peerKey, let peer = peers[peerKey], Self.browserPrograms.contains(peer.program) {
             let prior = peer.browserIdentitySnapshots[id]
-            if let prior, prior.paused == paused { generation = prior.generation }
+            if let prior, prior.paused == paused, prior.definitionReady == ready { generation = prior.generation }
             else {
                 generation = UUID().uuidString
-                peers[peerKey]?.browserIdentitySnapshots[id] = BrowserIdentitySnapshot(generation: generation, paused: paused)
+                peers[peerKey]?.browserIdentitySnapshots[id] = BrowserIdentitySnapshot(generation: generation, paused: paused, definitionReady: ready)
             }
         }
         var result = snapshot
         var shared = result["shared"] as? [String: Any] ?? [:]
         var scalars = shared["scalars"] as? [String: Any] ?? [:]
         shared["browserIdentityStatus"] = ["state": paused ? "upgrade-required" : "ready", "generation": generation,
-            "canonicalEnabled": (scalars["enabled"] as? Bool) ?? true]
+            "canonicalEnabled": (scalars["enabled"] as? Bool) ?? true, "affectsBrowserBudget": affectsBrowserBudgetLocked(cluster)]
         if effectivePause && paused { scalars["enabled"] = false }
         shared["scalars"] = scalars
         result["shared"] = shared
