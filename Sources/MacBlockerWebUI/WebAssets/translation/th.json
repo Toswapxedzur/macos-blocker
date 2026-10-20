@@ -1279,5 +1279,9 @@
   "classifier.dictionary.termSummary": "คำศัพท์ · {count} รายการ · {version}",
   "classifier.dictionary.creatorSummary": "ครีเอเตอร์ · {summary} · {version}",
   "classifier.dictionary.configure": "กำหนดค่าพจนานุกรม",
-  "safari.app.quit": "ออกจาก Safari Vault"
+  "safari.app.quit": "ออกจาก Safari Vault",
+  "link.browserUpgradeRequired": "อัปเดต browser Vault extension เพื่อให้งบประมาณนี้ทำงานต่อ การตั้งค่าและการใช้งานยังคงเก็บไว้",
+  "link.browserIdentitySyncPending": "งบประมาณที่เชื่อมโยงนี้ยังซิงค์อยู่ ลองอีกครั้งเมื่อซิงค์เสร็จ",
+  "link.browserIdentityPendingEditsInvalid": "อ่านการแก้ไขที่รอดำเนินการซึ่งบันทึกไว้ไม่ได้ การตั้งค่าและการใช้งานที่บันทึกไว้ยังคงเก็บรักษาไว้",
+  "link.browserConnectRequired": "เชื่อมต่อ browser Vault extension ก่อนยกเลิกการเชื่อมโยงงบประมาณนี้ การตั้งค่าและการใช้งานที่บันทึกไว้ยังคงเก็บรักษาไว้"
 }

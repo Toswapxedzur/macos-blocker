@@ -1001,7 +1001,18 @@ function renderLinkSection(group, editable) {
   groupLinkButton.disabled = groupLinkTarget.disabled || !groupLinkTarget.value;
 }
 
+function browserIdentityErrorText(reason) {
+  const value = String(reason || "");
+  if (["browser-upgrade-required", "browser-identity-upgrade-required"].includes(value)) return t("link.browserUpgradeRequired");
+  if (["browser-identity-sync-pending", "browser-sync-required"].includes(value)) return t("link.browserIdentitySyncPending");
+  if (value === "browser-connect-required") return t("link.browserConnectRequired");
+  if (["browser-identity-pending-edits-invalid", "browser-identity-pending-edits-too-large"].includes(value)) return t("link.browserIdentityPendingEditsInvalid");
+  return value;
+}
 function showLinkRefusal(reason) {
+  if (["browser-upgrade-required", "browser-identity-upgrade-required", "browser-identity-sync-pending", "browser-sync-required", "browser-connect-required"].includes(String(reason))) {
+    setStatus(browserIdentityErrorText(reason), true); return;
+  }
   const key = `link.refused.${String(reason || "")}`;
   const text = t(key);
   setStatus(text && text !== key ? text : t("link.refused.generic"), true);

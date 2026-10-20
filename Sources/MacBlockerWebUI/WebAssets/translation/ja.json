@@ -1279,5 +1279,9 @@
   "classifier.dictionary.termSummary": "用語 · {count} 件 · {version}",
   "classifier.dictionary.creatorSummary": "クリエイター · {summary} · {version}",
   "classifier.dictionary.configure": "辞書を設定",
-  "safari.app.quit": "Safari Vaultを終了"
+  "safari.app.quit": "Safari Vaultを終了",
+  "link.browserUpgradeRequired": "この予算を再開するには、ブラウザーのVault拡張機能を更新してください。設定と使用量は保持されています。",
+  "link.browserIdentitySyncPending": "このリンク済み予算はまだ同期中です。同期が完了してから再試行してください。",
+  "link.browserIdentityPendingEditsInvalid": "保存された保留中の編集を読み取れませんでした。保存済みの設定と使用量は保持されています。",
+  "link.browserConnectRequired": "この予算のリンクを解除する前に、ブラウザーのVault拡張機能を接続してください。保存済みの設定と使用量は保持されています。"
 }
