@@ -35,6 +35,32 @@ final class ActivityStoreTests: XCTestCase {
         return s
     }
 
+    func testAllUsageMapIncludesSavedWebsiteOnlyHistoryWhileRecordingIsOff() throws {
+        let s = store(now: day("2026-09-20T12:00:00Z"))
+        let start = day("2026-09-19T09:00:00Z")
+        XCTAssertTrue(s.record(record("site", .webVisit, at: start, seconds: 100, key: "example.org"), settings: allEnabled()))
+        XCTAssertTrue(s.record(record("overlap", .webVisit, at: start.addingTimeInterval(20), seconds: 50, key: "example.com"), settings: allEnabled()))
+        XCTAssertNotNil(s.saveSettings(ActivitySettings()))
+
+        let detail = s.detail(pick: .all, mapDays: 2, barDays: 2)
+        XCTAssertEqual(detail.map.daySeconds, [100, 0], "Saved website time remains in All usage, with overlaps counted once")
+        XCTAssertFalse(s.loadSettings().isEnabled(.appUsage))
+        XCTAssertFalse(s.loadSettings().isEnabled(.webVisit))
+    }
+
+    func testAllUsageMapUnionsAppsAndWebsitesAcrossMidnightWithoutContentTime() {
+        let s = store(now: day("2026-09-20T12:00:00Z"))
+        let start = day("2026-09-19T23:59:50Z")
+        XCTAssertTrue(s.record(record("app", .appUsage, at: start, seconds: 20, key: "browser"), settings: allEnabled()))
+        XCTAssertTrue(s.record(record("site", .webVisit, at: start.addingTimeInterval(5), seconds: 30, key: "example.org"), settings: allEnabled()))
+        XCTAssertTrue(s.record(record("later", .webVisit, at: day("2026-09-20T00:01:00Z"), seconds: 5), settings: allEnabled()))
+        XCTAssertTrue(s.record(record("content", .contentWatched, at: day("2026-09-20T02:00:00Z"), seconds: 600), settings: allEnabled()))
+
+        XCTAssertEqual(s.detail(pick: .all, mapDays: 2, barDays: 2).map.daySeconds, [10, 30])
+        XCTAssertEqual(s.detail(pick: .item(.appUsage, "browser"), mapDays: 2, barDays: 2).map.daySeconds, [10, 10])
+        XCTAssertEqual(s.detail(pick: .item(.webVisit, "example.org"), mapDays: 2, barDays: 2).map.daySeconds, [5, 25])
+    }
+
     private final class SettingsEvents: @unchecked Sendable {
         private let lock = NSLock()
         private var values: [ActivitySettingsSnapshot] = []

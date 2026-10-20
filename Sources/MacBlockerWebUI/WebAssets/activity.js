@@ -203,7 +203,7 @@
     apps.forEach(function (b) {
       var overlaps = {}, inSites = attribution.byBrowser[b.key] || {};
       Object.keys(inSites).forEach(function (key) { overlaps[key] = inSites[key] * spanSeconds; });
-      if (b.seconds >= 1) items.push({ item: b, seconds: b.seconds, kind: "App", browser: !!BROWSERS[b.key], siteSeconds: overlaps });
+      if (b.seconds >= 1) items.push({ item: b, seconds: b.seconds, kind: "App", browser: !!isBrowserApp(b.key), siteSeconds: overlaps });
     });
     sites.forEach(function (b) { items.push({ item: b, seconds: b.seconds, kind: "Website" }); });
     return items.sort(function (x, y) { return y.seconds - x.seconds; });
@@ -278,14 +278,14 @@
   // to each browser segment (fractions of the range). `pieces` feed the strip,
   // `byBrowser` the browsers' own time in the list.
   function attributeSites(apps, sites) {
-    var pieces = [], byBrowser = {};
+    var pieces = [], byBrowser = {}, covered = new Map();
     // Sites by start; each browser block looks only at the sites that can
     // overlap it (every pair was ~6 M checks for 90 days).
     var sorted = sites.slice().sort(function (a, b) { return a.startFraction - b.startFraction; });
     var starts = sorted.map(function (w) { return w.startFraction; });
     var longest = sorted.reduce(function (m, w) { return Math.max(m, w.widthFraction); }, 0);
     apps.forEach(function (s) {
-      if (!BROWSERS[s.key]) return;
+      if (!isBrowserApp(s.key)) return;
       var from = s.startFraction, to = s.startFraction + s.widthFraction;
       // first site that could still be running at `from`
       var lo = 0, hi = starts.length, bound = from - longest;
@@ -295,9 +295,18 @@
         var a = Math.max(from, w.startFraction), b = Math.min(to, w.startFraction + w.widthFraction);
         if (b <= a) continue;
         pieces.push({ from: a, to: b, site: w, browser: s });
+        var intervals = covered.get(w) || []; intervals.push([a, b]); covered.set(w, intervals);
         var perSite = byBrowser[s.key] || (byBrowser[s.key] = {});
         perSite[w.key] = (perSite[w.key] || 0) + (b - a);
       }
+    });
+    sites.forEach(function (w) {
+      var cursor = w.startFraction, end = cursor + w.widthFraction;
+      (covered.get(w) || []).sort(function (a, b) { return a[0] - b[0]; }).forEach(function (interval) {
+        if (interval[0] > cursor) pieces.push({ from: cursor, to: interval[0], site: w, browser: null });
+        cursor = Math.max(cursor, interval[1]);
+      });
+      if (cursor < end) pieces.push({ from: cursor, to: end, site: w, browser: null });
     });
     return { pieces: pieces, byBrowser: byBrowser };
   }
@@ -317,6 +326,13 @@
     "com.brave.Browser": 1, "company.thebrowser.Browser": 1, "com.vivaldi.Vivaldi": 1,
     "com.operasoftware.Opera": 1, "com.apple.Safari": 1, "org.mozilla.firefox": 1
   };
+  // Windows records unpackaged apps by executable path, rather than a Mac bundle ID.
+  var WINDOWS_BROWSERS = new Set(["chrome.exe", "msedge.exe", "firefox.exe", "opera.exe", "brave.exe", "vivaldi.exe", "iexplore.exe"]);
+  function isBrowserApp(key) {
+    if (BROWSERS[key]) return true;
+    return window.__CB_DESKTOP_PROGRAM_ID === "windowsapp" && WINDOWS_BROWSERS.has(String(key || "").split(/[\\/]/).pop().toLowerCase());
+  }
+
 
   // ── Hover card (owner 2026-09-29: hover any bar or pie for details) ──
   // Our own card, not the system tooltip. A chart part registers what it
@@ -1013,13 +1029,19 @@
     var items = set ? usageItemsRaw.filter(function (entry) { return set.has(entryID(entry)); }) : mergeItems(usageItemsRaw);
     usageItemsShown = items;
     var segments = apps.timeline.filter(function (s) { return !set || set.has("app|" + s.key); });
-    var pieces = attribution.pieces.filter(function (p) { return !set || set.has("web|" + p.site.key) || set.has("app|" + p.browser.key); });
-    // Time used: the apps in front (a browser's sites are inside its time).
-    var used = set
-      ? segments.reduce(function (sum, s) { return sum + s.seconds; }, 0)
-        + pieces.filter(function (p) { return !set.has("app|" + p.browser.key); })
-          .reduce(function (sum, p) { return sum + (p.to - p.from) * spanSeconds; }, 0)
-      : apps.timeline.reduce(function (sum, s) { return sum + s.seconds; }, 0);
+    var pieces = attribution.pieces.filter(function (p) { return !set || set.has("web|" + p.site.key) || (p.browser && set.has("app|" + p.browser.key)); });
+    // Recorded websites remain real usage when Apps recording has gaps or is off.
+    // Merge the selected intervals so overlapping app/site clocks count once.
+    var intervals = segments.map(function (s) { return [s.startFraction, s.startFraction + s.widthFraction]; })
+      .concat(pieces.map(function (p) { return [p.from, p.to]; }))
+      .sort(function (a, b) { return a[0] - b[0]; });
+    var usedFraction = 0, cursor = -Infinity;
+    intervals.forEach(function (interval) {
+      var from = Math.max(0, interval[0], cursor), to = Math.min(1, interval[1]);
+      if (to > from) usedFraction += to - from;
+      cursor = Math.max(cursor, to);
+    });
+    var used = usedFraction * spanSeconds;
     var pieRaw = usageItemsRaw.filter(function (entry) { return !entry.browser && (!set || set.has(entryID(entry))); });
     var pieItems = set ? pieRaw : mergeItems(pieRaw);
     return { items: items, pieItems: pieItems, segments: segments, pieces: pieces, used: used, empty: Math.max(0, spanSeconds - used) };
@@ -1078,18 +1100,19 @@
   function usageStrip(data) {
     var f = stripFrame(44, snapshot);
     if (data.segments.length + data.pieces.length > 128) return stripCanvas(f, [
-      ...data.segments.map(s => ({from:s.startFraction,to:s.startFraction+s.widthFraction,color:colorOf(colorIndexFor("app",s.key,s.colorIndex)),info:()=>segmentInfo(s,BROWSERS[s.key] ? at("appBrowser", "App · browser") : "App",s.startedAtMs,s.startedAtMs+s.seconds*1000,f.multiDay)})),
-      ...data.pieces.map(piece => ({from:piece.from,to:piece.to,height:44*.85,color:colorOf(colorIndexFor("web",piece.site.key,piece.site.colorIndex)),info:()=>segmentInfo(piece.site,"Website",snapshot.rangeStartMs+piece.from*f.span,snapshot.rangeStartMs+piece.to*f.span,f.multiDay,piece.browser)}))
+      ...data.segments.map(s => ({from:s.startFraction,to:s.startFraction+s.widthFraction,color:colorOf(colorIndexFor("app",s.key,s.colorIndex)),info:()=>segmentInfo(s,isBrowserApp(s.key) ? at("appBrowser", "App · browser") : "App",s.startedAtMs,s.startedAtMs+s.seconds*1000,f.multiDay)})),
+      ...data.pieces.map(piece => ({from:piece.from,to:piece.to,height:piece.browser ? 44*.85 : 44,color:colorOf(colorIndexFor("web",piece.site.key,piece.site.colorIndex)),info:()=>segmentInfo(piece.site,"Website",snapshot.rangeStartMs+piece.from*f.span,snapshot.rangeStartMs+piece.to*f.span,f.multiDay,piece.browser)}))
     ],44);
     data.segments.forEach(function (s) {
       var seg = paint(el("div", "seg"), colorIndexFor("app", s.key, s.colorIndex));
       place(seg, s.startFraction, s.startFraction + s.widthFraction);
-      hoverable(seg, function () { return segmentInfo(s, BROWSERS[s.key] ? at("appBrowser", "App · browser") : "App", s.startedAtMs, s.startedAtMs + s.seconds * 1000, f.multiDay); });
+      hoverable(seg, function () { return segmentInfo(s, isBrowserApp(s.key) ? at("appBrowser", "App · browser") : "App", s.startedAtMs, s.startedAtMs + s.seconds * 1000, f.multiDay); });
       f.track.appendChild(seg);
     });
     data.pieces.forEach(function (piece) {
       var w = piece.site;
       var site = paint(el("div", "seg site"), colorIndexFor("web", w.key, w.colorIndex));
+      if (!piece.browser) site.style.height = "100%";
       place(site, piece.from, piece.to);
       hoverable(site, function () { return segmentInfo(w, "Website", snapshot.rangeStartMs + piece.from * f.span, snapshot.rangeStartMs + piece.to * f.span, f.multiDay, piece.browser); });
       f.track.appendChild(site);
@@ -1425,17 +1448,17 @@
         if (set && !set.has("app|" + seg.key)) return;
         var color = colorOf(colorIndexFor("app", seg.key, seg.colorIndex));
         binApps.push({ key: seg.key, label: seg.label || seg.key, from: seg.startFraction, to: seg.startFraction + seg.widthFraction, color: color });
-        blocks.push({ from: seg.startFraction, to: seg.startFraction + seg.widthFraction, color: color, browser: !!BROWSERS[seg.key],
-          info: function () { return { title: seg.label || seg.key, key: seg.key, lines: [(BROWSERS[seg.key] ? at("appBrowser", "App · browser") : "App") + " · " + dayName(day.dayStartMs),
+        blocks.push({ from: seg.startFraction, to: seg.startFraction + seg.widthFraction, color: color, browser: !!isBrowserApp(seg.key),
+          info: function () { return { title: seg.label || seg.key, key: seg.key, lines: [(isBrowserApp(seg.key) ? at("appBrowser", "App · browser") : "App") + " · " + dayName(day.dayStartMs),
             hourMinute(seg.startFraction) + " – " + hourMinute(seg.startFraction + seg.widthFraction) + " · " + fmt(seg.widthFraction * 86400)] }; } });
       });
       attribution.pieces.forEach(function (piece) {
-        if (set && !set.has("web|" + piece.site.key) && !set.has("app|" + piece.browser.key)) return;
+        if (set && !set.has("web|" + piece.site.key) && !(piece.browser && set.has("app|" + piece.browser.key))) return;
         var color = colorOf(colorIndexFor("web", piece.site.key, piece.site.colorIndex));
-        binSites.push({ key: piece.site.key, label: piece.site.label || piece.site.key, browserKey: piece.browser.key,
+        binSites.push({ key: piece.site.key, label: piece.site.label || piece.site.key, browserKey: piece.browser ? piece.browser.key : null,
           from: piece.from, to: piece.to, color: color });
-        blocks.push({ from: piece.from, to: piece.to, narrow: true, color: color,
-          info: function () { return { title: piece.site.label || piece.site.key, key: piece.site.key, lines: [at("websiteIn", "Website · in {browser}", { browser: piece.browser.label || piece.browser.key }) + " · " + dayName(day.dayStartMs),
+        blocks.push({ from: piece.from, to: piece.to, narrow: !!piece.browser, color: color,
+          info: function () { return { title: piece.site.label || piece.site.key, key: piece.site.key, lines: [(piece.browser ? at("websiteIn", "Website · in {browser}", { browser: piece.browser.label || piece.browser.key }) : at("kind.Website", "Website")) + " · " + dayName(day.dayStartMs),
             hourMinute(piece.from) + " – " + hourMinute(piece.to) + " · " + fmt((piece.to - piece.from) * 86400)] }; } });
       });
       ordered.push({ start: day.dayStartMs, blocks: blocks, browserBlocks: blocks.filter(function (block) { return block.browser; }),
@@ -1475,17 +1498,18 @@
 
   function usageSection(s) {
     var section = el("section", "panel act-section");
+    var data = usageData();
     var head = el("div", "section-head");
     head.appendChild(el("h2", null, at("usage", "Usage")));
     head.appendChild(usageFocusSelect());
     head.appendChild(rangeTabs("usage"));
     var appsOn = s.appUsage && s.appUsage.enabled, webOn = s.webVisit && s.webVisit.enabled;
-    if (!appsOn && !webOn) {
+    // Recording controls future collection; saved rows remain readable while off.
+    if (!appsOn && !webOn && !usageItemsRaw.length) {
       section.appendChild(head);
       section.appendChild(notRecorded(["app-usage", "web-visit"]));
       return section;
     }
-    var data = usageData();
     var summary = el("span", "section-summary");
     summary.appendChild(el("strong", null, fmt(data.used)));
     summary.appendChild(document.createTextNode(at("usageSummarySuffix", " used · {unrecorded} not recorded", { unrecorded: fmt(data.empty) })));
@@ -1548,16 +1572,17 @@
   // other pages (their time not on any one piece).
   function contentData() {
     var set = contentFocusSet();
-    var pieces = (contentSnap.watchedTimeline || []).map(function (s) {
+    var recorded = contentSnap.watchedTimeline || [];
+    var sites = (contentSnap.web && contentSnap.web.timeline || []).filter(function (w) {
+      return PLATFORM_SITES.some(function (p) { return w.key === p[0] || w.key.endsWith("." + p[0]); });
+    });
+    var pieces = recorded.map(function (s) {
       var tags = tagsOf(s.key);
       var shown = set ? tags.filter(function (t) { return set.has(t.id); }) : tags;
       return { seg: s, startMs: s.startedAtMs, endMs: s.startedAtMs + s.seconds * 1000, tags: shown.length ? shown : [UNTAGGED] };
     }).filter(function (p) { return !set || p.tags[0] !== UNTAGGED; });
     var other = [];
     if (!set) {
-      var sites = (contentSnap.web && contentSnap.web.timeline || []).filter(function (w) {
-        return PLATFORM_SITES.some(function (p) { return w.key === p[0] || w.key.endsWith("." + p[0]); });
-      });
       sites.forEach(function (w) {
         var start = w.startedAtMs, end = w.startedAtMs + w.seconds * 1000;
         var cuts = pieces.filter(function (p) { return p.endMs > start && p.startMs < end; })
@@ -1582,7 +1607,7 @@
     var tagEntries = Object.keys(byTag).map(function (k) { return byTag[k]; }).sort(function (a, b) { return b.seconds - a.seconds; });
     var watched = pieces.reduce(function (sum, p) { return sum + (p.endMs - p.startMs) / 1000; }, 0);
     var otherSeconds = other.reduce(function (sum, o) { return sum + (o.endMs - o.startMs) / 1000; }, 0);
-    return { pieces: pieces, other: other, tags: tagEntries, watched: watched, otherSeconds: otherSeconds };
+    return { pieces: pieces, other: other, tags: tagEntries, watched: watched, otherSeconds: otherSeconds, hasHistory: recorded.length > 0 || sites.length > 0 };
   }
 
   function contentStrip(data) {
@@ -1774,12 +1799,12 @@
     head.appendChild(el("h2", null, at("label.Content", "Content")));
     head.appendChild(contentFocusSelect());
     head.appendChild(rangeTabs("content"));
-    if (!(s.contentWatched && s.contentWatched.enabled)) {
+    var data = contentData();
+    if (!(s.contentWatched && s.contentWatched.enabled) && !data.hasHistory) {
       section.appendChild(head);
       section.appendChild(notRecorded(["content-watched"]));
       return section;
     }
-    var data = contentData();
     var summary = el("span", "section-summary");
     summary.appendChild(el("strong", null, fmt(data.watched)));
     summary.appendChild(document.createTextNode(at("contentSummarySuffix", " on content") + (contentFocus === "all" ? " · " + at("timeOnOtherPages", "{time} other pages", { time: fmt(data.otherSeconds) }) : "")));
@@ -1964,6 +1989,16 @@
     picker.month = Math.min(d.getTime(), now.getTime());
     drawPicker();
   }
+  function positionPicker() {
+    if (!picker) return;
+    var box = picker.node, r = picker.anchor.getBoundingClientRect();
+    var bounds = box.getBoundingClientRect(), gap = 6, inset = 8;
+    var below = r.bottom + gap, above = r.top - bounds.height - gap;
+    var top = below + bounds.height <= window.innerHeight - inset ? below
+      : above >= inset ? above : Math.max(inset, window.innerHeight - bounds.height - inset);
+    box.style.top = top + "px";
+    box.style.left = Math.max(inset, Math.min(r.left, window.innerWidth - bounds.width - inset)) + "px";
+  }
   function drawPicker() {
     var box = picker.node, month = new Date(picker.month), today = dayStart(Date.now());
     var chosen = ranges[picker.section].indexOf("since:") === 0 ? +ranges[picker.section].slice(6) : null;
@@ -1994,10 +2029,9 @@
     }
     box.appendChild(grid);
     box.appendChild(el("div", "picker-note", at("fromTheSelectedDayUntilNow", "From the selected day until now.")));
-    var r = picker.anchor.getBoundingClientRect();
-    box.style.top = (r.bottom + 6) + "px";
-    box.style.left = Math.max(8, Math.min(r.left, window.innerWidth - 268)) + "px";
+    positionPicker();
   }
+  window.addEventListener("resize", positionPicker);
   scope.addEventListener("mousedown", function (e) {
     if (!picker) return;
     var path = e.composedPath();

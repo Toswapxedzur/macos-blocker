@@ -467,7 +467,12 @@ public final class ActivityStore: @unchecked Sendable {
         let mapRecords: [ActivityRecord]
         switch pick {
         case .all:
-            mapRecords = records(category: .appUsage, from: mapFrom, to: now)
+            // Websites remain observed usage when Apps recording is off or has
+            // gaps. Browser and site intervals describe the same elapsed time.
+            mapRecords = ActivityDashboard.union(
+                records(category: .appUsage, from: mapFrom, to: now)
+                + records(category: .webVisit, from: mapFrom, to: now)
+            )
         case .item(let category, let key):
             mapRecords = records(category: category, from: mapFrom, to: now).filter { $0.key == key }
         case .group(let id):
