@@ -85,3 +85,10 @@ keyboard controls and model-menu dismissal. It also runs against generated
 Windows assets on mini1; native Windows verification remains in the VM.
 
 `tag-create-drafts.js` reproduces model-progress snapshots replacing a pending tag form, verifies both fields and caret survive, keeps creation explicit, and checks create/cancel draft isolation. Run with `UI_TEST_SCRIPT=classifier/Tests/WebUI/tag-create-drafts.js UI_TEST_EXPRESSION="runTagDraftTests()"` through `autosave.mjs` at wide and narrow widths. Verified on owner-selected mini2 during the public-release audit.
+
+`chatgpt.js` covers the optional account/provider selector, unavailable saved
+models, cloud/local controls, explicit search, usage limits, Retry, sign-in
+cancellation, plan-use welcome, and drafts across snapshots. Run through
+`autosave.mjs` with `UI_TEST_SCRIPT=classifier/Tests/WebUI/chatgpt.js` and
+`UI_TEST_EXPRESSION='runChatGPTTests()'` at wide and narrow widths. The fixture
+simulates account/model snapshots and makes no provider requests.
