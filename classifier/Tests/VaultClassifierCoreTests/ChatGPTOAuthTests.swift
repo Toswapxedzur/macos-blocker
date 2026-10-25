@@ -9,6 +9,21 @@ import Security
 #endif
 
 final class ChatGPTOAuthTests: XCTestCase {
+    // Public-only vector signed by a disposable Windows CNG key. The private
+    // key was never exported. Exercise both macOS Security and Windows BCrypt.
+    func testNativeRSAWithPortablePublicFixtureRejectsTampering() throws {
+        let token = "eyJhbGciOiJSUzI1NiIsImtpZCI6InZhdWx0LW5hdGl2ZS1maXh0dXJlIn0.eyJzdWIiOiJuYXRpdmUtdGVzdC1vbmx5IiwiaXNzIjoiaHR0cHM6Ly9hdXRoLm9wZW5haS5jb20iLCJhdWQiOiJvYWlhcHBfZml4dHVyZSIsIm5vbmNlIjoibmF0aXZlLWZpeHR1cmUtbm9uY2UiLCJpYXQiOjE3MDAwMDAwMDAsImV4cCI6MTcwMDAwMDEyMH0.N9NqDLxft-oryFnqae5HM_y-b-sMnq9j-CJ-IqK9x-RjFFBpS-FvwGnbQfcqSy4hHPwEd4dYP2dPRzIkct1-3ke2bVhO94ZRvjIKqO7n6oIapxypdA99U0bF2St7fkML4AqcJcLF8OwlmMTQ1jAQkl3MVSm9KLZjr0oCOHWb-0RzQDa-JBkm1WqjAoRSXt7zYsmHOKswN9uJ8V1d45N1K-xcwFCiwRpF05K2SeSWRFu4G64Gbtlk_K8_99JtO-w98xOtA4-w9PXmJ3ClaHiOsw5RMlBy144v5pJ27QCDU3yUPXu8d5iiQfYJ0EYGiJBvR2NW5tqhL947lI-yf-da7w"
+        let jwks = Data(#"{"keys":[{"kid":"vault-native-fixture","n":"6Dv9VIE4mYtq84BvjZ2NHqwR-9jMfBhfz3FUE6dY1DJxACo-9CzvN3T2Rjp4LyDTfCEur2ZZLeztDsjaH-9aXr9b32Iy5-gLdbSSLhjphoY1PQwYTzy_e74JMvPxlD7S-lDlx1QXoBfU06JQHP1dG12hP1YUm1LBHLbL6pICyFmp9nd4IGMHyD5wBjgSD9r9BbrlpSuYjz829hUjPe-2y6ZMWXH8hR8Cu4sBo5Uax7R7r-1lSqNpLICC4bADkbEoc9qbmnRjWN5pJ_4BwgJ9WFzfCW186FmbRdictb0Z74c03kdACtoZhyQYqRsZ49v-AtKR6FBAIkJE9OJRy24BgQ","alg":"RS256","e":"AQAB","kty":"RSA","use":"sig"}]}"#.utf8)
+        let now = Date(timeIntervalSince1970: 1_700_000_060)
+        let identity = try ChatGPTOAuth.verifyIdentity(token, jwks: jwks, clientID: "oaiapp_fixture", nonce: "native-fixture-nonce", now: now)
+        XCTAssertEqual(identity.subject, "native-test-only")
+        var parts = token.split(separator: ".").map(String.init)
+        var signature = try XCTUnwrap(ChatGPTOAuth.decodeBase64URL(parts[2]))
+        signature[signature.startIndex] ^= 1
+        parts[2] = ChatGPTOAuth.base64URL(signature)
+        XCTAssertThrowsError(try ChatGPTOAuth.verifyIdentity(parts.joined(separator: "."), jwks: jwks, clientID: "oaiapp_fixture", nonce: "native-fixture-nonce", now: now))
+    }
+
     #if canImport(Security)
     func testIdentityRequiresNativeSignatureIssuerAudienceNonceAndExpiry() throws {
         let key = try XCTUnwrap(SecKeyCreateRandomKey([kSecAttrKeyType: kSecAttrKeyTypeRSA, kSecAttrKeySizeInBits: 2048] as CFDictionary, nil))
