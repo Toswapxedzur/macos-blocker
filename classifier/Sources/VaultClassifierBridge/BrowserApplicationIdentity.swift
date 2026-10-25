@@ -1,5 +1,7 @@
 import Foundation
+#if canImport(CoreFoundation)
 import CoreFoundation
+#endif
 #if canImport(CryptoKit)
 import CryptoKit
 #else
@@ -35,9 +37,15 @@ extension LocalHubAuthentication {
 
     /// JSON booleans and floating-point representations are not version integers.
     public static func isBrowserIdentityVersion(_ value: Any?) -> Bool {
-        guard let number = value as? NSNumber,
-              CFGetTypeID(number) != CFBooleanGetTypeID(),
-              ["c", "s", "i", "l", "q", "C", "S", "I", "L", "Q"].contains(String(cString: number.objCType)) else { return false }
+        guard let number = value as? NSNumber else { return false }
+        #if canImport(CoreFoundation)
+        guard CFGetTypeID(number) != CFBooleanGetTypeID() else { return false }
+        #else
+        // Windows Foundation does not export CoreFoundation. As in ActivityWire,
+        // reject its boolean encodings before accepting integer JSON values.
+        guard !["c", "B"].contains(String(cString: number.objCType)) else { return false }
+        #endif
+        guard ["c", "s", "i", "l", "q", "C", "S", "I", "L", "Q"].contains(String(cString: number.objCType)) else { return false }
         return number.int64Value == Int64(browserIdentityVersion)
     }
 
