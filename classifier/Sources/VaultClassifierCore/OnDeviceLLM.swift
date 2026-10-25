@@ -62,6 +62,7 @@ public struct LLMClassificationRequest: Sendable, Equatable {
     /// Strict↔Broad position of the type being classified). Nil falls back to
     /// the app-wide engine configuration.
     public let extraTagMinimumOdds: Double?
+    public let creatorIdentity: String?
 
     public init(
         staticPrefix: String,
@@ -69,7 +70,8 @@ public struct LLMClassificationRequest: Sendable, Equatable {
         allowedTagNames: [String],
         maximumTags: Int,
         minimumTags: Int = 0,
-        extraTagMinimumOdds: Double? = nil
+        extraTagMinimumOdds: Double? = nil,
+        creatorIdentity: String? = nil
     ) {
         self.staticPrefix = staticPrefix
         self.dynamicSuffix = dynamicSuffix
@@ -77,6 +79,7 @@ public struct LLMClassificationRequest: Sendable, Equatable {
         self.maximumTags = maximumTags
         self.minimumTags = min(maximumTags, max(0, minimumTags))
         self.extraTagMinimumOdds = extraTagMinimumOdds
+        self.creatorIdentity = creatorIdentity
     }
 }
 

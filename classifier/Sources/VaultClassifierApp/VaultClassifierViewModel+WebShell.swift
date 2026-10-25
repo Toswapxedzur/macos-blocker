@@ -246,6 +246,8 @@ extension VaultClassifierViewModel {
                     "datasetRevision": classifierType.datasetRevision,
                     "applicablePlatformIDs": classifierType.applicablePlatformIDs,
                     "isPaused": classifierType.isPaused,
+                    "classificationProvider": classifierType.classificationProvider.rawValue,
+                    "chatGPT": ["accountID": classifierType.chatGPT.accountID, "model": classifierType.chatGPT.model, "searchEnabled": classifierType.chatGPT.searchEnabled] as [String: Any],
                     "localModel": [
                         "houseRules": classifierType.localModel.houseRules,
                         "speedQuality": classifierType.localModel.speedQuality.rawValue,
@@ -257,6 +259,13 @@ extension VaultClassifierViewModel {
                     "researchEnabled": classifierType.researchEnabled ?? NSNull(),
                 ] as [String: Any]
             }
+        assets["chatGPT"] = ["connected": chatGPTStatus.connected, "accountID": chatGPTStatus.accountID,
+            "email": chatGPTStatus.email, "planUsageEnabled": chatGPTStatus.planUsageEnabled,
+            "signingIn": chatGPTStatus.signingIn, "requestsToday": chatGPTStatus.requestsToday,
+            "needsRetry": chatGPTStatus.needsRetry, "failedItems": failedCloudClassifications.count,
+            "issue": chatGPTStatus.issue ?? NSNull(),
+            "dailyRequestLimit": state?.settings.chatGPTDailyRequestLimit.map { $0 as Any } ?? NSNull(),
+            "models": chatGPTStatus.models.map { ["id": $0.identifier, "name": $0.displayName] }] as [String: Any]
         assets["providerProfiles"] = catalog.providerProfiles.map { profile in
                 let descriptor = ProviderProtocolRegistry.descriptor(for: profile.type)
                 return [
@@ -510,6 +519,19 @@ extension VaultClassifierViewModel {
                 deleteTag(treeID: try webString(data, key: "treeID", limit: 256), nodeID: try webString(data, key: "nodeID", limit: 256))
             case "saveClassificationSettings":
                 saveClassificationSettings(enabled: try webBool(data, key: "classificationEnabled"))
+            case "connectChatGPT": connectChatGPT()
+            case "cancelChatGPTSignIn":
+                Task { await chatGPTClient?.cancelSignIn() }
+            case "disconnectChatGPT": disconnectChatGPT()
+            case "refreshChatGPTModels": refreshChatGPTModels()
+            case "retryChatGPTClassifications": retryChatGPTClassifications()
+            case "saveChatGPTUsageLimit":
+                let raw = try webOptionalString(data, key: "dailyRequestLimit", limit: 12)
+                guard raw == nil || Int(raw!) != nil else { throw WebBridgeInputError.invalidChoice("daily request limit") }
+                try saveChatGPTUsageLimit(raw.flatMap(Int.init))
+            case "saveClassificationProvider":
+                try saveClassificationProvider(typeID: webString(data, key: "typeID", limit: 256),
+                    providerModel: webString(data, key: "providerModel", limit: 520), searchEnabled: webBool(data, key: "searchEnabled"))
             case "setClassifierTypePaused":
                 setClassifierTypePaused(typeID: try webString(data, key: "typeID", limit: 256), paused: try webBool(data, key: "paused"))
             case "downloadModel":

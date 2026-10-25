@@ -10,7 +10,7 @@ import Foundation
 /// classifier, audit, content-block policy — now the extension's) are simply never
 /// read, and so are never written back; see LegacyStateDecodeTests.
 public struct LocalClassifierState: Codable, Equatable, Sendable {
-    public static let currentSchemaVersion = 3
+    public static let currentSchemaVersion = 4
     /// These are alpha document schemas, not beta product major numbers.
     /// Compatible unversioned/schema-1 forms reconcile once to schema 2.
     public static let minimumSupportedSchemaVersion = 0
@@ -63,7 +63,7 @@ public struct LocalClassifierState: Codable, Equatable, Sendable {
         workspaceCatalog = try container.decodeIfPresent(WorkspaceCatalog.self, forKey: .workspaceCatalog) ?? .starter()
         // One bounded reconciliation of the retired global defaults. New groups
         // always own their settings; no inheritance survives decoding or encoding.
-        if storedVersion < Self.currentSchemaVersion, let retired = try? RetiredDialState(from: decoder) {
+        if storedVersion < 3, let retired = try? RetiredDialState(from: decoder) {
             let defaults = retired.settings?.localLLM ?? .init()
             for legacy in retired.workspaceCatalog?.classifierTypes ?? [] where legacy.localModel == nil {
                 guard let index = workspaceCatalog.classifierTypes.firstIndex(where: { $0.id == legacy.id }) else { continue }
@@ -366,6 +366,7 @@ public final class LocalClassifierCoordinator: @unchecked Sendable {
     let shutdownSignal = ClassifierShutdownSignal()
     var onDeviceLLM: any OnDeviceLLM = StubOnDeviceLLM()
     var onDeviceLLMEngineResolver: (any OnDeviceLLMEngineResolving)?
+    var cloudEngineResolver: (any CloudClassificationEngineResolving)?
     var groundedResearchQueue: GroundedResearchQueue?
     var dictionaryProvider: (any DictionaryEvidenceProviding)?
     /// When the collection Keep was last applied (see `collect`).
@@ -470,6 +471,10 @@ public final class LocalClassifierCoordinator: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         onDeviceLLM = llm
+    }
+
+    public func setCloudEngineResolver(_ resolver: (any CloudClassificationEngineResolving)?) {
+        lock.withLock { cloudEngineResolver = resolver }
     }
 
     public func setOnDeviceLLMEngineResolver(

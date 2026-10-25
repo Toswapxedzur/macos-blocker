@@ -19,6 +19,8 @@ public struct ClassifierTypeAsset: Codable, Equatable, Sendable, Identifiable {
     public var applicablePlatformIDs: [String]
     /// This group owns concrete dial positions and house rules.
     public var localModel: LocalLLMSettings
+    public var classificationProvider: ClassificationProvider
+    public var chatGPT: ChatGPTClassificationSettings
     /// Pauses new automatic classification for this group without deleting it.
     public var isPaused: Bool
     /// Grounded research for this type: nil follows the global switch, false
@@ -40,6 +42,8 @@ public struct ClassifierTypeAsset: Codable, Equatable, Sendable, Identifiable {
         datasetRevision: Int,
         applicablePlatformIDs: [String] = [],
         localModel: LocalLLMSettings = .init(),
+        classificationProvider: ClassificationProvider = .local,
+        chatGPT: ChatGPTClassificationSettings = .init(),
         isPaused: Bool = false,
         researchEnabled: Bool? = nil,
         order: Int = 0,
@@ -53,6 +57,8 @@ public struct ClassifierTypeAsset: Codable, Equatable, Sendable, Identifiable {
         self.datasetRevision = datasetRevision
         self.applicablePlatformIDs = Self.cleanedPlatformIDs(applicablePlatformIDs)
         self.localModel = localModel
+        self.classificationProvider = classificationProvider
+        self.chatGPT = chatGPT
         self.isPaused = isPaused
         self.researchEnabled = researchEnabled
         self.order = order
@@ -72,7 +78,7 @@ public struct ClassifierTypeAsset: Codable, Equatable, Sendable, Identifiable {
 
     private enum CodingKeys: String, CodingKey {
         case id, name, treeID, treeRevision, datasetID, datasetRevision, applicablePlatformIDs,
-             localModel, isPaused, researchEnabled, order, updatedAtMilliseconds
+             localModel, classificationProvider, chatGPT, isPaused, researchEnabled, order, updatedAtMilliseconds
         // Pre-dial keys (before 2026-09-23), read only to find the nearest position.
         case researchOverrides
         // The single platform of before 2026-09-30, read once into the list.
@@ -94,6 +100,8 @@ public struct ClassifierTypeAsset: Codable, Equatable, Sendable, Identifiable {
             applicablePlatformIDs = Self.cleanedPlatformIDs([try container.decodeIfPresent(String.self, forKey: .applicablePlatformID) ?? ""])
         }
         localModel = (try? container.decodeIfPresent(LocalLLMSettings.self, forKey: .localModel)) ?? .init()
+        classificationProvider = try container.decodeIfPresent(ClassificationProvider.self, forKey: .classificationProvider) ?? .local
+        chatGPT = try container.decodeIfPresent(ChatGPTClassificationSettings.self, forKey: .chatGPT) ?? .init()
         isPaused = (try? container.decodeIfPresent(Bool.self, forKey: .isPaused)) ?? false
         if let explicit = try container.decodeIfPresent(Bool.self, forKey: .researchEnabled) {
             researchEnabled = explicit
@@ -118,6 +126,8 @@ public struct ClassifierTypeAsset: Codable, Equatable, Sendable, Identifiable {
         try container.encode(datasetRevision, forKey: .datasetRevision)
         try container.encode(applicablePlatformIDs, forKey: .applicablePlatformIDs)
         try container.encode(localModel, forKey: .localModel)
+        try container.encode(classificationProvider, forKey: .classificationProvider)
+        try container.encode(chatGPT, forKey: .chatGPT)
         try container.encode(isPaused, forKey: .isPaused)
         try container.encodeIfPresent(researchEnabled, forKey: .researchEnabled)
         try container.encode(order, forKey: .order)

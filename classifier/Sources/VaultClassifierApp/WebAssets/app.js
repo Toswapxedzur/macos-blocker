@@ -258,6 +258,8 @@
         minimumTagsOverride: type.localModel?.minimumTagsOverride == null ? "" : String(type.localModel.minimumTagsOverride),
         maximumTagsOverride: type.localModel?.maximumTagsOverride == null ? "" : String(type.localModel.maximumTagsOverride),
       };
+      case "saveClassificationProvider": return type && { providerModel: type.classificationProvider === "chatGPT" ? `chatgpt:${type.chatGPT?.model || ""}` : "local", searchEnabled: type.chatGPT?.searchEnabled === true };
+      case "saveChatGPTUsageLimit": return { dailyRequestLimit: state.assets?.chatGPT?.dailyRequestLimit == null ? "" : String(state.assets.chatGPT.dailyRequestLimit) };
       case "saveClassifierTypeResearch": return type && {
         researchMode: type.researchEnabled === true ? "on" : type.researchEnabled === false ? "off" : "inherit",
       };
@@ -718,6 +720,21 @@
   document.addEventListener("scroll", () => { placeResearchModelMenu(); placeKnowledgeSuggestions(); }, true);
   window.addEventListener("resize", () => { placeResearchModelMenu(); placeKnowledgeSuggestions(); });
 
+  function chatGPTAccountSection() {
+    const account = state.assets?.chatGPT || {};
+    const busy = account.signingIn === true;
+    return `<section class="utility-settings-section" data-chatgpt-account><h3>${tx("cloud.title")}</h3><p class="small-copy">${account.connected ? esc(account.email || t("cloud.connected")) : tx("cloud.disconnected")}</p><p class="small-copy" data-info>${tx("cloud.disclosure")}</p><div class="action-row">${busy ? `<span role="status">${tx("cloud.signingIn")}</span><button type="button" class="secondary" data-action="cancelChatGPTSignIn">${tx("cloud.cancel")}</button>` : `<button type="button" class="secondary" data-action="connectChatGPT">${tx("cloud.connect")}</button>`}${account.connected ? `<button type="button" class="secondary" data-action="refreshChatGPTModels">${tx("cloud.refreshModels")}</button><button type="button" class="secondary" data-action="disconnectChatGPT">${tx("cloud.disconnect")}</button>` : ""}</div>${account.connected && !account.planUsageEnabled ? `<p role="alert">${tx("cloud.planRequired")}</p>` : ""}${notice(account.issue, "red")}<div data-form-id="chatgpt-limit-form" data-autosave-action="saveChatGPTUsageLimit">${field("cloud.dailyLimit", "cloud.dailyLimitHint", "dailyRequestLimit", account.dailyRequestLimit ?? "", "number", 'min="1" max="100000" step="1"')}</div><p class="small-copy">${tx("cloud.requestsToday", {count: account.requestsToday || 0})}</p>${account.needsRetry || account.failedItems ? `<button type="button" class="secondary" data-action="retryChatGPTClassifications">${tx("cloud.retry")}</button>` : ""}</section>`;
+  }
+
+  function cloudProviderSection(type) {
+    const account = state.assets?.chatGPT || {};
+    const selected = type.classificationProvider === "chatGPT" ? `chatgpt:${type.chatGPT?.model || ""}` : "local";
+    const choices = [["local", t("cloud.local")]];
+    if (account.planUsageEnabled) (account.models || []).forEach(model => choices.push([`chatgpt:${model.id}`, `ChatGPT · ${model.name}`]));
+    if (!choices.some(([value]) => value === selected)) choices.push([selected, `${type.chatGPT?.model || "ChatGPT"} · ${t("cloud.unavailable")}`]);
+    return `<section class="classifier-type-section" data-form-id="cloud-provider-${esc(type.id)}" data-autosave-action="saveClassificationProvider" data-type-id="${esc(type.id)}">${valueSelectField("cloud.provider", "", "providerModel", selected, choices)}${type.classificationProvider === "chatGPT" ? `<p class="small-copy" data-info>${tx("cloud.confidence")}</p>${toggle("cloud.search", "searchEnabled", type.chatGPT?.searchEnabled === true)}<p class="small-copy" data-info>${tx("cloud.searchHint")}</p>` : `<input type="checkbox" hidden data-field="searchEnabled"${type.chatGPT?.searchEnabled === true ? " checked" : ""}>`}${!account.connected ? `<button type="button" class="secondary" data-action="connectChatGPT">${tx("cloud.connect")}</button>` : ""}${account.needsRetry || account.failedItems ? `<button type="button" class="secondary" data-action="retryChatGPTClassifications">${tx("cloud.retry")}</button>` : ""}</section>`;
+  }
+
   function nativeSettingsContent() {
     if (!utilityPanel || !state) return "";
     let content = "";
@@ -739,7 +756,7 @@
       }${
         researchModelPicker()
       }</div><p class="small-copy" data-info="research.constantsNote" data-info-target=".utility-research-section h3">${tx("research.constantsNote")}</p><p class="small-copy">${tx("research.usageToday", { used: research.tokensUsedToday ?? 0, limit: research.dailyTokenLimit ?? 10000 })}</p>${researchStatusBlock(research.status)}</section>`;
-      content = `${notice(state.issue, "red")}${classificationSection}${apiKeySettings()}${researchSection}${dictionaryControls()}`;
+      content = `${notice(state.issue, "red")}${classificationSection}${chatGPTAccountSection()}${apiKeySettings()}${researchSection}${dictionaryControls()}`;
     }
     return content;
   }
@@ -1189,7 +1206,7 @@
         ? t("bridge.tagBounds.custom", { minimum: localModel.minimumTagsOverride ?? defaultMinimum, maximum: localModel.maximumTagsOverride ?? defaultMaximum })
         : t("bridge.tagBounds.default");
       const expandKey = `type-more:${classifierType.id}`;
-      const localModelSection = `<section class="classifier-type-section classifier-local-model" data-local-model-section><div class="section-header"><div><h3>${tx("bridge.localModel")} ${statusPill(tx(engineLabel), engineTone)}</h3><p class="section-copy" data-info>${tx("bridge.localModelCopy")}</p></div></div><div class="field wide"><span class="field-label">${tx("localModel.speedQuality")}<span class="field-hint" data-info> · ${tx("localModel.speedQualityHint")}</span></span>${speedQualityCards(library, localModel.speedQuality, classifierType.id)}<p class="model-library-source-note" data-info>${tx("localModel.tier.sourceNote")}</p></div><div class="field wide"><span class="field-label">${tx("localModel.strictness")}<span class="field-hint" data-info> · ${tx("localModel.strictnessHint")}</span></span>${strictnessOptions(localModel.strictness, classifierType.id)}${localModel.minimumTagsOverride != null || localModel.maximumTagsOverride != null ? `<p class="small-copy" data-info="bridge.tagBounds.precedence">${tx("bridge.tagBounds.precedence")}</p>` : ""}</div><p class="small-copy resident-model-note" data-info data-info-target="[data-local-model-section] h3">${tx("bridge.localModelResidentNote")}</p>${textareaField("bridge.localModelHouseRules", "bridge.localModelHouseRulesCopy", "houseRules", localModel.houseRules, 'rows="4" maxlength="4000"')}</section>`;
+      const localModelSection = `<section class="classifier-type-section classifier-local-model" data-local-model-section><div class="section-header"><div><h3>${tx(classifierType.classificationProvider === "chatGPT" ? "cloud.tagging" : "bridge.localModel")} ${classifierType.classificationProvider === "chatGPT" ? "" : statusPill(tx(engineLabel), engineTone)}</h3><p class="section-copy" data-info>${tx("bridge.localModelCopy")}</p></div></div>${classifierType.classificationProvider === "chatGPT" ? `<input type="hidden" data-field="speedQuality" value="${esc(localModel.speedQuality)}">` : `<div class="field wide"><span class="field-label">${tx("localModel.speedQuality")}<span class="field-hint" data-info> · ${tx("localModel.speedQualityHint")}</span></span>${speedQualityCards(library, localModel.speedQuality, classifierType.id)}<p class="model-library-source-note" data-info>${tx("localModel.tier.sourceNote")}</p></div>`}<div class="field wide"><span class="field-label">${tx("localModel.strictness")}<span class="field-hint" data-info> · ${tx("localModel.strictnessHint")}</span></span>${strictnessOptions(localModel.strictness, classifierType.id)}${localModel.minimumTagsOverride != null || localModel.maximumTagsOverride != null ? `<p class="small-copy" data-info="bridge.tagBounds.precedence">${tx("bridge.tagBounds.precedence")}</p>` : ""}</div>${classifierType.classificationProvider === "chatGPT" ? "" : `<p class="small-copy resident-model-note" data-info data-info-target="[data-local-model-section] h3">${tx("bridge.localModelResidentNote")}</p>`}${textareaField("bridge.localModelHouseRules", "bridge.localModelHouseRulesCopy", "houseRules", localModel.houseRules, 'rows="4" maxlength="4000"')}</section>`;
       const tagBoundsSection = `<details class="vui-expand classifier-group-more" data-expand="${esc(expandKey)}"${openExpands.has(expandKey) ? " open" : ""}><summary><span>${tx("navigation.more")}</span><span class="small-copy classifier-override-summary">${esc(boundsSummary)}</span></summary><section class="classifier-type-section"><p class="section-copy" data-info data-tag-bounds-defaults>${tx("bridge.tagBounds.copy", { minimum: defaultMinimum, maximum: defaultMaximum })}</p><div class="utility-settings-fields">${field("bridge.tagBounds.minimum", "bridge.tagBounds.minimumHint", "minimumTagsOverride", localModel.minimumTagsOverride ?? "", "number", `min="0" max="3" step="1" placeholder="${defaultMinimum}"`)}${field("bridge.tagBounds.maximum", "bridge.tagBounds.maximumHint", "maximumTagsOverride", localModel.maximumTagsOverride ?? "", "number", `min="1" max="3" step="1" placeholder="${defaultMaximum}"`)}</div><p class="notice red" data-tag-bounds-error role="status" hidden>${tx("bridge.tagBounds.error")}</p></section></details>`;
       const researchFormID = `classifier-research-form-${classifierType.id}`;
       const researchMode = classifierType.researchEnabled === true ? "on" : classifierType.researchEnabled === false ? "off" : "inherit";
@@ -1199,11 +1216,12 @@
         <section class="classifier-type-section classifier-applicable-platform-section"><span class="field-label" ${infoAttrs("bridge.applicablePlatform")}>${tx("bridge.applicablePlatform")}</span>${platformChoices(chosen, classifierType.id)}<p class="small-copy" data-info="bridge.platformsFixed">${tx("bridge.platformsFixed")}</p>${platformNotes.map((note) => `<p class="small-copy">${esc(note)}</p>`).join("")}</section>
         <div class="action-row classifier-tagging-control"><button type="button" class="secondary" data-action="setClassifierTypePaused" data-type-id="${esc(classifierType.id)}" data-paused="${classifierType.isPaused !== true}">${tx(classifierType.isPaused === true ? "classification.resume" : "classification.pause")}</button>${statusPill(tx(classifierType.isPaused === true ? "classification.paused" : state.settings?.classificationEnabled === false ? "classification.disabled" : "classification.active"), classifierType.isPaused === true || state.settings?.classificationEnabled === false ? "muted" : "cyan")}</div>
         <p class="small-copy" data-info="bridge.autoSave">${tx("bridge.autoSave")}</p>
+        ${cloudProviderSection(classifierType)}
         <div data-form-id="${esc(localModelFormID)}" data-autosave-action="saveClassifierTypeLocalModel" data-type-id="${esc(classifierType.id)}">
           ${localModelSection}
           ${tagBoundsSection}
         </div>
-        ${researchOverrideSection}
+        ${classifierType.classificationProvider === "chatGPT" ? "" : researchOverrideSection}
         <div class="action-row classifier-type-delete"><button class="danger" data-action="confirmDeleteClassifierType" data-type-id="${esc(classifierType.id)}">${deleteLabel(`type:${classifierType.id}`, tx("bridge.deleteType"))}</button></div>
       </section>`;
     };

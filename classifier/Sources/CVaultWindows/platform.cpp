@@ -53,6 +53,26 @@ uint32_t vault_windows_protect(const uint8_t *input, size_t length, uint8_t **ou
 
 void vault_windows_free(void *memory) { LocalFree(memory); }
 
+uint32_t vault_windows_verify_rs256(const uint8_t *n, size_t nlen, const uint8_t *e, size_t elen, const uint8_t *signature, size_t signatureLength, const uint8_t *digest) {
+    if (!n || !e || !signature || !digest || nlen < 256 || nlen > 1024 || elen == 0 || elen > 8 || signatureLength != nlen) return ERROR_INVALID_PARAMETER;
+    BCRYPT_ALG_HANDLE algorithm = nullptr;
+    BCRYPT_KEY_HANDLE key = nullptr;
+    if (BCryptOpenAlgorithmProvider(&algorithm, BCRYPT_RSA_ALGORITHM, nullptr, 0) < 0) return ERROR_GEN_FAILURE;
+    BCRYPT_RSAKEY_BLOB header{BCRYPT_RSAPUBLIC_MAGIC, static_cast<ULONG>(nlen * 8), static_cast<ULONG>(elen), static_cast<ULONG>(nlen), 0, 0};
+    std::vector<BYTE> blob(sizeof(header) + elen + nlen);
+    memcpy(blob.data(), &header, sizeof(header));
+    memcpy(blob.data() + sizeof(header), e, elen);
+    memcpy(blob.data() + sizeof(header) + elen, n, nlen);
+    NTSTATUS status = BCryptImportKeyPair(algorithm, nullptr, BCRYPT_RSAPUBLIC_BLOB, &key, blob.data(), static_cast<ULONG>(blob.size()), 0);
+    if (status >= 0) {
+        BCRYPT_PKCS1_PADDING_INFO padding{BCRYPT_SHA256_ALGORITHM};
+        status = BCryptVerifySignature(key, &padding, const_cast<BYTE *>(digest), 32, const_cast<BYTE *>(signature), static_cast<ULONG>(signatureLength), BCRYPT_PAD_PKCS1);
+    }
+    if (key) BCryptDestroyKey(key);
+    BCryptCloseAlgorithmProvider(algorithm, 0);
+    return status >= 0 ? 0 : ERROR_INVALID_SIGNATURE;
+}
+
 uint32_t vault_windows_restrict_path(const char *path) {
     auto name = filesystemPath(path);
     if (name.empty()) return ERROR_INVALID_NAME;

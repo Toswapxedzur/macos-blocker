@@ -27,7 +27,7 @@ let nativeHostProducts: [Product] = []
 let nativeHostTargets: [Target] = []
 let windowsTargets: [Target] = [.target(name: "CVaultWindows", linkerSettings: [
     .linkedLibrary("crypt32"), .linkedLibrary("bcrypt"), .linkedLibrary("advapi32"),
-    .linkedLibrary("ole32"), .linkedLibrary("windowscodecs"), .linkedLibrary("shlwapi"), .linkedLibrary("uuid"),
+    .linkedLibrary("ole32"), .linkedLibrary("windowscodecs"), .linkedLibrary("shlwapi"), .linkedLibrary("uuid"), .linkedLibrary("shell32"),
 ])]
 #else
 let nativePrefix = ProcessInfo.processInfo.environment["VAULT_LLAMA_PREFIX"] ?? brewPrefix
@@ -63,6 +63,7 @@ let classifierProducts: [Product] = nativeHostProducts + [
     ]
 
 let classifierTargets: [Target] = windowsTargets + nativeHostTargets + [
+        .target(name: "CVaultOAuth", linkerSettings: [.linkedLibrary("ws2_32", .when(platforms: [.windows]))]),
         .target(name: "VaultActivityCore", dependencies: ["VaultClassifierCore"]),
         .target(
             name: "VaultClassifierCore",
@@ -85,7 +86,7 @@ let classifierTargets: [Target] = windowsTargets + nativeHostTargets + [
         // DATA and the queue actor, which takes the executor as a closure.
         .target(
             name: "VaultClassifierResearch",
-            dependencies: ["VaultClassifierCore"]
+            dependencies: [.target(name: "VaultClassifierCore"), .target(name: "CVaultOAuth")] + cryptoDependencies
         ),
         // Homebrew's llama.cpp (libllama + Metal-at-runtime ggml). Resolved via
         // pkg-config, so `brew install llama.cpp` is the only prerequisite.

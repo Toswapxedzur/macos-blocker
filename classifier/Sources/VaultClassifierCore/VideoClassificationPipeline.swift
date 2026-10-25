@@ -123,11 +123,13 @@ public struct VideoClassificationPipeline: Sendable {
                 creatorSummary: evidence[index].creatorEntry?.meaning
             )
         }
-        func request(_ parts: ClassificationPromptParts) -> LLMClassificationRequest {
-            LLMClassificationRequest(
+        func request(_ index: Int, _ parts: ClassificationPromptParts) -> LLMClassificationRequest {
+            let creator = catalog.datasets.flatMap(\.collectedEntries).first { $0.platformID == platformID && $0.entryID == inputs[index].entryID }
+            return LLMClassificationRequest(
                 staticPrefix: parts.staticPrefix, dynamicSuffix: parts.dynamicSuffix,
                 allowedTagNames: parts.allowedTagNames, maximumTags: maximumTags, minimumTags: minimumTags,
-                extraTagMinimumOdds: extraTagMinimumOdds
+                extraTagMinimumOdds: extraTagMinimumOdds,
+                creatorIdentity: creator?.creatorName.isEmpty == false ? creator?.creatorName : inputs[index].creatorID
             )
         }
 
@@ -135,7 +137,7 @@ public struct VideoClassificationPipeline: Sendable {
         // knowledge and the matching creator description.
         let primaryParts = inputs.indices.map { parts($0, knowledge: evidence[$0].termKnowledge) }
         let tAssembled = DispatchTime.now()
-        let primaryResults = try await llm.classifyAll(primaryParts.map(request))
+        let primaryResults = try await llm.classifyAll(primaryParts.enumerated().map { request($0.offset, $0.element) })
         if timing {
             let ms = { (a: DispatchTime, b: DispatchTime) in Double(b.uptimeNanoseconds - a.uptimeNanoseconds) / 1_000_000 }
             FileHandle.standardError.write(Data(String(

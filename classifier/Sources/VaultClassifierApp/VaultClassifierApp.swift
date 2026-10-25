@@ -47,7 +47,11 @@ final class VaultClassifierViewModel: ObservableObject {
 
     private(set) var isShuttingDown = false
     var localLLMRegistry: LocalLLMEngineRegistry?
-    private var modelWarmupTask: Task<Void, Never>?
+    var modelWarmupTask: Task<Void, Never>?
+    var liveEngineRuntime = false
+    var chatGPTClient: ChatGPTAccountClient?
+    @Published var chatGPTStatus = ChatGPTAccountStatus()
+    var failedCloudClassifications: [String: (platform: String, item: NativeVideoTagsBatchItem)] = [:]
     private var shutdownTask: Task<Void, Never>?
 
     func shutdown() async {
@@ -67,11 +71,14 @@ final class VaultClassifierViewModel: ObservableObject {
             // blocked on a synchronous llama call. Never free during that call.
             let closeModels = Task { await registry?.shutdown() }
             let closeResearch = Task { await groundedResearchQueue?.shutdown() }
+            let closeCloud = Task { await chatGPTClient?.shutdown() }
             await classificationCoalescer.shutdown()
             await closeResearch.value
+            await closeCloud.value
             await warmup?.value
             await closeModels.value
             coordinator?.setOnDeviceLLMEngineResolver(nil)
+            coordinator?.setCloudEngineResolver(nil)
             localLLMRegistry = nil
             modelWarmupTask = nil
             inFlightVideoClassifications.removeAll()
@@ -147,6 +154,7 @@ final class VaultClassifierViewModel: ObservableObject {
             }
             sharedHubClient.connect()
             installGroundedResearch(coordinator: coordinator)
+            installChatGPT(directory: vaultDirectory, coordinator: coordinator)
             installLocalLLMEngine(coordinator: coordinator)
             try installDictionaries(directory: vaultDirectory, coordinator: coordinator, automaticallyCheck: true)
         } catch {
@@ -184,6 +192,7 @@ final class VaultClassifierViewModel: ObservableObject {
     /// Missing model files produce provisional stub results, never another group's tier.
     func installLocalLLMEngine(coordinator: LocalClassifierCoordinator) {
         guard !isShuttingDown else { return }
+        liveEngineRuntime = true
         coordinator.setOnDeviceLLM(StubOnDeviceLLM())
         let registry = LocalLLMEngineRegistry { [weak self] fileName, status in
             Task { @MainActor [weak self] in
@@ -196,6 +205,7 @@ final class VaultClassifierViewModel: ObservableObject {
         coordinator.setOnDeviceLLMEngineResolver(registry)
         var seen = Set<SpeedQualityDial>()
         let configurations = coordinator.snapshot().workspaceCatalog.classifierTypes
+            .filter { $0.classificationProvider == .local && !$0.isPaused }
             .map(\.localModel).filter { seen.insert($0.speedQuality).inserted }
             .prefix(LocalLLMSettings.maxResidentModels)
         // Keep the normal first-video path warm without choosing an app-wide tier.
@@ -279,13 +289,14 @@ final class VaultClassifierViewModel: ObservableObject {
         if Self.browserStateChanged(from: previous, to: localState) {
             sharedHubClient?.broadcast(operation: SharedBrowserBridgeOperation.classifierStateUpdatedBroadcast, body: [:] as [String: String])
         }
+        reconcileLocalRuntime()
     }
 
     // Refresh browser projections and covers without invalidating stored decisions.
     static func browserStateChanged(from previous: LocalClassifierState?, to current: LocalClassifierState?) -> Bool {
         let activation: (LocalClassifierState?) -> [String] = { state in
             (state?.workspaceCatalog.classifierTypes ?? []).map {
-                "\($0.id):\($0.treeID):\($0.treeRevision):\($0.isPaused):\($0.applicablePlatformIDs.joined(separator: ","))"
+                "\($0.id):\($0.treeID):\($0.treeRevision):\($0.isPaused):\($0.applicablePlatformIDs.joined(separator: ",")):\($0.classificationProvider.rawValue):\($0.classificationProvider == .chatGPT ? $0.cloudModelVersion : "local")"
             }.sorted()
         }
         let recording: (LocalClassifierState?) -> [String] = { state in

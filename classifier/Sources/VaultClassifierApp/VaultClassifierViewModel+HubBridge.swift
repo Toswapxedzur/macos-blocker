@@ -94,13 +94,23 @@ extension VaultClassifierViewModel {
                 title: $0.title, summary: $0.summary, text: $0.text, entryID: $0.entryID, creatorID: $0.creatorID)
         }
         var projections: [String: VideoTagsProjection]
+        let cloud = coordinator.snapshot().workspaceCatalog.classifierTypes.contains { $0.applicablePlatformIDs.contains(platformID) && $0.classificationProvider == .chatGPT }
         do { projections = try await coordinator.classifyVideos(platformID: platformID, items: inputs) }
         catch {
             if error is CancellationError || isShuttingDown || Task.isCancelled { return [:] }
             projections = [:]
+            if cloud {
+                issue = error.localizedDescription
+                for item in chunk {
+                    if failedCloudClassifications.count < 1024 {
+                        failedCloudClassifications[Self.inFlightKey(platformID, item.entryID)] = (platformID, item)
+                    }
+                }
+                onWebStateChange?()
+            }
         }
         guard !isShuttingDown, !Task.isCancelled else { return [:] }
-        if projections.isEmpty {
+        if projections.isEmpty && !cloud {
             // The batch failed as a whole — fall back to one video at a time
             // so a single bad item cannot sink the rest of the screen.
             for input in inputs {

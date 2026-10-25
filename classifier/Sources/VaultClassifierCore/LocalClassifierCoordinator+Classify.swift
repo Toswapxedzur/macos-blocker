@@ -46,6 +46,11 @@ extension LocalClassifierCoordinator {
         servingModelVersion: String
     ) -> Bool {
         if classification.source == .humanCorrected { return true }
+        if type.classificationProvider == .chatGPT {
+            return classification.modelVersion == type.cloudModelVersion + "+p4"
+                && classification.tagBounds == type.localModel.tagBounds
+                && classification.treeID == type.treeID && classification.treeRevision == type.treeRevision
+        }
         if let bounds = classification.tagBounds {
             guard bounds == type.localModel.tagBounds else { return false }
         } else if type.localModel.minimumTagsOverride != nil || type.localModel.maximumTagsOverride != nil {
@@ -87,11 +92,12 @@ extension LocalClassifierCoordinator {
                 state.settings.research,
                 groundedResearchQueue,
                 state.settings.classificationEnabled,
-                self.dictionaryProvider
+                self.dictionaryProvider,
+                cloudEngineResolver
             )
         }
         let (
-            catalog, defaultLLM, engineResolver, globalResearchSettings, researchQueue, classificationEnabled, dictionaryProvider
+            catalog, defaultLLM, engineResolver, globalResearchSettings, researchQueue, classificationEnabled, dictionaryProvider, cloudResolver
         ) = snapshot
 
         guard let binding = catalog.bindings.first(where: { $0.id == platformID }), binding.collectionEnabled else {
@@ -148,12 +154,14 @@ extension LocalClassifierCoordinator {
             }
             guard !pending.isEmpty else { continue }
 
-            let llm = try await Self.resolvedLLM(
-                for: type,
-                defaultLLM: defaultLLM,
-                resolver: engineResolver,
-                configuration: settings
-            )
+            let llm: any OnDeviceLLM
+            if type.classificationProvider == .chatGPT {
+                try type.chatGPT.validate()
+                guard let cloudResolver else { throw CloudClassificationError.signInRequired }
+                llm = try await cloudResolver.resolveCloudEngine(for: type)
+            } else {
+                llm = try await Self.resolvedLLM(for: type, defaultLLM: defaultLLM, resolver: engineResolver, configuration: settings)
+            }
             try shutdownSignal.checkCancellation()
             // Every group owns its Strict↔Broad position.
             let strictness = settings.strictness
@@ -176,7 +184,7 @@ extension LocalClassifierCoordinator {
             )
             try shutdownSignal.checkCancellation()
             classifications.append(contentsOf: results)
-            guard let effectiveResearch = Self.effectiveResearchSettings(
+            guard type.classificationProvider == .local, let effectiveResearch = Self.effectiveResearchSettings(
                 global: globalResearchSettings,
                 for: type
             ) else { continue }
@@ -198,6 +206,13 @@ extension LocalClassifierCoordinator {
             let activeIDs = state.settings.classificationEnabled
                 ? Set(state.workspaceCatalog.classifierTypes.filter { !$0.isPaused }.map(\.id)) : []
             for classification in classifications where activeIDs.contains(classification.classifierTypeID) {
+                if let original = catalog.classifierTypes.first(where: { $0.id == classification.classifierTypeID }),
+                   let current = state.workspaceCatalog.classifierTypes.first(where: { $0.id == classification.classifierTypeID }),
+                   (original.classificationProvider != current.classificationProvider
+                    || original.chatGPT != current.chatGPT || original.localModel != current.localModel
+                    || original.treeRevision != current.treeRevision) { continue }
+                if state.workspaceCatalog.videoClassification(classifierTypeID: classification.classifierTypeID, platformID: classification.platformID, entryID: classification.entryID)?.source == .humanCorrected,
+                   classification.source != .humanCorrected { continue }
                 state.workspaceCatalog.upsertVideoClassification(classification)
             }
             // Author accumulation (§8): every model classification adds its derived

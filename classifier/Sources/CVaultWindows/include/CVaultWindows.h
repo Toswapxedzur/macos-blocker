@@ -10,6 +10,7 @@ void vault_windows_free(void *memory);
 uint32_t vault_windows_restrict_path(const char *path);
 uint32_t vault_windows_image_jpeg(const uint8_t *input, size_t length, uint8_t **output, size_t *outputLength);
 void vault_windows_prune_package(const char *parentPath, const char *name);
+uint32_t vault_windows_verify_rs256(const uint8_t *n, size_t nlen, const uint8_t *e, size_t elen, const uint8_t *signature, size_t signatureLength, const uint8_t *digest);
 #ifdef __cplusplus
 }
 #endif

@@ -403,6 +403,7 @@ public struct ResearchSettings: Codable, Equatable, Sendable {
 }
 
 public struct ClassifierSettings: Codable, Equatable, Sendable {
+    public var chatGPTDailyRequestLimit: Int?
     public var research: ResearchSettings
     public var classificationEnabled: Bool
     public var dictionaries: DictionarySettings
@@ -410,15 +411,17 @@ public struct ClassifierSettings: Codable, Equatable, Sendable {
     public init(
         research: ResearchSettings = ResearchSettings(),
         classificationEnabled: Bool = true,
-        dictionaries: DictionarySettings = .init()
+        dictionaries: DictionarySettings = .init(),
+        chatGPTDailyRequestLimit: Int? = nil
     ) {
         self.research = research
         self.classificationEnabled = classificationEnabled
         self.dictionaries = dictionaries
+        self.chatGPTDailyRequestLimit = chatGPTDailyRequestLimit
     }
 
     private enum CodingKeys: String, CodingKey {
-        case research, classificationEnabled, dictionaries
+        case research, classificationEnabled, dictionaries, chatGPTDailyRequestLimit
     }
 
 
@@ -428,7 +431,8 @@ public struct ClassifierSettings: Codable, Equatable, Sendable {
         self.init(
             research: try container.decodeIfPresent(ResearchSettings.self, forKey: .research) ?? ResearchSettings(),
             classificationEnabled: (try? container.decodeIfPresent(Bool.self, forKey: .classificationEnabled)) ?? true,
-            dictionaries: (try? container.decodeIfPresent(DictionarySettings.self, forKey: .dictionaries)) ?? .init()
+            dictionaries: (try? container.decodeIfPresent(DictionarySettings.self, forKey: .dictionaries)) ?? .init(),
+            chatGPTDailyRequestLimit: try container.decodeIfPresent(Int.self, forKey: .chatGPTDailyRequestLimit)
         )
     }
 }
