@@ -128,7 +128,7 @@ extension VaultClassifierViewModel {
             activeLocalRuntimeID = nil
             localLLMRegistry = nil; coordinator?.setOnDeviceLLMEngineResolver(nil)
             if registry != nil || warmup != nil {
-                let id = UUID()
+                let id = Foundation.UUID()
                 retiringLocalModels[id] = Task { [weak self] in
                     await registry?.shutdown(); await warmup?.value
                     self?.retiringLocalModels[id] = nil
