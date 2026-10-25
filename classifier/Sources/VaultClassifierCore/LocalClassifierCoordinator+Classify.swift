@@ -25,6 +25,11 @@ extension LocalClassifierCoordinator {
             guard Self.isClassificationCurrent(classification, forType: type, servingModelVersion: onDeviceLLMEngineResolver == nil ? servingModelVersion : "llamacpp/" + type.modelFileName) else {
                 return nil
             }
+            if type.classificationProvider == .chatGPT, classification.source != .humanCorrected {
+                guard let entry = Self.collectedEntry(platformID: platformID, entryID: entryID, catalog: catalog),
+                      classification.inputFingerprint == CloudClassificationCurrency.input(title: entry.title,
+                        summary: entry.summary, text: entry.text, creatorID: entry.creatorID, creatorName: entry.creatorName) else { return nil }
+            }
             if classification.source != .humanCorrected, let dictionaryProvider {
                 guard let entry = Self.collectedEntry(platformID: platformID, entryID: entryID, catalog: catalog) else { return nil }
                 let evidence = dictionaryProvider.localEvidence(title: entry.title, creatorID: classification.creatorID)
@@ -49,7 +54,7 @@ extension LocalClassifierCoordinator {
         if type.classificationProvider == .chatGPT {
             return classification.modelVersion == type.cloudModelVersion + "+p4"
                 && classification.tagBounds == type.localModel.tagBounds
-                && classification.treeID == type.treeID && classification.treeRevision == type.treeRevision
+                && classification.treeID == type.treeID
         }
         if let bounds = classification.tagBounds {
             guard bounds == type.localModel.tagBounds else { return false }
@@ -167,7 +172,9 @@ extension LocalClassifierCoordinator {
             let strictness = settings.strictness
             let bounds = settings.tagBounds
             let pipeline = VideoClassificationPipeline(
-                llm: llm, maximumTags: bounds.maximum, minimumTags: bounds.minimum)
+                llm: llm, maximumTags: bounds.maximum, minimumTags: bounds.minimum,
+                secondaryConfidenceFloor: type.classificationProvider == .chatGPT
+                    ? (strictness == .strictest || strictness == .strict ? 5 : strictness == .balanced ? 4 : 3) : 4)
             let trimmedRules = settings.houseRules.trimmingCharacters(in: .whitespacesAndNewlines)
             let typeHouseRules = trimmedRules.isEmpty ? nil : trimmedRules
             let results = try await pipeline.classifyBatch(
@@ -210,7 +217,7 @@ extension LocalClassifierCoordinator {
                    let current = state.workspaceCatalog.classifierTypes.first(where: { $0.id == classification.classifierTypeID }),
                    (original.classificationProvider != current.classificationProvider
                     || original.chatGPT != current.chatGPT || original.localModel != current.localModel
-                    || original.treeRevision != current.treeRevision) { continue }
+                    || original.treeRevision != current.treeRevision) { throw CancellationError() }
                 if state.workspaceCatalog.videoClassification(classifierTypeID: classification.classifierTypeID, platformID: classification.platformID, entryID: classification.entryID)?.source == .humanCorrected,
                    classification.source != .humanCorrected { continue }
                 state.workspaceCatalog.upsertVideoClassification(classification)

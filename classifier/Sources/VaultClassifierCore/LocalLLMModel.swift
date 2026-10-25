@@ -62,6 +62,7 @@ public struct VideoClassification: Codable, Equatable, Sendable, Identifiable {
     /// Knowledge-map keys injected into the prompt that produced this result.
     public var knowledgeRefs: [String]
     public var knowledgeFingerprint: String?
+    public var inputFingerprint: String?
     public var source: VideoClassificationSource
     /// Model id + prompt/schema version, so stale results can be recomputed.
     public var modelVersion: String
@@ -81,6 +82,7 @@ public struct VideoClassification: Codable, Equatable, Sendable, Identifiable {
         tags: [ScoredTag],
         knowledgeRefs: [String] = [],
         knowledgeFingerprint: String? = nil,
+        inputFingerprint: String? = nil,
         source: VideoClassificationSource,
         modelVersion: String,
         tagBounds: TagBounds? = nil,
@@ -97,6 +99,7 @@ public struct VideoClassification: Codable, Equatable, Sendable, Identifiable {
         self.tags = Array(tags.prefix(Self.maximumTags))
         self.knowledgeRefs = knowledgeRefs
         self.knowledgeFingerprint = knowledgeFingerprint
+        self.inputFingerprint = inputFingerprint
         self.source = source
         self.modelVersion = modelVersion
         self.tagBounds = tagBounds
@@ -109,7 +112,7 @@ public struct VideoClassification: Codable, Equatable, Sendable, Identifiable {
 
     private enum CodingKeys: String, CodingKey {
         case id, classifierTypeID, platformID, entryID, creatorID, treeID,
-             treeRevision, tags, knowledgeRefs, knowledgeFingerprint, source,
+             treeRevision, tags, knowledgeRefs, knowledgeFingerprint, inputFingerprint, source,
              modelVersion, tagBounds, createdAtMilliseconds, updatedAtMilliseconds
     }
 
@@ -126,6 +129,7 @@ public struct VideoClassification: Codable, Equatable, Sendable, Identifiable {
         // (Legacy `unknownTerms` key is intentionally ignored on decode — dropped in Phase 1.)
         knowledgeRefs = try container.decodeIfPresent([String].self, forKey: .knowledgeRefs) ?? []
         knowledgeFingerprint = try container.decodeIfPresent(String.self, forKey: .knowledgeFingerprint)
+        inputFingerprint = try container.decodeIfPresent(String.self, forKey: .inputFingerprint)
         source = try container.decodeIfPresent(VideoClassificationSource.self, forKey: .source) ?? .model
         modelVersion = try container.decodeIfPresent(String.self, forKey: .modelVersion) ?? ""
         tagBounds = try? container.decodeIfPresent(TagBounds.self, forKey: .tagBounds)

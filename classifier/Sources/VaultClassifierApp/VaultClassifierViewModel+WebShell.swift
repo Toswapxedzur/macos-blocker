@@ -263,6 +263,7 @@ extension VaultClassifierViewModel {
             "email": chatGPTStatus.email, "planUsageEnabled": chatGPTStatus.planUsageEnabled,
             "signingIn": chatGPTStatus.signingIn, "requestsToday": chatGPTStatus.requestsToday,
             "needsRetry": chatGPTStatus.needsRetry, "failedItems": failedCloudClassifications.count,
+            "needsWelcome": chatGPTStatus.needsWelcome,
             "issue": chatGPTStatus.issue ?? NSNull(),
             "dailyRequestLimit": state?.settings.chatGPTDailyRequestLimit.map { $0 as Any } ?? NSNull(),
             "models": chatGPTStatus.models.map { ["id": $0.identifier, "name": $0.displayName] }] as [String: Any]
@@ -520,6 +521,12 @@ extension VaultClassifierViewModel {
             case "saveClassificationSettings":
                 saveClassificationSettings(enabled: try webBool(data, key: "classificationEnabled"))
             case "connectChatGPT": connectChatGPT()
+            case "openChatGPTUsage": try Self.openChatGPTURL(URL(string: "https://chatgpt.com/settings/usage")!)
+            case "acknowledgeChatGPTPlan":
+                Task { [weak self] in
+                    do { try await self?.chatGPTClient?.acknowledgePlanUsage(); await self?.refreshChatGPTStatus() }
+                    catch { self?.issue = error.localizedDescription; self?.onWebStateChange?() }
+                }
             case "cancelChatGPTSignIn":
                 Task { await chatGPTClient?.cancelSignIn() }
             case "disconnectChatGPT": disconnectChatGPT()

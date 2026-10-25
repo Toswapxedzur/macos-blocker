@@ -110,7 +110,7 @@ private final class ResponseSink: NSObject, URLSessionDataDelegate, @unchecked S
             let status = (response as? HTTPURLResponse)?.statusCode
             let failure: Error
             if status == 401 { failure = CloudClassificationError.signInRequired }
-            else if status == 429 { failure = CloudClassificationError.usageLimit }
+            else if status == 429 { failure = ChatGPTPlanError.usageUnavailable }
             else { failure = ChatGPTPlanError.failedResponse }
             finish(.failure(failure))
             return

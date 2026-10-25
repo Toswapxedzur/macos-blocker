@@ -18,7 +18,8 @@ struct ChatGPTClassificationEngine: OnDeviceBatchLLM {
             let batch = Array(requests[start..<min(requests.count, start + 16)])
             let plan = try Self.prepare(batch, configuration: configuration)
             let text = try await client.classify(configuration: configuration, request: plan)
-            results += try Self.parse(text, requests: batch)
+            do { results += try Self.parse(text, requests: batch) }
+            catch { await client.recordClassificationFailure(error); throw error }
         }
         return results
     }

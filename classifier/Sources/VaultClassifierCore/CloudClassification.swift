@@ -47,11 +47,20 @@ extension ClassifierTypeAsset {
     /// explicit contract/version prevents results from being mistaken for local
     /// calibration, or reused across account/model/rule/search changes.
     public var cloudModelVersion: String {
-        let data = (try? JSONEncoder().encode(CloudCurrency(
+        let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
+        let data = (try? encoder.encode(CloudCurrency(
             account: chatGPT.accountID, model: chatGPT.model,
             search: chatGPT.searchEnabled, rules: localModel.houseRules,
             strictness: localModel.strictness, bounds: localModel.tagBounds))) ?? Data()
         return "chatgpt/self-reported-v1/" + SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+    }
+}
+
+public enum CloudClassificationCurrency {
+    public static func input(title: String, summary: String?, text: String?, creatorID: String, creatorName: String?) -> String {
+        let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
+        let data = (try? encoder.encode([title, summary ?? "", text ?? "", creatorID, creatorName ?? ""])) ?? Data()
+        return SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
     }
 }
 

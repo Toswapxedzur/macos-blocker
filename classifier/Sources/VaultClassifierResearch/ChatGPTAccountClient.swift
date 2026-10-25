@@ -16,10 +16,12 @@ public struct ChatGPTAccountStatus: Sendable {
     public var models: [ChatGPTPlanProtocol.Model] = []
     public var requestsToday = 0
     public var needsRetry = false
+    public var needsWelcome = false
     public var issue: String?
 }
 
 private struct ChatGPTCredential: Codable, CustomStringConvertible {
+    var schemaVersion: Int
     var clientID: String; var subject: String; var email: String?
     var accessToken: String; var refreshToken: String; var idToken: String
     var scopes: [String]; var expiresAt: Date; var earliestRefreshAt: Date?
@@ -74,13 +76,18 @@ public actor ChatGPTAccountClient: CloudClassificationEngineResolving {
     private var issue: String?
     private var signInTask: Task<Void, Never>?
     private var generation = UUID()
+    private var credentialRevision = UUID()
+    private var signInGeneration = UUID()
+    private var dataRequests: [UUID: Task<Data, Error>] = [:]
     private var isShuttingDown = false
     private var requestBusy = false
     private var dailyRequestLimit: Int?
     private var failureHold = false
     private var activeRequests: [UUID: Task<(String, Int?), Error>] = [:]
-    private struct Usage: Codable { var day: String; var requests: Int }
+    private struct Usage: Codable { var schemaVersion: Int; var day: String; var requests: Int }
     private var usage: Usage
+    private var welcomeAccounts: Set<String>
+    private struct Welcome: Codable { let schemaVersion: Int; let accounts: Set<String> }
 
     public init(directory: URL, dailyRequestLimit: Int? = nil, http: ChatGPTHTTPClient = .init(), onChange: @escaping @Sendable () -> Void = {}) throws {
         let store = ChatGPTAccountStore(directory: directory)
@@ -96,7 +103,12 @@ public actor ChatGPTAccountClient: CloudClassificationEngineResolving {
         }
         credential = try store.read("account.json").map { try JSONDecoder().decode(ChatGPTCredential.self, from: $0) }
         registration = try store.read("registration.json").map { try JSONDecoder().decode(String.self, from: $0) }
-        usage = try store.read("usage.json").map { try JSONDecoder().decode(Usage.self, from: $0) } ?? Usage(day: Self.day(), requests: 0)
+        usage = try store.read("usage.json").map { try JSONDecoder().decode(Usage.self, from: $0) } ?? Usage(schemaVersion: 1, day: Self.day(), requests: 0)
+        let welcome = try store.read("welcome.json").map { try JSONDecoder().decode(Welcome.self, from: $0) } ?? Welcome(schemaVersion: 1, accounts: [])
+        welcomeAccounts = welcome.accounts
+        guard credential == nil || credential?.schemaVersion == 1,
+              usage.schemaVersion == 1, welcome.schemaVersion == 1, welcomeAccounts.count <= 1024,
+              (0...1_000_000).contains(usage.requests) else { throw ChatGPTPlanError.invalidResponse }
     }
 
     private static func day() -> String {
@@ -113,13 +125,14 @@ public actor ChatGPTAccountClient: CloudClassificationEngineResolving {
         status.signingIn = signInTask != nil; status.models = models; status.issue = issue
         status.requestsToday = usage.day == Self.day() ? usage.requests : 0
         status.needsRetry = failureHold
+        status.needsWelcome = status.planUsageEnabled && !welcomeAccounts.contains(status.accountID)
         return status
     }
 
     public func beginSignIn() throws -> URL {
         guard !isShuttingDown else { throw CancellationError() }
         signInTask?.cancel()
-        generation = UUID(); let currentGeneration = generation
+        signInGeneration = UUID(); let currentGeneration = signInGeneration
         let listener = try ChatGPTLoopback()
         let verifier = try ChatGPTOAuth.random()
         let attempt = try ChatGPTPlanProtocol.AuthorizationAttempt(
@@ -146,8 +159,17 @@ public actor ChatGPTAccountClient: CloudClassificationEngineResolving {
         let earliest_refresh_at: Double?
     }
 
+    private func fetch(_ request: ChatGPTPlanProtocol.Request, token: String? = nil, limit: Int = 262144) async throws -> Data {
+        guard !isShuttingDown else { throw CancellationError() }
+        let id = UUID()
+        let work = Task { try await http.data(request, token: token, limit: limit) }
+        dataRequests[id] = work
+        defer { dataRequests[id] = nil }
+        return try await withTaskCancellationHandler(operation: { try await work.value }, onCancel: { work.cancel() })
+    }
+
     private func tokenReply(_ request: ChatGPTPlanProtocol.Request) async throws -> TokenReply {
-        let data = try await http.data(request)
+        let data = try await fetch(request)
         guard let reply = try? JSONDecoder().decode(TokenReply.self, from: data),
               reply.token_type.lowercased() == "bearer", !reply.access_token.isEmpty,
               !reply.refresh_token.isEmpty, reply.expires_in > 0, reply.expires_in <= 86400 else {
@@ -158,12 +180,12 @@ public actor ChatGPTAccountClient: CloudClassificationEngineResolving {
 
     private func identity(_ token: String, clientID: String, nonce: String?, subject: String?) async throws -> ChatGPTOAuth.Identity {
         let request = ChatGPTPlanProtocol.Request(url: URL(string: "https://auth.openai.com/.well-known/jwks.json")!, method: "GET", contentType: nil, body: nil)
-        let jwks = try await http.data(request)
+        let jwks = try await fetch(request)
         return try ChatGPTOAuth.verifyIdentity(token, jwks: jwks, clientID: clientID, nonce: nonce, expectedSubject: subject)
     }
 
     private func completeSignIn(_ callback: (clientID: String, request: ChatGPTPlanProtocol.Request), attempt: ChatGPTPlanProtocol.AuthorizationAttempt, generation pending: UUID) async throws {
-        guard pending == generation, !isShuttingDown else { throw CancellationError() }
+        guard pending == signInGeneration, !isShuttingDown else { throw CancellationError() }
         // Retain dynamic registration even when code exchange expires. The
         // active identity/credentials remain untouched until validation passes.
         try store.write(JSONEncoder().encode(callback.clientID), name: "registration.json")
@@ -171,35 +193,44 @@ public actor ChatGPTAccountClient: CloudClassificationEngineResolving {
         let reply = try await tokenReply(callback.request)
         guard let token = reply.id_token else { throw ChatGPTPlanError.invalidAuthorization }
         let identity = try await identity(token, clientID: callback.clientID, nonce: attempt.nonce, subject: credential?.subject)
-        guard pending == generation, !isShuttingDown else { throw CancellationError() }
-        let connected = ChatGPTCredential(clientID: callback.clientID, subject: identity.subject, email: identity.email,
+        guard pending == signInGeneration, !isShuttingDown else { throw CancellationError() }
+        let connected = ChatGPTCredential(schemaVersion: 1, clientID: callback.clientID, subject: identity.subject, email: identity.email,
             accessToken: reply.access_token, refreshToken: reply.refresh_token, idToken: token,
             scopes: reply.scope?.split(separator: " ").map(String.init) ?? [],
             expiresAt: Date().addingTimeInterval(reply.expires_in), earliestRefreshAt: reply.earliest_refresh_at.map(Date.init(timeIntervalSince1970:)))
         try store.write(JSONEncoder().encode(connected), name: "account.json")
+        credentialRevision = UUID()
         credential = connected; models = []; signInTask = nil; issue = nil; failureHold = false; onChange()
         try await refreshModels()
     }
 
     private func signInFailed(_ error: Error, generation pending: UUID) {
-        guard pending == generation else { return }
+        guard pending == signInGeneration else { return }
         signInTask = nil
         issue = error is CancellationError ? nil : error.localizedDescription
         onChange()
     }
 
     public func disconnect() throws {
-        generation = UUID(); signInTask?.cancel(); signInTask = nil
+        generation = UUID(); credentialRevision = UUID(); signInGeneration = UUID(); signInTask?.cancel(); signInTask = nil
         activeRequests.values.forEach { $0.cancel() }
         try store.delete("account.json"); try store.delete("registration.json")
         credential = nil; registration = nil; models = []; issue = nil; failureHold = false; onChange()
     }
 
     public func cancelSignIn() {
-        generation = UUID(); signInTask?.cancel(); signInTask = nil; issue = nil; onChange()
+        signInGeneration = UUID(); signInTask?.cancel(); signInTask = nil; issue = nil; onChange()
     }
 
     public func retryFailedRequests() { failureHold = false; issue = nil; onChange() }
+    public func acknowledgePlanUsage() throws {
+        guard let credential, credential.scopes.contains(ChatGPTPlanProtocol.requiredPlanScope) else { return }
+        var next = welcomeAccounts; next.insert(credential.accountID)
+        guard next.count <= 1024 else { throw ChatGPTPlanError.invalidResponse }
+        try store.write(JSONEncoder().encode(Welcome(schemaVersion: 1, accounts: next)), name: "welcome.json")
+        welcomeAccounts = next; onChange()
+    }
+    func recordClassificationFailure(_ error: Error) { failureHold = true; issue = error.localizedDescription; onChange() }
     public func setDailyRequestLimit(_ value: Int?) { dailyRequestLimit = value }
 
     private func accessToken() async throws -> String {
@@ -212,17 +243,19 @@ public actor ChatGPTAccountClient: CloudClassificationEngineResolving {
             return current.accessToken
         }
         let pending = generation
+        let revision = credentialRevision
         let reply = try await tokenReply(ChatGPTPlanProtocol.refreshRequest(clientID: current.clientID, refreshToken: current.refreshToken))
         if let token = reply.id_token {
             _ = try await identity(token, clientID: current.clientID, nonce: nil, subject: current.subject)
             current.idToken = token
         }
         guard pending == generation, !isShuttingDown else { throw CancellationError() }
+        if revision != credentialRevision { return try await accessToken() }
         current.accessToken = reply.access_token; current.refreshToken = reply.refresh_token
         current.expiresAt = Date().addingTimeInterval(reply.expires_in)
         current.earliestRefreshAt = reply.earliest_refresh_at.map(Date.init(timeIntervalSince1970:))
         if let scope = reply.scope { current.scopes = scope.split(separator: " ").map(String.init) }
-        try store.write(JSONEncoder().encode(current), name: "account.json"); credential = current
+        try store.write(JSONEncoder().encode(current), name: "account.json"); credential = current; credentialRevision = UUID()
         guard current.scopes.contains(ChatGPTPlanProtocol.requiredPlanScope) else { throw CloudClassificationError.signInRequired }
         return current.accessToken
     }
@@ -239,7 +272,7 @@ public actor ChatGPTAccountClient: CloudClassificationEngineResolving {
         do {
             let pending = generation
             let token = try await accessToken()
-            let data = try await http.data(ChatGPTPlanProtocol.modelRequest(), token: token, limit: 2_097_152)
+            let data = try await fetch(ChatGPTPlanProtocol.modelRequest(), token: token, limit: 2_097_152)
             guard pending == generation else { throw CancellationError() }
             models = try ChatGPTPlanProtocol.parseModels(data); issue = nil; onChange()
         } catch { issue = error.localizedDescription; onChange(); throw error }
@@ -256,9 +289,11 @@ public actor ChatGPTAccountClient: CloudClassificationEngineResolving {
         guard credential?.accountID == configuration.accountID else { throw CloudClassificationError.signInRequired }
         guard !failureHold else { throw ChatGPTPlanError.failedResponse }
         let pending = generation
-        if usage.day != Self.day() { usage = Usage(day: Self.day(), requests: 0) }
+        if usage.day != Self.day() { usage = Usage(schemaVersion: 1, day: Self.day(), requests: 0) }
         if let limit = dailyRequestLimit, usage.requests >= limit { throw CloudClassificationError.usageLimit }
-        let token = try await accessToken()
+        let token: String
+        do { token = try await accessToken() }
+        catch { issue = error.localizedDescription; failureHold = !(error is CancellationError); throw error }
         guard pending == generation, credential?.accountID == configuration.accountID else { throw CancellationError() }
         usage.requests += 1
         try store.write(JSONEncoder().encode(usage), name: "usage.json") // Reserve before dispatch; failures count too.
@@ -271,14 +306,20 @@ public actor ChatGPTAccountClient: CloudClassificationEngineResolving {
             guard pending == generation, !isShuttingDown else { throw CancellationError() }
             issue = nil
             return output.0
-        } catch { issue = error is CancellationError ? nil : error.localizedDescription; failureHold = !(error is CancellationError); throw error }
+        } catch {
+            if pending != generation, !isShuttingDown { throw CloudClassificationError.signInRequired }
+            issue = error is CancellationError ? nil : error.localizedDescription
+            failureHold = !(error is CancellationError); throw error
+        }
     }
 
     public func shutdown() async {
-        isShuttingDown = true; generation = UUID()
+        isShuttingDown = true; generation = UUID(); credentialRevision = UUID(); signInGeneration = UUID()
         let signIn = signInTask; signIn?.cancel(); signInTask = nil
+        let data = Array(dataRequests.values); data.forEach { $0.cancel() }
         let requests = Array(activeRequests.values); requests.forEach { $0.cancel() }
         await signIn?.value
         for request in requests { _ = try? await request.value }
+        for request in data { _ = try? await request.value }
     }
 }

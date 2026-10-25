@@ -42,6 +42,11 @@ window.webkit={messageHandlers:{vaultClassifier:{postMessage(message){
   switch(action){
     case 'setClassifierTypePaused':type.isPaused=data.paused;break;
     case 'saveClassificationSettings':testState.settings.classificationEnabled=data.classificationEnabled;break;
+    case 'saveClassificationProvider':type.classificationProvider=data.providerModel==='local'?'local':'chatGPT';type.chatGPT={accountID:testState.assets.chatGPT?.accountID||'',model:data.providerModel.startsWith('chatgpt:')?data.providerModel.slice(8):type.chatGPT?.model||'',searchEnabled:data.searchEnabled};break;
+    case 'saveChatGPTUsageLimit':testState.assets.chatGPT.dailyRequestLimit=data.dailyRequestLimit===''?null:Number(data.dailyRequestLimit);break;
+    case 'connectChatGPT':testState.assets.chatGPT={...(testState.assets.chatGPT||{}),signingIn:true};break;
+    case 'cancelChatGPTSignIn':testState.assets.chatGPT.signingIn=false;break;
+    case 'acknowledgeChatGPTPlan':testState.assets.chatGPT.needsWelcome=false;break;
     case 'confirmDeleteClassifierType':testState.assets.classifierTypes=testState.assets.classifierTypes.filter(t=>t.id!==data.typeID);break;
     case 'configureClassifierType':type.name=data.name.trim();break;
     case 'saveClassifierTypeLocalModel':type.localModel={speedQuality:data.speedQuality,strictness:Number(data.strictness),houseRules:data.houseRules||'',minimumTagsOverride:data.minimumTagsOverride===''||data.minimumTagsOverride==null?null:Number(data.minimumTagsOverride),maximumTagsOverride:data.maximumTagsOverride===''||data.maximumTagsOverride==null?null:Number(data.maximumTagsOverride)};break;

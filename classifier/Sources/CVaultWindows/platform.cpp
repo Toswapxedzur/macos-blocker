@@ -70,7 +70,7 @@ uint32_t vault_windows_verify_rs256(const uint8_t *n, size_t nlen, const uint8_t
     }
     if (key) BCryptDestroyKey(key);
     BCryptCloseAlgorithmProvider(algorithm, 0);
-    return status >= 0 ? 0 : ERROR_INVALID_SIGNATURE;
+    return status >= 0 ? 0 : ERROR_INVALID_DATA;
 }
 
 uint32_t vault_windows_restrict_path(const char *path) {

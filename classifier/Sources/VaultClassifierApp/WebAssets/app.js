@@ -258,7 +258,7 @@
         minimumTagsOverride: type.localModel?.minimumTagsOverride == null ? "" : String(type.localModel.minimumTagsOverride),
         maximumTagsOverride: type.localModel?.maximumTagsOverride == null ? "" : String(type.localModel.maximumTagsOverride),
       };
-      case "saveClassificationProvider": return type && { providerModel: type.classificationProvider === "chatGPT" ? `chatgpt:${type.chatGPT?.model || ""}` : "local", searchEnabled: type.chatGPT?.searchEnabled === true };
+      case "saveClassificationProvider": return type && { providerModel: type.classificationProvider === "chatGPT" ? `${type.chatGPT?.accountID === state.assets?.chatGPT?.accountID ? "chatgpt" : "unavailable"}:${type.chatGPT?.model || ""}` : "local", searchEnabled: type.chatGPT?.searchEnabled === true };
       case "saveChatGPTUsageLimit": return { dailyRequestLimit: state.assets?.chatGPT?.dailyRequestLimit == null ? "" : String(state.assets.chatGPT.dailyRequestLimit) };
       case "saveClassifierTypeResearch": return type && {
         researchMode: type.researchEnabled === true ? "on" : type.researchEnabled === false ? "off" : "inherit",
@@ -723,16 +723,16 @@
   function chatGPTAccountSection() {
     const account = state.assets?.chatGPT || {};
     const busy = account.signingIn === true;
-    return `<section class="utility-settings-section" data-chatgpt-account><h3>${tx("cloud.title")}</h3><p class="small-copy">${account.connected ? esc(account.email || t("cloud.connected")) : tx("cloud.disconnected")}</p><p class="small-copy" data-info>${tx("cloud.disclosure")}</p><div class="action-row">${busy ? `<span role="status">${tx("cloud.signingIn")}</span><button type="button" class="secondary" data-action="cancelChatGPTSignIn">${tx("cloud.cancel")}</button>` : `<button type="button" class="secondary" data-action="connectChatGPT">${tx("cloud.connect")}</button>`}${account.connected ? `<button type="button" class="secondary" data-action="refreshChatGPTModels">${tx("cloud.refreshModels")}</button><button type="button" class="secondary" data-action="disconnectChatGPT">${tx("cloud.disconnect")}</button>` : ""}</div>${account.connected && !account.planUsageEnabled ? `<p role="alert">${tx("cloud.planRequired")}</p>` : ""}${notice(account.issue, "red")}<div data-form-id="chatgpt-limit-form" data-autosave-action="saveChatGPTUsageLimit">${field("cloud.dailyLimit", "cloud.dailyLimitHint", "dailyRequestLimit", account.dailyRequestLimit ?? "", "number", 'min="1" max="100000" step="1"')}</div><p class="small-copy">${tx("cloud.requestsToday", {count: account.requestsToday || 0})}</p>${account.needsRetry || account.failedItems ? `<button type="button" class="secondary" data-action="retryChatGPTClassifications">${tx("cloud.retry")}</button>` : ""}</section>`;
+    return `<section class="utility-settings-section" data-chatgpt-account><h3>${tx("cloud.title")}</h3><p class="small-copy">${account.connected ? esc(account.email || t("cloud.connected")) : tx("cloud.disconnected")}</p><p class="small-copy" data-info>${tx("cloud.disclosure")}</p><div class="action-row">${busy ? `<span role="status">${tx("cloud.signingIn")}</span><button type="button" class="secondary" data-action="cancelChatGPTSignIn">${tx("cloud.cancel")}</button>` : `<button type="button" class="secondary" data-action="connectChatGPT">${tx("cloud.connect")}</button>`}${account.connected ? `<button type="button" class="secondary" data-action="refreshChatGPTModels">${tx("cloud.refreshModels")}</button><button type="button" class="secondary" data-action="disconnectChatGPT">${tx("cloud.disconnect")}</button>` : ""}</div>${account.connected && !account.planUsageEnabled ? `<p role="alert">${tx("cloud.planRequired")}</p>` : ""}${notice(account.issue, "red")}<div data-form-id="chatgpt-limit-form" data-autosave-action="saveChatGPTUsageLimit">${field("cloud.dailyLimit", "cloud.dailyLimitHint", "dailyRequestLimit", account.dailyRequestLimit ?? "", "number", 'min="1" max="100000" step="1"')}</div><p class="small-copy">${tx("cloud.requestsToday", {count: account.requestsToday || 0})}</p>${account.connected ? `<button type="button" class="${account.needsRetry ? "primary" : "secondary"}" data-action="openChatGPTUsage">${tx("cloud.manageUsage")}</button>` : ""}${account.needsRetry || account.failedItems ? `<button type="button" class="secondary" data-action="retryChatGPTClassifications">${tx("cloud.retry")}</button>` : ""}</section>`;
   }
 
   function cloudProviderSection(type) {
     const account = state.assets?.chatGPT || {};
-    const selected = type.classificationProvider === "chatGPT" ? `chatgpt:${type.chatGPT?.model || ""}` : "local";
+    const selected = type.classificationProvider === "chatGPT" ? `${type.chatGPT?.accountID === state.assets?.chatGPT?.accountID ? "chatgpt" : "unavailable"}:${type.chatGPT?.model || ""}` : "local";
     const choices = [["local", t("cloud.local")]];
     if (account.planUsageEnabled) (account.models || []).forEach(model => choices.push([`chatgpt:${model.id}`, `ChatGPT · ${model.name}`]));
     if (!choices.some(([value]) => value === selected)) choices.push([selected, `${type.chatGPT?.model || "ChatGPT"} · ${t("cloud.unavailable")}`]);
-    return `<section class="classifier-type-section" data-form-id="cloud-provider-${esc(type.id)}" data-autosave-action="saveClassificationProvider" data-type-id="${esc(type.id)}">${valueSelectField("cloud.provider", "", "providerModel", selected, choices)}${type.classificationProvider === "chatGPT" ? `<p class="small-copy" data-info>${tx("cloud.confidence")}</p>${toggle("cloud.search", "searchEnabled", type.chatGPT?.searchEnabled === true)}<p class="small-copy" data-info>${tx("cloud.searchHint")}</p>` : `<input type="checkbox" hidden data-field="searchEnabled"${type.chatGPT?.searchEnabled === true ? " checked" : ""}>`}${!account.connected ? `<button type="button" class="secondary" data-action="connectChatGPT">${tx("cloud.connect")}</button>` : ""}${account.needsRetry || account.failedItems ? `<button type="button" class="secondary" data-action="retryChatGPTClassifications">${tx("cloud.retry")}</button>` : ""}</section>`;
+    return `<section class="classifier-type-section" data-form-id="cloud-provider-${esc(type.id)}" data-autosave-action="saveClassificationProvider" data-type-id="${esc(type.id)}">${valueSelectField("cloud.provider", "", "providerModel", selected, choices)}${type.classificationProvider === "chatGPT" ? `<p class="small-copy">${tx("cloud.usingPlan")} · <button type="button" class="secondary" data-action="openChatGPTUsage">${tx("cloud.manageUsage")}</button></p><p class="small-copy" data-info>${tx("cloud.confidence")}</p>${toggle("cloud.search", "searchEnabled", type.chatGPT?.searchEnabled === true)}<p class="small-copy" data-info>${tx("cloud.searchHint")}</p>` : `<input type="checkbox" hidden data-field="searchEnabled"${type.chatGPT?.searchEnabled === true ? " checked" : ""}>`}${!account.connected ? `<button type="button" class="secondary" data-action="connectChatGPT">${tx("cloud.connect")}</button>` : ""}${account.needsRetry || account.failedItems ? `<button type="button" class="secondary" data-action="retryChatGPTClassifications">${tx("cloud.retry")}</button>` : ""}</section>`;
   }
 
   function nativeSettingsContent() {
@@ -820,7 +820,7 @@
   }
 
   function syncDialogFocus(previousControl) {
-    const kind = pendingCreateType ? "create" : null;
+    const kind = state?.assets?.chatGPT?.needsWelcome ? "welcome" : pendingCreateType ? "create" : null;
     releaseDialogFocus?.(false);
     releaseDialogFocus = null;
     if (!kind) {
@@ -830,7 +830,7 @@
       return;
     }
     dialogFocusKind = kind;
-    const card = uiQuery(kind === "create" ? "[data-create-type-dialog]" : '.utility-popover[role="dialog"]');
+    const card = uiQuery(kind === "welcome" ? "[data-chatgpt-welcome]" : kind === "create" ? "[data-create-type-dialog]" : '.utility-popover[role="dialog"]');
     if (!card) return;
     const active = activeControl();
     const initial = card.contains(active) ? active : previousControl
@@ -839,9 +839,9 @@
         && control.hasAttribute("data-create-type-name") === previousControl.createName
         && (!previousControl.platform || control.value === previousControl.platform)) : null;
     releaseDialogFocus = window.VaultUI.focusDialog(card, {
-      initialFocus: initial || card.querySelector(kind === "create" ? "[data-create-type-name]" : '[data-action="closeUtilityPanel"]'),
+      initialFocus: initial || card.querySelector(kind === "welcome" ? '[data-action="acknowledgeChatGPTPlan"]' : kind === "create" ? "[data-create-type-name]" : '[data-action="closeUtilityPanel"]'),
       returnFocus: () => uiQuery(kind === "create" ? '[data-action="newType"]' : '[data-action="openUtilityPanel"]'),
-      onEscape: dismissClassifierDialog
+      onEscape: kind === "welcome" ? () => send("acknowledgeChatGPTPlan") : dismissClassifierDialog
     });
     if (previousControl?.start != null && initial?.setSelectionRange) {
       initial.setSelectionRange(previousControl.start, previousControl.end);
@@ -1206,7 +1206,7 @@
         ? t("bridge.tagBounds.custom", { minimum: localModel.minimumTagsOverride ?? defaultMinimum, maximum: localModel.maximumTagsOverride ?? defaultMaximum })
         : t("bridge.tagBounds.default");
       const expandKey = `type-more:${classifierType.id}`;
-      const localModelSection = `<section class="classifier-type-section classifier-local-model" data-local-model-section><div class="section-header"><div><h3>${tx(classifierType.classificationProvider === "chatGPT" ? "cloud.tagging" : "bridge.localModel")} ${classifierType.classificationProvider === "chatGPT" ? "" : statusPill(tx(engineLabel), engineTone)}</h3><p class="section-copy" data-info>${tx("bridge.localModelCopy")}</p></div></div>${classifierType.classificationProvider === "chatGPT" ? `<input type="hidden" data-field="speedQuality" value="${esc(localModel.speedQuality)}">` : `<div class="field wide"><span class="field-label">${tx("localModel.speedQuality")}<span class="field-hint" data-info> · ${tx("localModel.speedQualityHint")}</span></span>${speedQualityCards(library, localModel.speedQuality, classifierType.id)}<p class="model-library-source-note" data-info>${tx("localModel.tier.sourceNote")}</p></div>`}<div class="field wide"><span class="field-label">${tx("localModel.strictness")}<span class="field-hint" data-info> · ${tx("localModel.strictnessHint")}</span></span>${strictnessOptions(localModel.strictness, classifierType.id)}${localModel.minimumTagsOverride != null || localModel.maximumTagsOverride != null ? `<p class="small-copy" data-info="bridge.tagBounds.precedence">${tx("bridge.tagBounds.precedence")}</p>` : ""}</div>${classifierType.classificationProvider === "chatGPT" ? "" : `<p class="small-copy resident-model-note" data-info data-info-target="[data-local-model-section] h3">${tx("bridge.localModelResidentNote")}</p>`}${textareaField("bridge.localModelHouseRules", "bridge.localModelHouseRulesCopy", "houseRules", localModel.houseRules, 'rows="4" maxlength="4000"')}</section>`;
+      const localModelSection = `<section class="classifier-type-section classifier-local-model" data-local-model-section><div class="section-header"><div><h3>${tx(classifierType.classificationProvider === "chatGPT" ? "cloud.tagging" : "bridge.localModel")} ${classifierType.classificationProvider === "chatGPT" ? "" : statusPill(tx(engineLabel), engineTone)}</h3><p class="section-copy" data-info>${classifierType.classificationProvider === "chatGPT" ? "" : tx("bridge.localModelCopy")}</p></div></div>${classifierType.classificationProvider === "chatGPT" ? `<input type="hidden" data-field="speedQuality" value="${esc(localModel.speedQuality)}">` : `<div class="field wide"><span class="field-label">${tx("localModel.speedQuality")}<span class="field-hint" data-info> · ${tx("localModel.speedQualityHint")}</span></span>${speedQualityCards(library, localModel.speedQuality, classifierType.id)}<p class="model-library-source-note" data-info>${tx("localModel.tier.sourceNote")}</p></div>`}<div class="field wide"><span class="field-label">${tx("localModel.strictness")}<span class="field-hint" data-info> · ${tx("localModel.strictnessHint")}</span></span>${strictnessOptions(localModel.strictness, classifierType.id)}${localModel.minimumTagsOverride != null || localModel.maximumTagsOverride != null ? `<p class="small-copy" data-info="bridge.tagBounds.precedence">${tx("bridge.tagBounds.precedence")}</p>` : ""}</div>${classifierType.classificationProvider === "chatGPT" ? "" : `<p class="small-copy resident-model-note" data-info data-info-target="[data-local-model-section] h3">${tx("bridge.localModelResidentNote")}</p>`}${textareaField("bridge.localModelHouseRules", "bridge.localModelHouseRulesCopy", "houseRules", localModel.houseRules, 'rows="4" maxlength="4000"')}</section>`;
       const tagBoundsSection = `<details class="vui-expand classifier-group-more" data-expand="${esc(expandKey)}"${openExpands.has(expandKey) ? " open" : ""}><summary><span>${tx("navigation.more")}</span><span class="small-copy classifier-override-summary">${esc(boundsSummary)}</span></summary><section class="classifier-type-section"><p class="section-copy" data-info data-tag-bounds-defaults>${tx("bridge.tagBounds.copy", { minimum: defaultMinimum, maximum: defaultMaximum })}</p><div class="utility-settings-fields">${field("bridge.tagBounds.minimum", "bridge.tagBounds.minimumHint", "minimumTagsOverride", localModel.minimumTagsOverride ?? "", "number", `min="0" max="3" step="1" placeholder="${defaultMinimum}"`)}${field("bridge.tagBounds.maximum", "bridge.tagBounds.maximumHint", "maximumTagsOverride", localModel.maximumTagsOverride ?? "", "number", `min="1" max="3" step="1" placeholder="${defaultMaximum}"`)}</div><p class="notice red" data-tag-bounds-error role="status" hidden>${tx("bridge.tagBounds.error")}</p></section></details>`;
       const researchFormID = `classifier-research-form-${classifierType.id}`;
       const researchMode = classifierType.researchEnabled === true ? "on" : classifierType.researchEnabled === false ? "off" : "inherit";
@@ -1569,6 +1569,11 @@
   }
 
 
+  function chatGPTWelcome() {
+    if (!state?.assets?.chatGPT?.needsWelcome) return "";
+    return `<div class="utility-popover-layer" role="presentation"><div class="deletion-dialog" role="dialog" aria-modal="true" aria-label="${tx("cloud.welcomeTitle")}" data-chatgpt-welcome><h3>${tx("cloud.welcomeTitle")}</h3><p>${tx("cloud.welcomeCopy")}</p><div class="action-row"><button type="button" class="primary" data-action="acknowledgeChatGPTPlan">${tx("cloud.gotIt")}</button></div></div></div>`;
+  }
+
   function render() {
     if (!state) {
       root.innerHTML = initialShell();
@@ -1576,6 +1581,7 @@
       return;
     }
     if (composingEdit) return;
+    if (state?.assets?.chatGPT?.needsWelcome && window.VaultSettings?.isOpen()) { window.VaultSettings.close(); return; }
     // A new tag is an explicit action, so its fields are not autosave edits.
     // Keep that pending draft when downloads or other snapshots redraw the UI.
     const tagForm = uiQuery("[data-tree-popover]");
@@ -1583,7 +1589,7 @@
       activeTagPanel.draft = collect("tag-popover-form");
     }
     pendingLists = []; deferredChoices = new Map();
-    const markup = shell(workspace()) + createTypeModal() + dictionaryOnboarding();
+    const markup = shell(workspace()) + createTypeModal() + dictionaryOnboarding() + chatGPTWelcome();
     const settingsMarkup = nativeSettingsContent();
     // Nothing changed on the page: keep the DOM (and its scroll) as it is.
     if (markup === lastRenderedMarkup && settingsMarkup === settingsRoot.__markup && root.firstChild) {

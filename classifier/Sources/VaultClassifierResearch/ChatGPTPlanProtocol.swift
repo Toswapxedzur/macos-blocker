@@ -27,7 +27,7 @@ public enum ChatGPTPlanProtocol {
         public var debugDescription: String { description }
     }
 
-    public struct AuthorizationAttempt: Sendable, CustomStringConvertible {
+    public struct AuthorizationAttempt: Sendable, CustomStringConvertible, CustomDebugStringConvertible {
         public let callbackURL: URL
         public let state: String
         public let nonce: String
@@ -35,6 +35,7 @@ public enum ChatGPTPlanProtocol {
         public let issuedClientID: String?
         public let authorizationURL: URL
         public var description: String { "ChatGPT authorization attempt (redacted)" }
+        public var debugDescription: String { description }
 
         /// The caller supplies fresh cryptographic random values and an S256
         /// challenge. The runtime must start the loopback listener first.
@@ -89,7 +90,10 @@ public enum ChatGPTPlanProtocol {
                 }
                 values[item.name] = value
             }
-            guard values["state"] == state else { throw ChatGPTPlanError.invalidAuthorization }
+            guard let returnedState = values["state"] else { throw ChatGPTPlanError.invalidAuthorization }
+            let actual = Array(returnedState.utf8), expected = Array(state.utf8)
+            guard actual.count == expected.count,
+                  zip(actual, expected).reduce(UInt8(0), { $0 | ($1.0 ^ $1.1) }) == 0 else { throw ChatGPTPlanError.invalidAuthorization }
             if values["error"] != nil { throw ChatGPTPlanError.authorizationDeclined }
             guard let code = values["code"], !code.isEmpty,
                   let clientID = values["client_id"] ?? issuedClientID,

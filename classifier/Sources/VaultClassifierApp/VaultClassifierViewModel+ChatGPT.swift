@@ -37,19 +37,24 @@ extension VaultClassifierViewModel {
         Task { [weak self] in
             do {
                 let url = try await client.beginSignIn()
-                #if canImport(AppKit)
-                guard NSWorkspace.shared.open(url) else { throw ChatGPTPlanError.invalidAuthorization }
-                #elseif os(Windows)
-                let address = Array(url.absoluteString.utf16) + [0]
-                let verb = Array("open".utf16) + [0]
-                let result = address.withUnsafeBufferPointer { value in verb.withUnsafeBufferPointer { verb in
-                    ShellExecuteW(nil, verb.baseAddress, value.baseAddress, nil, nil, SW_SHOWNORMAL)
-                }}
-                guard Int(bitPattern: result) > 32 else { throw ChatGPTPlanError.invalidAuthorization }
-                #endif
+                try Self.openChatGPTURL(url)
                 await self?.refreshChatGPTStatus()
             } catch { self?.issue = error.localizedDescription; self?.onWebStateChange?() }
         }
+    }
+
+    static func openChatGPTURL(_ url: URL) throws {
+        guard url.scheme == "https", ["auth.openai.com", "chatgpt.com"].contains(url.host ?? "") else { throw ChatGPTPlanError.invalidAuthorization }
+        #if canImport(AppKit)
+        guard NSWorkspace.shared.open(url) else { throw ChatGPTPlanError.invalidAuthorization }
+        #elseif os(Windows)
+        let address = Array(url.absoluteString.utf16) + [0]
+        let verb = Array("open".utf16) + [0]
+        let result = address.withUnsafeBufferPointer { value in verb.withUnsafeBufferPointer { verb in
+            ShellExecuteW(nil, verb.baseAddress, value.baseAddress, nil, nil, SW_SHOWNORMAL)
+        }}
+        guard Int(bitPattern: result) > 32 else { throw ChatGPTPlanError.invalidAuthorization }
+        #endif
     }
 
     func disconnectChatGPT() {
@@ -117,10 +122,18 @@ extension VaultClassifierViewModel {
         if needsLocal {
             if localLLMRegistry == nil, let coordinator { installLocalLLMEngine(coordinator: coordinator) }
         } else {
-            modelWarmupTask?.cancel()
+            let warmup = modelWarmupTask
+            warmup?.cancel(); modelWarmupTask = nil
             let registry = localLLMRegistry
+            activeLocalRuntimeID = nil
             localLLMRegistry = nil; coordinator?.setOnDeviceLLMEngineResolver(nil)
-            Task { await registry?.shutdown() }
+            if registry != nil || warmup != nil {
+                let id = UUID()
+                retiringLocalModels[id] = Task { [weak self] in
+                    await registry?.shutdown(); await warmup?.value
+                    self?.retiringLocalModels[id] = nil
+                }
+            }
         }
     }
 }

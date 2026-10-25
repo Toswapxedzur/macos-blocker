@@ -49,6 +49,8 @@ final class VaultClassifierViewModel: ObservableObject {
     var localLLMRegistry: LocalLLMEngineRegistry?
     var modelWarmupTask: Task<Void, Never>?
     var liveEngineRuntime = false
+    var activeLocalRuntimeID: UUID?
+    var retiringLocalModels: [UUID: Task<Void, Never>] = [:]
     var chatGPTClient: ChatGPTAccountClient?
     @Published var chatGPTStatus = ChatGPTAccountStatus()
     var failedCloudClassifications: [String: (platform: String, item: NativeVideoTagsBatchItem)] = [:]
@@ -66,6 +68,7 @@ final class VaultClassifierViewModel: ObservableObject {
         modelWarmupTask?.cancel()
         let registry = localLLMRegistry
         let warmup = modelWarmupTask
+        let retiring = Array(retiringLocalModels.values)
         let task = Task { [self] in
             // Start native cancellation before waiting for queues that may be
             // blocked on a synchronous llama call. Never free during that call.
@@ -77,6 +80,8 @@ final class VaultClassifierViewModel: ObservableObject {
             await closeCloud.value
             await warmup?.value
             await closeModels.value
+            for task in retiring { await task.value }
+            retiringLocalModels.removeAll()
             coordinator?.setOnDeviceLLMEngineResolver(nil)
             coordinator?.setCloudEngineResolver(nil)
             localLLMRegistry = nil
@@ -193,10 +198,11 @@ final class VaultClassifierViewModel: ObservableObject {
     func installLocalLLMEngine(coordinator: LocalClassifierCoordinator) {
         guard !isShuttingDown else { return }
         liveEngineRuntime = true
+        let runtimeID = UUID(); activeLocalRuntimeID = runtimeID
         coordinator.setOnDeviceLLM(StubOnDeviceLLM())
         let registry = LocalLLMEngineRegistry { [weak self] fileName, status in
             Task { @MainActor [weak self] in
-                guard let self, !self.isShuttingDown, self.modelEngineStatuses[fileName] != status else { return }
+                guard let self, !self.isShuttingDown, self.activeLocalRuntimeID == runtimeID, self.modelEngineStatuses[fileName] != status else { return }
                 self.modelEngineStatuses[fileName] = status
                 self.onWebStateChange?()
             }
