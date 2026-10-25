@@ -19,7 +19,10 @@ Models are fetched from the connected account's `/v1/models` catalog, preserving
 visible server order. No model is selected automatically for a product group.
 Inference uses `https://api.openai.com/v1/responses`, array input, `store:false`
 and `stream:true`. A response is accepted only after `response.completed`.
-Redirects, malformed output, refusals, incomplete streams and late usage errors
+The live plan route has been observed omitting Content-Type on valid SSE.
+Absent media type still requires bounded SSE framing and response.completed;
+an explicit conflicting media type is rejected. Redirects, malformed output,
+refusals, incomplete streams and late usage errors
 do not create model decisions. Stream buffers and request duration are bounded.
 
 The existing coalescer deduplicates in-flight cards and drains batches of up to

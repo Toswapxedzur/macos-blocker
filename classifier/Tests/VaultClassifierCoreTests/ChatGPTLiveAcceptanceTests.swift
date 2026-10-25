@@ -1,5 +1,8 @@
 import Foundation
 import XCTest
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
 @testable import VaultClassifierCore
 @testable import VaultClassifierResearch
 
@@ -15,7 +18,24 @@ final class ChatGPTLiveAcceptanceTests: XCTestCase {
         try VaultPrivateFile.createDirectory(at: root)
         let run = root.appendingPathComponent("run-" + UUID().uuidString, isDirectory: true)
         try VaultPrivateFile.createDirectory(at: run)
-        let client = try ChatGPTAccountClient(directory: root.appendingPathComponent("Account"), dailyRequestLimit: 3)
+        // Only the controlled diagnostic inference body/response is captured,
+        // never Authorization headers, OAuth exchanges or credentials.
+        let http = ChatGPTHTTPClient { request, consume in
+            guard request.url?.path == "/v1/responses" else {
+                return try await ChatGPTHTTP.send(request, consume: consume)
+            }
+            let capture = LiveDiagnosticWire()
+            if let body = request.httpBody {
+                let file = run.appendingPathComponent("request.json")
+                try body.write(to: file, options: .atomic); try VaultPrivateFile.restrict(file)
+            }
+            defer {
+                let file = run.appendingPathComponent("response.sse")
+                try? capture.bytes.write(to: file, options: .atomic); try? VaultPrivateFile.restrict(file)
+            }
+            try await ChatGPTHTTP.send(request) { data in capture.append(data); try consume(data) }
+        }
+        let client = try ChatGPTAccountClient(directory: root.appendingPathComponent("Account"), dailyRequestLimit: 6, http: http)
         let cancellation = Task {
             while !Task.isCancelled {
                 if let data = try? Data(contentsOf: root.appendingPathComponent("cancel.json")),
@@ -68,16 +88,30 @@ final class ChatGPTLiveAcceptanceTests: XCTestCase {
             let local = LiveForbiddenLocalResolver(); coordinator.setOnDeviceLLMEngineResolver(local)
             let titles = ["An introduction to quadratic equations", "Minecraft redstone door tutorial", "How to bake sourdough bread"]
             let expected = ["Mathematics", "Gaming", "Cooking"]
+            let inputs = titles.enumerated().map {
+                VideoClassificationPipeline.Input(title: $0.element, entryID: "diagnostic-\($0.offset)", creatorID: "diagnostic-creator")
+            }
+            let requestsBefore = await client.status().requestsToday
             let start = Date()
-            let output = try await coordinator.classifyVideos(platformID: "youtube", items: titles.enumerated().map {
-                .init(title: $0.element, entryID: "diagnostic-\($0.offset)", creatorID: "diagnostic-creator")
-            })
+            let output = try await coordinator.classifyVideos(platformID: "youtube", items: inputs)
+            let inferenceSeconds = Date().timeIntervalSince(start)
+            // This is the browser's early cache path. classifyVideos is the
+            // explicit inference operation, so calling it again is not a cache test.
+            var cacheHits = 0
+            for input in inputs {
+                let cached = coordinator.cachedVideoTags(platformID: "youtube", entryID: input.entryID, input: input)
+                if cached != nil { cacheHits += 1 }
+                XCTAssertEqual(cached?.tags.map(\.name), output[input.entryID]?.tags.map(\.name))
+            }
+            let dispatched = await client.status().requestsToday - requestsBefore
+            XCTAssertEqual(cacheHits, inputs.count)
+            XCTAssertEqual(dispatched, 1, "Browser cache lookups must not dispatch another provider request")
             let localCalls = await local.calls
             let rows: [[String: Any]] = titles.indices.map { index in
                 ["title": titles[index], "expected": expected[index], "tags": output["diagnostic-\(index)"]?.tags.map(\.name) ?? []]
             }
             let result: [String: Any] = ["model": model.identifier, "searchEnabled": false,
-                "seconds": Date().timeIntervalSince(start), "localEngineResolutions": localCalls,
+                "seconds": inferenceSeconds, "dispatchedRequests": dispatched, "cacheLookupHits": cacheHits, "cacheOnlyRepeat": dispatched == 1 && cacheHits == inputs.count, "localEngineResolutions": localCalls,
                 "cases": rows, "scope": "three diagnostic examples; not a production accuracy benchmark"]
             try JSONSerialization.data(withJSONObject: result, options: [.prettyPrinted, .sortedKeys]).write(to: run.appendingPathComponent("result.json"), options: .atomic)
             let finished: [String: Any] = ["status": "response-received", "resultPath": run.appendingPathComponent("result.json").path]
@@ -99,4 +133,11 @@ private actor LiveForbiddenLocalResolver: OnDeviceLLMEngineResolving {
     func resolveEngine(forModel fileName: String, configuration: LocalLLMSettings) async throws -> any OnDeviceLLM {
         calls += 1; throw OnDeviceLLMError.notReady("Local inference is forbidden in live cloud acceptance.")
     }
+}
+
+private final class LiveDiagnosticWire: @unchecked Sendable {
+    private let lock = NSLock()
+    private var data = Data()
+    func append(_ bytes: Data) { lock.withLock { data.append(bytes.prefix(max(0, ChatGPTPlanStream.maximumBytes - data.count))) } }
+    var bytes: Data { lock.withLock { data } }
 }

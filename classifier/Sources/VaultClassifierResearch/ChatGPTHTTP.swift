@@ -57,6 +57,23 @@ private final class LockedStream: @unchecked Sendable {
 /// A fresh ephemeral session for one bounded request. It streams actual network
 /// chunks and rejects redirects instead of forwarding credentials to a new URL.
 public enum ChatGPTHTTP {
+    static func validateResponse(_ response: URLResponse, streaming: Bool) throws {
+        guard let response = response as? HTTPURLResponse, response.statusCode == 200 else {
+            let status = (response as? HTTPURLResponse)?.statusCode
+            if status == 401 { throw CloudClassificationError.signInRequired }
+            if status == 429 { throw ChatGPTPlanError.usageUnavailable }
+            throw ChatGPTPlanError.failedResponse
+        }
+        guard streaming else { return }
+        // The live plan route can omit Content-Type while sending valid SSE.
+        // An explicit conflicting type is rejected; an absent type still must
+        // pass bounded SSE framing and response.completed validation downstream.
+        let contentType = response.value(forHTTPHeaderField: "Content-Type")?
+            .split(separator: ";", maxSplits: 1, omittingEmptySubsequences: false).first?
+            .trimmingCharacters(in: .whitespacesAndNewlines).lowercased() ?? ""
+        guard contentType.isEmpty || contentType == "text/event-stream" else { throw ChatGPTPlanError.invalidResponse }
+    }
+
     public static func send(_ request: URLRequest, consume: @escaping @Sendable (Data) throws -> Void) async throws {
         let sink = ResponseSink(consume: consume)
         try await withTaskCancellationHandler(operation: {
@@ -105,19 +122,10 @@ private final class ResponseSink: NSObject, URLSessionDataDelegate, @unchecked S
         completionHandler(nil)
     }
     func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive response: URLResponse, completionHandler: @escaping (URLSession.ResponseDisposition) -> Void) {
-        guard let response = response as? HTTPURLResponse, response.statusCode == 200 else {
-            completionHandler(.cancel)
-            let status = (response as? HTTPURLResponse)?.statusCode
-            let failure: Error
-            if status == 401 { failure = CloudClassificationError.signInRequired }
-            else if status == 429 { failure = ChatGPTPlanError.usageUnavailable }
-            else { failure = ChatGPTPlanError.failedResponse }
-            finish(.failure(failure))
-            return
-        }
-        if dataTask.originalRequest?.url?.path.hasSuffix("/responses") == true,
-           response.mimeType != "text/event-stream" {
-            completionHandler(.cancel); finish(.failure(ChatGPTPlanError.invalidResponse)); return
+        do {
+            try ChatGPTHTTP.validateResponse(response, streaming: dataTask.originalRequest?.url?.path.hasSuffix("/responses") == true)
+        } catch {
+            completionHandler(.cancel); finish(.failure(error)); return
         }
         completionHandler(.allow)
     }

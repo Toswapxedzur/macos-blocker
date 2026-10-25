@@ -1,5 +1,9 @@
 import Foundation
 import XCTest
+import VaultClassifierCore
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
 @testable import VaultClassifierResearch
 
 final class ChatGPTPlanProtocolTests: XCTestCase {
@@ -76,6 +80,37 @@ final class ChatGPTPlanProtocolTests: XCTestCase {
         XCTAssertEqual(body["store"] as? Bool, false)
         XCTAssertEqual(body["stream"] as? Bool, true)
         XCTAssertEqual((body["input"] as? [[String: String]])?.first?["content"], "Untrusted title")
+    }
+
+    func testLiveStreamMayOmitContentTypeButCannotDeclareAnotherFormat() throws {
+        let url = URL(string: "https://api.openai.com/v1/responses")!
+        for headers in [[:], ["Content-Type": "text/event-stream"], ["Content-Type": "Text/Event-Stream; charset=UTF-8"]] {
+            let response = try XCTUnwrap(HTTPURLResponse(url: url, statusCode: 200, httpVersion: "HTTP/2", headerFields: headers))
+            XCTAssertNoThrow(try ChatGPTHTTP.validateResponse(response, streaming: true))
+        }
+        for type in ["application/json", "text/html", "text/event-stream, application/json"] {
+            let response = try XCTUnwrap(HTTPURLResponse(url: url, statusCode: 200, httpVersion: "HTTP/2", headerFields: ["Content-Type": type]))
+            XCTAssertThrowsError(try ChatGPTHTTP.validateResponse(response, streaming: true))
+        }
+        // Missing headers never make a JSON response or partial delta successful.
+        for wire in [#"{"status":"completed","output_text":"Games"}"#, "data: {\"type\":\"response.output_text.delta\",\"delta\":\"Games\"}\n\n"] {
+            var parser = ChatGPTPlanStream()
+            try parser.append(Data(wire.utf8))
+            XCTAssertThrowsError(try parser.finish())
+        }
+        var parser = ChatGPTPlanStream(); try parser.append(Data(terminal.utf8))
+        XCTAssertNoThrow(try parser.finish())
+    }
+
+    func testStreamHTTPStatusFailuresCannotBeAcceptedAsSuccessfulBodies() throws {
+        let url = URL(string: "https://api.openai.com/v1/responses")!
+        for status in [204, 302, 400, 401, 429, 500] {
+            let response = try XCTUnwrap(HTTPURLResponse(url: url, statusCode: status, httpVersion: "HTTP/2", headerFields: [:]))
+            XCTAssertThrowsError(try ChatGPTHTTP.validateResponse(response, streaming: true)) { error in
+                if status == 401 { XCTAssertEqual(error as? CloudClassificationError, .signInRequired) }
+                if status == 429 { XCTAssertEqual(error as? ChatGPTPlanError, .usageUnavailable) }
+            }
+        }
     }
 
     private let terminal = "data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\",\"usage\":{\"total_tokens\":12}}}\r\n\r\n"
