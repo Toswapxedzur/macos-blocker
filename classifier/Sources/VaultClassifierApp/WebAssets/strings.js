@@ -108,7 +108,7 @@ window.VaultClassifierStrings = Object.freeze({
   "navigation.aria": "Classifier workspaces",
   "navigation.resize": "Resize classifier navigation",
   "navigation.title": "Classifier",
-  "navigation.subtitle": "On-device tagging",
+  "navigation.subtitle": "Content tagging",
   "navigation.work": "Work",
   "navigation.control": "Control",
   "navigation.backup": "Local backup",

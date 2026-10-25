@@ -20,7 +20,7 @@ public struct ChatGPTAccountStatus: Sendable {
     public var issue: String?
 }
 
-private struct ChatGPTCredential: Codable, CustomStringConvertible {
+private struct ChatGPTCredential: Codable, Sendable, CustomStringConvertible {
     var schemaVersion: Int
     var clientID: String; var subject: String; var email: String?
     var accessToken: String; var refreshToken: String; var idToken: String
@@ -101,14 +101,15 @@ public actor ChatGPTAccountClient: CloudClassificationEngineResolving {
             let id = "urn:uuid:" + UUID().uuidString.lowercased()
             try store.write(JSONEncoder().encode(id), name: "host.json"); self.hostID = id
         }
-        credential = try store.read("account.json").map { try JSONDecoder().decode(ChatGPTCredential.self, from: $0) }
-        registration = try store.read("registration.json").map { try JSONDecoder().decode(String.self, from: $0) }
-        usage = try store.read("usage.json").map { try JSONDecoder().decode(Usage.self, from: $0) } ?? Usage(schemaVersion: 1, day: Self.day(), requests: 0)
+        let savedCredential = try store.read("account.json").map { try JSONDecoder().decode(ChatGPTCredential.self, from: $0) }
+        let savedRegistration = try store.read("registration.json").map { try JSONDecoder().decode(String.self, from: $0) }
+        let savedUsage = try store.read("usage.json").map { try JSONDecoder().decode(Usage.self, from: $0) } ?? Usage(schemaVersion: 1, day: Self.day(), requests: 0)
         let welcome = try store.read("welcome.json").map { try JSONDecoder().decode(Welcome.self, from: $0) } ?? Welcome(schemaVersion: 1, accounts: [])
-        welcomeAccounts = welcome.accounts
-        guard credential == nil || credential?.schemaVersion == 1,
-              usage.schemaVersion == 1, welcome.schemaVersion == 1, welcomeAccounts.count <= 1024,
-              (0...1_000_000).contains(usage.requests) else { throw ChatGPTPlanError.invalidResponse }
+        guard savedCredential == nil || savedCredential?.schemaVersion == 1,
+              savedUsage.schemaVersion == 1, welcome.schemaVersion == 1, welcome.accounts.count <= 1024,
+              (0...1_000_000).contains(savedUsage.requests) else { throw ChatGPTPlanError.invalidResponse }
+        credential = savedCredential; registration = savedRegistration
+        usage = savedUsage; welcomeAccounts = welcome.accounts
     }
 
     private static func day() -> String {

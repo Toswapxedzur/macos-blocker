@@ -4,7 +4,7 @@
 <style>html,body,#host{height:100%;margin:0}#host{display:block}</style><div id="host"></div>
 <script>
 const scope = document.getElementById('host').attachShadow({mode:'open'});
-scope.innerHTML = '<link rel="stylesheet" href="/Sources/MacBlockerWebUI/WebAssets/vault-ui.css"><link rel="stylesheet" href="/Sources/MacBlockerWebUI/WebAssets/vault-info.css"><link rel="stylesheet" href="/classifier/Sources/VaultClassifierApp/WebAssets/app.css"><div id="app"></div><div id="fixture-settings" class="utility-popover-layer" hidden><div class="utility-popover" role="dialog" aria-modal="true"><button data-action="closeUtilityPanel">Close</button><div id="native-settings" class="utility-settings-body"></div></div></div>' ;
+scope.innerHTML = '<style>#fixture-settings[hidden]{display:none!important}</style><link rel="stylesheet" href="/Sources/MacBlockerWebUI/WebAssets/vault-ui.css"><link rel="stylesheet" href="/Sources/MacBlockerWebUI/WebAssets/vault-info.css"><link rel="stylesheet" href="/classifier/Sources/VaultClassifierApp/WebAssets/app.css"><div id="app"></div><div id="fixture-settings" class="utility-popover-layer" hidden><div class="utility-popover" role="dialog" aria-modal="true"><button data-action="closeUtilityPanel">Close</button><div id="native-settings" class="utility-settings-body"></div></div></div>' ;
 window.VaultScenes = {scope:()=>scope};
 let releaseFixtureSettings = null;
 window.VaultSettings = {
