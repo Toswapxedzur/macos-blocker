@@ -196,6 +196,10 @@ final class ChatGPTClassificationTests: XCTestCase {
         _ = try await coordinator.classifyVideo(platformID: "youtube", entryID: "v", creatorID: "c", title: "Chess")
         XCTAssertEqual(coordinator.cachedVideoTags(platformID: "youtube", entryID: "v")?.tags.map(\.name), ["Games"])
         XCTAssertEqual(calls.count, 1)
+        // The browser can send changed evidence before its collection message.
+        XCTAssertNotNil(coordinator.cachedVideoTags(platformID: "youtube", entryID: "v", input: .init(title: "Chess", entryID: "v", creatorID: "c")))
+        XCTAssertNil(coordinator.cachedVideoTags(platformID: "youtube", entryID: "v", input: .init(title: "Different evidence", entryID: "v", creatorID: "c")))
+        XCTAssertNil(coordinator.cachedVideoTags(platformID: "youtube", entryID: "v", input: .init(title: "Chess", entryID: "v", creatorID: "different-creator")))
         catalog = coordinator.snapshot().workspaceCatalog
         catalog.datasets[0].collectedEntries[0].title = "Different evidence"
         try coordinator.updateWorkspaceCatalog(catalog)
@@ -205,6 +209,7 @@ final class ChatGPTClassificationTests: XCTestCase {
         catalog.upsertVideoClassification(corrected)
         try coordinator.updateWorkspaceCatalog(catalog)
         XCTAssertEqual(coordinator.cachedVideoTags(platformID: "youtube", entryID: "v")?.tags.map(\.name), ["Games"])
+        XCTAssertEqual(coordinator.cachedVideoTags(platformID: "youtube", entryID: "v", input: .init(title: "Different evidence", entryID: "v", creatorID: "c"))?.tags.map(\.name), ["Games"])
         await client.shutdown()
     }
 

@@ -44,7 +44,10 @@ Caches retain human corrections. Cloud rows use a distinct self-reported-score
 contract and stable account/model/rule/strictness/search version, tag bounds and
 input fingerprint. Existing taxonomy projections still update without asking
 the provider to reclassify cached content. Changing content or model settings
-invalidates automatic cache currency. A completed obsolete request cannot
+invalidates automatic cache currency. Browser requests compare their incoming
+evidence even when collection has not updated yet. Content changes during an
+in-flight cloud batch queue one latest replacement and suppress the obsolete
+broadcast. A completed obsolete request cannot
 overwrite newer settings or human corrections.
 
 On cloud failure, valid cached results remain available and new items resolve

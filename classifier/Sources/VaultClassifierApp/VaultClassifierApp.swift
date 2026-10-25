@@ -87,6 +87,7 @@ final class VaultClassifierViewModel: ObservableObject {
             localLLMRegistry = nil
             modelWarmupTask = nil
             inFlightVideoClassifications.removeAll()
+            latestCloudClassificationInputs.removeAll()
             LocalStateFile.flushAllPendingWrites()
         }
         shutdownTask = task
@@ -230,6 +231,7 @@ final class VaultClassifierViewModel: ObservableObject {
     /// enqueue duplicate work — without this, every provisional re-request
     /// multiplied the queue and starved the tail of the viewport.
     var inFlightVideoClassifications = Set<String>()
+    var latestCloudClassificationInputs: [String: NativeVideoTagsBatchItem] = [:]
 
     /// The coalescing queue at the engine boundary (see ClassificationCoalescer):
     /// requests that arrive while the engine is busy wait and are drained

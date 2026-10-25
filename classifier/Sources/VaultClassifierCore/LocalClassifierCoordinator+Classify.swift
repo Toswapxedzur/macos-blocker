@@ -4,7 +4,7 @@ import Foundation
 // Split out of LocalStore.swift (CLASSIFIER-INDEPENDENCE §7, Phase 5):
 // same type, same behaviour.
 extension LocalClassifierCoordinator {
-    public func cachedVideoTags(platformID: String, entryID: String) -> VideoTagsProjection? {
+    public func cachedVideoTags(platformID: String, entryID: String, input: VideoClassificationPipeline.Input? = nil) -> VideoTagsProjection? {
         lock.lock()
         defer { lock.unlock() }
         let catalog = state.workspaceCatalog
@@ -25,16 +25,22 @@ extension LocalClassifierCoordinator {
             guard Self.isClassificationCurrent(classification, forType: type, servingModelVersion: onDeviceLLMEngineResolver == nil ? servingModelVersion : "llamacpp/" + type.modelFileName) else {
                 return nil
             }
+            // Browser tagging may arrive before collection updates the title.
+            // Compare cloud rows with the actual request evidence when supplied.
+            let entry = Self.collectedEntry(platformID: platformID, entryID: entryID, catalog: catalog)
+            let observed = (type.classificationProvider == .chatGPT ? input : nil) ?? entry.map {
+                VideoClassificationPipeline.Input(title: $0.title, summary: $0.summary, text: $0.text, entryID: $0.entryID, creatorID: $0.creatorID)
+            }
             if type.classificationProvider == .chatGPT, classification.source != .humanCorrected {
-                guard let entry = Self.collectedEntry(platformID: platformID, entryID: entryID, catalog: catalog),
-                      classification.inputFingerprint == CloudClassificationCurrency.input(title: entry.title,
-                        summary: entry.summary, text: entry.text, creatorID: entry.creatorID, creatorName: entry.creatorName) else { return nil }
+                guard let observed, observed.entryID == entryID,
+                      classification.inputFingerprint == CloudClassificationCurrency.input(title: observed.title,
+                        summary: observed.summary, text: observed.text, creatorID: observed.creatorID, creatorName: entry?.creatorName) else { return nil }
             }
             if classification.source != .humanCorrected, let dictionaryProvider {
-                guard let entry = Self.collectedEntry(platformID: platformID, entryID: entryID, catalog: catalog) else { return nil }
-                let evidence = dictionaryProvider.localEvidence(title: entry.title, creatorID: classification.creatorID)
-                let enriched = evidence.overlay(on: catalog, title: entry.title, creatorID: classification.creatorID)
-                guard classification.knowledgeFingerprint == DictionaryEvidence.fingerprint(title: entry.title, creatorID: classification.creatorID, catalog: enriched, settings: state.settings.research) else { return nil }
+                guard let observed else { return nil }
+                let evidence = dictionaryProvider.localEvidence(title: observed.title, creatorID: classification.creatorID)
+                let enriched = evidence.overlay(on: catalog, title: observed.title, creatorID: classification.creatorID)
+                guard classification.knowledgeFingerprint == DictionaryEvidence.fingerprint(title: observed.title, creatorID: classification.creatorID, catalog: enriched, settings: state.settings.research) else { return nil }
             }
         }
         guard sawClassification else { return nil }

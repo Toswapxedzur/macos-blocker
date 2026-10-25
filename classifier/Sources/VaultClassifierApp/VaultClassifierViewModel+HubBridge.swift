@@ -61,6 +61,9 @@ extension VaultClassifierViewModel {
 
     func queueVideoClassification(platformID: String, items: [NativeVideoTagsBatchItem]) {
         guard !isShuttingDown else { return }
+        if coordinator?.snapshot().workspaceCatalog.classifierTypes.contains(where: { $0.applicablePlatformIDs.contains(platformID) && $0.classificationProvider == .chatGPT }) == true {
+            for item in items { latestCloudClassificationInputs[Self.inFlightKey(platformID, item.entryID)] = item }
+        }
         let fresh = items.filter {
             inFlightVideoClassifications.insert(Self.inFlightKey(platformID, $0.entryID)).inserted
         }
@@ -76,13 +79,26 @@ extension VaultClassifierViewModel {
     /// waiting for this platform, up to the engine's parallel-sequence capacity.
     /// Each chunk's verdicts are broadcast the moment it lands.
     func classifyChunk(platformID: String, _ chunk: [NativeVideoTagsBatchItem]) async {
-        defer { for item in chunk { inFlightVideoClassifications.remove(Self.inFlightKey(platformID, item.entryID)) } }
         let projections = await resolveClassificationChunk(platformID: platformID, chunk)
-        guard !isShuttingDown, !Task.isCancelled else { return }
+        for item in chunk { inFlightVideoClassifications.remove(Self.inFlightKey(platformID, item.entryID)) }
+        guard !isShuttingDown, !Task.isCancelled else {
+            for item in chunk { latestCloudClassificationInputs[Self.inFlightKey(platformID, item.entryID)] = nil }
+            return
+        }
+        var updated: [NativeVideoTagsBatchItem] = []
         for item in chunk {
+            let key = Self.inFlightKey(platformID, item.entryID)
+            if let latest = latestCloudClassificationInputs[key], latest != item {
+                // A newer title arrived while this batch was running. Keep one
+                // latest request and never broadcast the obsolete decision.
+                updated.append(latest)
+                continue
+            }
+            latestCloudClassificationInputs[key] = nil
             guard let projection = projections[item.entryID] else { continue }
             broadcastResolvedVideoTags(platformID: platformID, entryID: item.entryID, projection: projection)
         }
+        if !updated.isEmpty { queueVideoClassification(platformID: platformID, items: updated) }
     }
 
     /// Resolves the chunk before delivery; retries and persisted model decisions
@@ -129,7 +145,8 @@ extension VaultClassifierViewModel {
         // This is only a delivery result: do not save a fabricated model decision,
         // so later requests can retry and replace it with real tags.
         for item in chunk where projections[item.entryID] == nil {
-            projections[item.entryID] = coordinator.cachedVideoTags(platformID: platformID, entryID: item.entryID)
+            projections[item.entryID] = coordinator.cachedVideoTags(platformID: platformID, entryID: item.entryID,
+                input: .init(title: item.title, summary: item.summary, text: item.text, entryID: item.entryID, creatorID: item.creatorID))
                 ?? VideoTagsProjection(tags: [], predicted: false)
         }
         return projections
@@ -226,7 +243,8 @@ extension VaultClassifierViewModel {
                     return try sharedHubReply(NativeVideoTagsResponse(
                         platformID: videoTags.platformID, entryID: videoTags.entryID, tags: [], predicted: false, pending: false))
                 }
-                if let cached = coordinator.cachedVideoTags(platformID: videoTags.platformID, entryID: videoTags.entryID) {
+                if let cached = coordinator.cachedVideoTags(platformID: videoTags.platformID, entryID: videoTags.entryID,
+                    input: .init(title: videoTags.title, summary: videoTags.summary, text: videoTags.text, entryID: videoTags.entryID, creatorID: videoTags.creatorID)) {
                     devLog("video-tags", ["platform": videoTags.platformID, "entry": videoTags.entryID, "outcome": "cached", "tags": "\(cached.tags.count)"])
                     return try sharedHubReply(NativeVideoTagsResponse(
                         platformID: videoTags.platformID, entryID: videoTags.entryID,
@@ -272,7 +290,8 @@ extension VaultClassifierViewModel {
                 var pendingItems: [NativeVideoTagsBatchItem] = []
                 var cachedCount = 0
                 for item in batch.items {
-                    if let cached = coordinator.cachedVideoTags(platformID: batch.platformID, entryID: item.entryID) {
+                    if let cached = coordinator.cachedVideoTags(platformID: batch.platformID, entryID: item.entryID,
+                        input: .init(title: item.title, summary: item.summary, text: item.text, entryID: item.entryID, creatorID: item.creatorID)) {
                         cachedCount += 1
                         responses.append(NativeVideoTagsBatchResponseItem(
                             entryID: item.entryID, tags: Self.nativeVideoTags(from: cached), predicted: cached.predicted, pending: false))
