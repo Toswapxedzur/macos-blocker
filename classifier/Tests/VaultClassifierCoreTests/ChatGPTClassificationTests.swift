@@ -20,6 +20,15 @@ private actor ForbiddenLocalResolver: OnDeviceLLMEngineResolving {
     }
 }
 
+private actor ParallelCloudCalls {
+    private(set) var active = 0
+    private(set) var peak = 0
+    private(set) var started = 0
+    private(set) var finished: [String] = []
+    func begin() { active += 1; started += 1; peak = max(peak, active) }
+    func end(_ label: String) { active -= 1; finished.append(label) }
+}
+
 final class ChatGPTClassificationTests: XCTestCase {
     private func root() throws -> URL {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
@@ -29,10 +38,10 @@ final class ChatGPTClassificationTests: XCTestCase {
 
     /// Test-only credentials in a hermetic directory. No real sign-in,
     /// credential lookup, live inference, or claim of identity validation.
-    private func credentialFixture(_ root: URL, scope: String = ChatGPTPlanProtocol.requiredPlanScope) throws {
+    private func credentialFixture(_ root: URL, scope: String = ChatGPTPlanProtocol.requiredPlanScope, expiresIn: TimeInterval = 3600) throws {
         let fixture: [String: Any] = ["schemaVersion": 1, "clientID": "oaiapp_test_fixture", "subject": "test-subject", "email": "fixture@example.invalid",
             "accessToken": "test-only-access", "refreshToken": "test-only-refresh", "idToken": "test-only-id",
-            "scopes": [scope], "expiresAt": Date().addingTimeInterval(3600).timeIntervalSinceReferenceDate]
+            "scopes": [scope], "expiresAt": Date().addingTimeInterval(expiresIn).timeIntervalSinceReferenceDate]
         let data = try JSONSerialization.data(withJSONObject: fixture)
         #if os(Windows)
         try VaultPrivateFile.protectedData(data).write(to: root.appendingPathComponent("account.json"))
@@ -63,6 +72,7 @@ final class ChatGPTClassificationTests: XCTestCase {
         XCTAssertTrue((body["instructions"] as? String ?? "").contains("untrusted DATA"))
         XCTAssertFalse((body["instructions"] as? String ?? "").contains(ClassificationReplyFormat.current.rule))
         XCTAssertNotNil(body["text"])
+        XCTAssertEqual(body["reasoning"] as? [String: String], ["effort": "low"])
         configuration.searchEnabled = true
         let searched = try ChatGPTClassificationEngine.prepare([item()], configuration: configuration)
         let searchedBody = try XCTUnwrap(JSONSerialization.jsonObject(with: XCTUnwrap(searched.body)) as? [String: Any])
@@ -305,5 +315,127 @@ final class ChatGPTClassificationTests: XCTestCase {
         do { _ = try await work.value; XCTFail("Shutdown must cancel inference") }
         catch { XCTAssertTrue(error is CancellationError) }
         XCTAssertLessThan(Date().timeIntervalSince(start), 2)
+    }
+
+    func testParallelBatchesPreserveInputOrderWhenLaterBatchesFinishFirst() async throws {
+        let root = try root(); defer { try? FileManager.default.removeItem(at: root) }
+        try credentialFixture(root)
+        let calls = ParallelCloudCalls()
+        let client = try ChatGPTAccountClient(directory: root, http: .init { request, consume in
+            let body = try XCTUnwrap(JSONSerialization.jsonObject(with: XCTUnwrap(request.httpBody)) as? [String: Any])
+            let input = try XCTUnwrap((body["input"] as? [[String: String]])?.first?["content"])
+            let rows = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(input.utf8)) as? [[String: Any]])
+            XCTAssertLessThanOrEqual(rows.count, 16)
+            let slow = (rows[0]["evidence"] as? String ?? "").contains("slow")
+            await calls.begin()
+            try await Task.sleep(nanoseconds: slow ? 180_000_000 : 20_000_000)
+            let reply: [String: Any] = ["items": rows.indices.map { ["index": $0, "tags": [["name": slow ? "Games" : "Politics", "confidence": 5]]] }]
+            let text = String(decoding: try JSONSerialization.data(withJSONObject: reply), as: UTF8.self)
+            let event: [String: Any] = ["type": "response.completed", "response": ["status": "completed", "output": [["type": "message", "role": "assistant", "content": [["type": "output_text", "text": text]]]]]]
+            try consume(Data("data: ".utf8) + JSONSerialization.data(withJSONObject: event) + Data("\n\n".utf8))
+            await calls.end(slow ? "slow" : "fast")
+        })
+        let account = await client.status()
+        let engine = ChatGPTClassificationEngine(client: client, configuration: .init(accountID: account.accountID, model: "fixture"), modelVersion: "fixture")
+        let input = Array(repeating: item("slow"), count: 16) + Array(repeating: item("fast"), count: 19)
+        let results = try await engine.classifyBatch(input)
+        XCTAssertEqual(results.map { $0.tags.first?.name }, Array(repeating: "Games", count: 16) + Array(repeating: "Politics", count: 19))
+        let peak = await calls.peak, finished = await calls.finished
+        XCTAssertEqual(peak, 2); XCTAssertEqual(finished, ["fast", "fast", "slow"])
+        let status = await client.status(); XCTAssertEqual(status.requestsToday, 3)
+        await client.shutdown()
+    }
+
+    func testAccountConcurrencyBoundAppliesAcrossIndependentCallersAndShutdownDrainsBoth() async throws {
+        let root = try root(); defer { try? FileManager.default.removeItem(at: root) }
+        try credentialFixture(root)
+        let calls = ParallelCloudCalls()
+        let client = try ChatGPTAccountClient(directory: root, http: .init { _, _ in
+            await calls.begin()
+            do { try await Task.sleep(nanoseconds: 60_000_000_000) }
+            catch { await calls.end("cancelled"); throw error }
+        })
+        let account = await client.status()
+        let engine = ChatGPTClassificationEngine(client: client, configuration: .init(accountID: account.accountID, model: "fixture"), modelVersion: "fixture")
+        let request = item()
+        let tasks = (0..<5).map { _ in Task { try await engine.classify(request) } }
+        let deadline = Date().addingTimeInterval(2)
+        while await calls.started < 2 && Date() < deadline { try await Task.sleep(nanoseconds: 10_000_000) }
+        let start = Date(); await client.shutdown()
+        for task in tasks {
+            do { _ = try await task.value; XCTFail("Shutdown must cancel active and waiting callers") }
+            catch { XCTAssertTrue(error is CancellationError) }
+        }
+        let peak = await calls.peak, started = await calls.started, active = await calls.active
+        XCTAssertEqual(peak, 2); XCTAssertEqual(started, 2); XCTAssertEqual(active, 0)
+        XCTAssertLessThan(Date().timeIntervalSince(start), 2)
+    }
+
+    func testConcurrentBatchesCannotOverrunTheLastUsageReservation() async throws {
+        let root = try root(); defer { try? FileManager.default.removeItem(at: root) }
+        try credentialFixture(root)
+        let calls = CloudCalls(), stream = successfulStream()
+        let client = try ChatGPTAccountClient(directory: root, dailyRequestLimit: 1, http: .init { request, consume in
+            calls.record(request); try await Task.sleep(nanoseconds: 30_000_000); try consume(stream)
+        })
+        let account = await client.status(), request = item()
+        let configuration = ChatGPTClassificationSettings(accountID: account.accountID, model: "fixture")
+        let plan = try ChatGPTClassificationEngine.prepare([request], configuration: configuration)
+        let tasks = (0..<2).map { _ in Task { try await client.classify(configuration: configuration, request: plan) } }
+        var successes = 0, limited = 0
+        for task in tasks {
+            do { _ = try await task.value; successes += 1 }
+            catch { XCTAssertEqual(error as? CloudClassificationError, .usageLimit); limited += 1 }
+        }
+        XCTAssertEqual(successes, 1); XCTAssertEqual(limited, 1); XCTAssertEqual(calls.count, 1)
+        let status = await client.status(); XCTAssertEqual(status.requestsToday, 1)
+        await client.shutdown()
+    }
+
+    func testParallelFailureCancellationKeepsExplicitRetryHold() async throws {
+        let root = try root(); defer { try? FileManager.default.removeItem(at: root) }
+        try credentialFixture(root)
+        let calls = ParallelCloudCalls()
+        let client = try ChatGPTAccountClient(directory: root, http: .init { request, _ in
+            let body = String(decoding: request.httpBody ?? Data(), as: UTF8.self)
+            await calls.begin()
+            if body.contains("failure-fixture") {
+                try await Task.sleep(nanoseconds: 100_000_000)
+                throw ChatGPTPlanError.usageUnavailable
+            }
+            try await Task.sleep(nanoseconds: 60_000_000_000)
+        })
+        let account = await client.status()
+        let engine = ChatGPTClassificationEngine(client: client, configuration: .init(accountID: account.accountID, model: "fixture"), modelVersion: "fixture")
+        do {
+            _ = try await engine.classifyBatch(Array(repeating: item("failure-fixture"), count: 16) + [item("cancel-fixture")])
+            XCTFail("A failed batch must fail the operation")
+        } catch { XCTAssertEqual(error as? ChatGPTPlanError, .usageUnavailable) }
+        let status = await client.status(); XCTAssertTrue(status.needsRetry); XCTAssertNotNil(status.issue)
+        do { _ = try await engine.classify(item()); XCTFail("Failure hold must reject another dispatch") } catch {}
+        let started = await calls.started; XCTAssertEqual(started, 2)
+        await client.shutdown()
+    }
+
+    func testParallelTokenRenewalIsSingleFlight() async throws {
+        let root = try root(); defer { try? FileManager.default.removeItem(at: root) }
+        try credentialFixture(root, expiresIn: 0)
+        let refreshes = CloudCalls(), calls = CloudCalls(), stream = successfulStream()
+        let client = try ChatGPTAccountClient(directory: root, http: .init { request, consume in
+            if request.url?.host == "auth.openai.com" {
+                refreshes.record(request); try await Task.sleep(nanoseconds: 50_000_000)
+                try consume(Data(#"{"access_token":"test-only-renewed","refresh_token":"test-only-refresh-2","token_type":"bearer","expires_in":3600}"#.utf8))
+            } else {
+                XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer test-only-renewed")
+                calls.record(request); try consume(stream)
+            }
+        })
+        let account = await client.status(), request = item()
+        let engine = ChatGPTClassificationEngine(client: client, configuration: .init(accountID: account.accountID, model: "fixture"), modelVersion: "fixture")
+        async let a = engine.classify(request)
+        async let b = engine.classify(request)
+        _ = try await (a, b)
+        XCTAssertEqual(refreshes.count, 1); XCTAssertEqual(calls.count, 2)
+        await client.shutdown()
     }
 }

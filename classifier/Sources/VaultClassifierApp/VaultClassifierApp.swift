@@ -241,6 +241,7 @@ final class VaultClassifierViewModel: ObservableObject {
     lazy var classificationCoalescer: ClassificationCoalescer<NativeVideoTagsBatchItem> = {
         let coalescer = ClassificationCoalescer<NativeVideoTagsBatchItem>(
             chunkSize: Self.classificationChunkSize,
+            chunkSizeForPlatform: { [weak self] in self?.classificationChunkSize(for: $0) ?? Self.classificationChunkSize },
             arrivalWindowNanoseconds: Self.classificationArrivalWindowNanoseconds
         ) { [weak self] platformID, chunk in
             await self?.classifyChunk(platformID: platformID, chunk)
@@ -255,6 +256,15 @@ final class VaultClassifierViewModel: ObservableObject {
     /// instead of waiting for the extension's next poll.
     /// Videos handed to the engine together — its parallel-sequence capacity.
     static let classificationChunkSize = 16
+
+    /// Feed two provider batches to cloud-only platforms. Local or mixed
+    /// platforms retain their existing 16-item queue/Metal scheduling.
+    func classificationChunkSize(for platformID: String) -> Int {
+        let types = coordinator?.snapshot().workspaceCatalog.classifierTypes.filter {
+            !$0.isPaused && $0.applicablePlatformIDs.contains(platformID)
+        } ?? []
+        return !types.isEmpty && types.allSatisfy { $0.classificationProvider == .chatGPT } ? 32 : Self.classificationChunkSize
+    }
 
     /// How long an idle engine waits for the rest of a screenful before it
     /// starts (a lone video pays this in full). `VAULT_ARRIVAL_WINDOW_MS`

@@ -120,4 +120,19 @@ final class ClassificationCoalescerTests: XCTestCase {
 
         XCTAssertEqual(batches, [["v0", "v1", "v2"]], "arrivals inside the window form one batch")
     }
+
+    func testPlatformCapacityFeedsTwoCloudBatchesWithoutIncreasingLocalChunks() async {
+        let idle = Gate()
+        var batches: [(String, Int)] = []
+        let coalescer = ClassificationCoalescer<Int>(chunkSize: 16, chunkSizeForPlatform: { $0 == "youtube" ? 32 : 16 }, arrivalWindowNanoseconds: 0) {
+            batches.append(($0, $1.count))
+        }
+        coalescer.onIdle = { idle.release() }
+        coalescer.enqueue(platformID: "youtube", items: Array(0..<35))
+        coalescer.enqueue(platformID: "reddit", items: Array(0..<17))
+        await idle.hold()
+        XCTAssertEqual(batches.map(\.0), ["youtube", "youtube", "reddit", "reddit"])
+        XCTAssertEqual(batches.map(\.1), [32, 3, 16, 1])
+        await coalescer.shutdown()
+    }
 }

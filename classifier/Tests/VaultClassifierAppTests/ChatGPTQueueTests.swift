@@ -54,6 +54,12 @@ final class ChatGPTQueueTests: XCTestCase {
             classificationProvider: .chatGPT, chatGPT: .init(accountID: "fixture", model: "fixture"))
         catalog.classifierTypes.append(type)
         try coordinator.updateWorkspaceCatalog(catalog)
+        XCTAssertEqual(vm.classificationChunkSize(for: "youtube"), 32)
+        XCTAssertEqual(vm.classificationChunkSize(for: "reddit"), 16)
+        catalog.classifierTypes[0].classificationProvider = .local
+        try coordinator.updateWorkspaceCatalog(catalog)
+        XCTAssertEqual(vm.classificationChunkSize(for: "youtube"), 16)
+        catalog.classifierTypes[0] = type; try coordinator.updateWorkspaceCatalog(catalog)
         let entered = expectation(description: "First inference entered")
         let idle = expectation(description: "Latest evidence delivered")
         let engine = CloudQueueEngine(version: type.cloudModelVersion, entered: entered)

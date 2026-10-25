@@ -80,7 +80,10 @@ public actor ChatGPTAccountClient: CloudClassificationEngineResolving {
     private var signInGeneration = UUID()
     private var dataRequests: [UUID: Task<Data, Error>] = [:]
     private var isShuttingDown = false
-    private var requestBusy = false
+    static let maximumConcurrentClassifications = 2
+    private var modelRefreshBusy = false
+    private var credentialBusy = false
+    private var classificationsInFlight = 0
     private var dailyRequestLimit: Int?
     private var failureHold = false
     private var activeRequests: [UUID: Task<(String, Int?), Error>] = [:]
@@ -235,6 +238,16 @@ public actor ChatGPTAccountClient: CloudClassificationEngineResolving {
     public func setDailyRequestLimit(_ value: Int?) { dailyRequestLimit = value }
 
     private func accessToken() async throws -> String {
+        while credentialBusy { try await Task.sleep(nanoseconds: 25_000_000) }
+        try Task.checkCancellation()
+        guard !isShuttingDown else { throw CancellationError() }
+        credentialBusy = true
+        defer { credentialBusy = false }
+        return try await refreshedAccessToken()
+    }
+
+    /// One refresh at a time even when two inference batches need a token.
+    private func refreshedAccessToken() async throws -> String {
         guard var current = credential, current.scopes.contains(ChatGPTPlanProtocol.requiredPlanScope), !isShuttingDown else {
             throw CloudClassificationError.signInRequired
         }
@@ -251,7 +264,7 @@ public actor ChatGPTAccountClient: CloudClassificationEngineResolving {
             current.idToken = token
         }
         guard pending == generation, !isShuttingDown else { throw CancellationError() }
-        if revision != credentialRevision { return try await accessToken() }
+        if revision != credentialRevision { return try await refreshedAccessToken() }
         current.accessToken = reply.access_token; current.refreshToken = reply.refresh_token
         current.expiresAt = Date().addingTimeInterval(reply.expires_in)
         current.earliestRefreshAt = reply.earliest_refresh_at.map(Date.init(timeIntervalSince1970:))
@@ -261,15 +274,21 @@ public actor ChatGPTAccountClient: CloudClassificationEngineResolving {
         return current.accessToken
     }
 
-    private func acquire() async throws {
-        while requestBusy { try await Task.sleep(nanoseconds: 25_000_000) }
+    private func acquireClassification() async throws {
+        while classificationsInFlight >= Self.maximumConcurrentClassifications {
+            try await Task.sleep(nanoseconds: 25_000_000)
+        }
         try Task.checkCancellation()
         guard !isShuttingDown else { throw CancellationError() }
-        requestBusy = true
+        classificationsInFlight += 1
     }
 
     public func refreshModels() async throws {
-        try await acquire(); defer { requestBusy = false }
+        while modelRefreshBusy { try await Task.sleep(nanoseconds: 25_000_000) }
+        try Task.checkCancellation()
+        guard !isShuttingDown else { throw CancellationError() }
+        modelRefreshBusy = true
+        defer { modelRefreshBusy = false }
         do {
             let pending = generation
             let token = try await accessToken()
@@ -286,16 +305,24 @@ public actor ChatGPTAccountClient: CloudClassificationEngineResolving {
     }
 
     func classify(configuration: ChatGPTClassificationSettings, request: ChatGPTPlanProtocol.Request) async throws -> String {
-        try await acquire(); defer { requestBusy = false; onChange() }
+        try await acquireClassification(); defer { classificationsInFlight -= 1; onChange() }
         guard credential?.accountID == configuration.accountID else { throw CloudClassificationError.signInRequired }
         guard !failureHold else { throw ChatGPTPlanError.failedResponse }
         let pending = generation
-        if usage.day != Self.day() { usage = Usage(schemaVersion: 1, day: Self.day(), requests: 0) }
-        if let limit = dailyRequestLimit, usage.requests >= limit { throw CloudClassificationError.usageLimit }
         let token: String
         do { token = try await accessToken() }
-        catch { issue = error.localizedDescription; failureHold = !(error is CancellationError); throw error }
+        catch {
+            if pending != generation, !isShuttingDown { throw CloudClassificationError.signInRequired }
+            if !(error is CancellationError) { issue = error.localizedDescription; failureHold = true }
+            throw error
+        }
         guard pending == generation, credential?.accountID == configuration.accountID else { throw CancellationError() }
+        try Task.checkCancellation()
+        // Recheck after token renewal: another batch may have consumed the
+        // final slot, failed or reached a new UTC day while we were suspended.
+        guard !failureHold else { throw ChatGPTPlanError.failedResponse }
+        if usage.day != Self.day() { usage = Usage(schemaVersion: 1, day: Self.day(), requests: 0) }
+        if let limit = dailyRequestLimit, usage.requests >= limit { throw CloudClassificationError.usageLimit }
         usage.requests += 1
         try store.write(JSONEncoder().encode(usage), name: "usage.json") // Reserve before dispatch; failures count too.
         let id = UUID()
@@ -305,12 +332,14 @@ public actor ChatGPTAccountClient: CloudClassificationEngineResolving {
         do {
             let output = try await withTaskCancellationHandler(operation: { try await work.value }, onCancel: { work.cancel() })
             guard pending == generation, !isShuttingDown else { throw CancellationError() }
-            issue = nil
+            if !failureHold { issue = nil }
             return output.0
         } catch {
             if pending != generation, !isShuttingDown { throw CloudClassificationError.signInRequired }
-            issue = error is CancellationError ? nil : error.localizedDescription
-            failureHold = !(error is CancellationError); throw error
+            // A sibling may have failed before this request was cancelled.
+            // Only explicit Retry/disconnect may clear that failure hold.
+            if !(error is CancellationError) { issue = error.localizedDescription; failureHold = true }
+            throw error
         }
     }
 

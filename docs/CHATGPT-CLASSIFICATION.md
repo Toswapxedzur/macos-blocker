@@ -25,8 +25,15 @@ an explicit conflicting media type is rejected. Redirects, malformed output,
 refusals, incomplete streams and late usage errors
 do not create model decisions. Stream buffers and request duration are bounded.
 
-The existing coalescer deduplicates in-flight cards and drains batches of up to
-16. Each cloud batch shares taxonomy and house rules; indexed results are mapped
+The coalescer deduplicates in-flight cards. Active cloud-only platforms drain
+up to 32 waiting items, split into provider batches of at most 16 with at most
+two inference requests in flight per account client. Other platforms retain
+16-item queue chunks. Cloud requests use low reasoning effort. Token renewal
+remains serialized; usage is reserved atomically after renewal and before each
+dispatch. Cancellation drains both active requests and prevents waiting callers
+from dispatching. A sibling's cancellation or success cannot clear a failure
+hold; explicit Retry is still required. Existing valid cached tags remain valid.
+Each cloud batch shares taxonomy and house rules; out-of-order results are mapped
 back to their original items. Content, creator context and retrieved pages are
 untrusted evidence, not instructions authorizing arbitrary tools. Structured
 replies must contain only known, distinct tag names, valid indices, the selected

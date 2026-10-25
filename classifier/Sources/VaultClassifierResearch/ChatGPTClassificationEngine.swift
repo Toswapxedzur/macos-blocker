@@ -12,16 +12,31 @@ struct ChatGPTClassificationEngine: OnDeviceBatchLLM {
 
     func classifyBatch(_ requests: [LLMClassificationRequest]) async throws -> [LLMClassificationResult] {
         guard !requests.isEmpty else { return [] }
-        var results: [LLMClassificationResult] = []
-        for start in stride(from: 0, to: requests.count, by: 16) {
-            try Task.checkCancellation()
-            let batch = Array(requests[start..<min(requests.count, start + 16)])
-            let plan = try Self.prepare(batch, configuration: configuration)
-            let text = try await client.classify(configuration: configuration, request: plan)
-            do { results += try Self.parse(text, requests: batch) }
-            catch { await client.recordClassificationFailure(error); throw error }
+        let batches = stride(from: 0, to: requests.count, by: 16).map {
+            Array(requests[$0..<min(requests.count, $0 + 16)])
         }
-        return results
+        return try await withThrowingTaskGroup(of: (Int, [LLMClassificationResult]).self) { group in
+            func enqueue(_ index: Int) {
+                group.addTask { (index, try await classifyProviderBatch(batches[index])) }
+            }
+            var next = min(batches.count, ChatGPTAccountClient.maximumConcurrentClassifications)
+            for index in 0..<next { enqueue(index) }
+            var ordered = Array(repeating: [LLMClassificationResult](), count: batches.count)
+            while let (index, results) = try await group.next() {
+                try Task.checkCancellation()
+                ordered[index] = results
+                if next < batches.count { enqueue(next); next += 1 }
+            }
+            return ordered.flatMap { $0 }
+        }
+    }
+
+    private func classifyProviderBatch(_ batch: [LLMClassificationRequest]) async throws -> [LLMClassificationResult] {
+        try Task.checkCancellation()
+        let plan = try Self.prepare(batch, configuration: configuration)
+        let text = try await client.classify(configuration: configuration, request: plan)
+        do { return try Self.parse(text, requests: batch) }
+        catch { await client.recordClassificationFailure(error); throw error }
     }
 
     static func prepare(_ requests: [LLMClassificationRequest], configuration: ChatGPTClassificationSettings) throws -> ChatGPTPlanProtocol.Request {
@@ -55,6 +70,7 @@ struct ChatGPTClassificationEngine: OnDeviceBatchLLM {
         let input = String(decoding: try JSONSerialization.data(withJSONObject: evidence, options: [.sortedKeys]), as: UTF8.self)
         let base = try ChatGPTPlanProtocol.inferenceRequest(model: configuration.model, instructions: instructions, input: input)
         var body = try JSONSerialization.jsonObject(with: base.body!) as! [String: Any]
+        body["reasoning"] = ["effort": "low"]
         let tag: [String: Any] = ["type": "object", "additionalProperties": false, "required": ["name", "confidence"],
             "properties": ["name": ["type": "string", "enum": first.allowedTagNames], "confidence": ["type": "integer", "minimum": 1, "maximum": 5]]]
         let item: [String: Any] = ["type": "object", "additionalProperties": false, "required": ["index", "tags"],
