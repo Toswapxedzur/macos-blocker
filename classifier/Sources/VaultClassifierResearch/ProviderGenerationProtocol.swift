@@ -13,7 +13,6 @@ public enum ProviderGenerationProtocol {
         let supportedFormats: [ProviderRequestBodyFormat] = [
             .openAIResponses, .openAIChatCompletions, .anthropicMessages,
             .geminiGenerateContent, .vertexGenerateContent, .cohereChat,
-            .ollamaChat,
         ]
         return ProviderProtocolRegistry.descriptor(for: profile.type).requestFormats.contains {
             $0.operation == .generateText && supportedFormats.contains($0.bodyFormat)
@@ -113,13 +112,7 @@ public enum ProviderGenerationProtocol {
                 "max_tokens": maximumOutputTokens,
                 "stream": false,
             ]
-        case .ollamaChat:
-            object = [
-                "model": modelIdentifier,
-                "messages": messages,
-                "stream": false,
-                "options": ["num_predict": maximumOutputTokens],
-            ]
+
         case .embeddingInput, .serperSearch, .youSearch, .queryOnly,
              .replicatePrediction, .awsBedrockConverse, .cloudflareAIRun,
              .customJSON:

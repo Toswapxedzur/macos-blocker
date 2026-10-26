@@ -46,7 +46,7 @@ window.runChatGPTTests = async () => {
   expect([...scope.querySelectorAll('[data-form-id="cloud-provider-group-1"] .field')].every(element=>{
     const rect=element.getBoundingClientRect();return rect.left>=body.left-1 && rect.right<=body.right+1;
   }),'provider controls fit inside the group at this viewport');
-  expect(q('[data-form-id="cloud-provider-group-1"]').textContent.includes('Using ChatGPT plan') && q('[data-form-id="cloud-provider-group-1"] [data-action="openChatGPTUsage"]'),'selected cloud model identifies plan use and provides usage management');
+  expect(q('[data-form-id="cloud-provider-group-1"]').textContent.includes('Using ChatGPT plan') && q('[data-form-id="cloud-provider-group-1"] [data-action="openConnections"]'),'selected cloud model identifies plan use and provides usage management');
   expect(uiErrors.length===0,'provider controls produce no browser errors');
   return results;
 };

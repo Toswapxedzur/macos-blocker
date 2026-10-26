@@ -14,7 +14,6 @@ public enum ProviderProtocolFamily: String, Codable, Equatable, Sendable, CaseIt
     case cloudflareWorkersAIRunV4
     case voyageEmbeddingsV1
     case jinaEmbeddingsV1
-    case ollamaChatV1
     case youtubeDataV3
     case twitchHelixV1
     case redditOAuthV1
@@ -45,7 +44,6 @@ public enum ProviderRequestBodyFormat: String, Codable, Equatable, Sendable {
     case vertexGenerateContent
     case cloudflareAIRun
     case embeddingInput
-    case ollamaChat
     case serperSearch
     case youSearch
     case queryOnly
@@ -268,8 +266,6 @@ public enum ProviderProtocolRegistry {
             return model(type, .openAIChatCompletionsV1, "https://api.groq.com/openai/v1", "/chat/completions", .openAIChatCompletions)
         case .openRouter:
             return model(type, .openAIChatCompletionsV1, "https://openrouter.ai/api/v1", "/chat/completions", .openAIChatCompletions)
-        case .ollama:
-            return model(type, .ollamaChatV1, "http://127.0.0.1:11434", "/api/chat", .ollamaChat, authentication: .none, credentials: [], override: true, loopback: true)
         case .youtubeData:
             return external(type, .youtubeDataV3, "https://www.googleapis.com/youtube/v3", "/videos", .readPublicContent, authentication: .apiKeyQuery, header: "key")
         case .twitch:

@@ -231,7 +231,6 @@ public enum APIKeyProviderType: String, Codable, Sendable, CaseIterable {
     case cohere
     case groq
     case openRouter
-    case ollama
     case youtubeData
     case twitch
     case reddit
@@ -271,10 +270,6 @@ public enum APIKeyProviderType: String, Codable, Sendable, CaseIterable {
         switch self {
         case .openAI, .xAI, .deepSeek, .gemini, .anthropic, .mistral, .cohere, .groq, .openRouter:
             return true
-        case .ollama:
-            // Probe retains every installed model and annotates each model's
-            // declared tool capability.
-            return true
         default:
             return false
         }
@@ -292,7 +287,6 @@ public enum APIKeyProviderType: String, Codable, Sendable, CaseIterable {
         case .cohere: return "Cohere key"
         case .groq: return "Groq key"
         case .openRouter: return "OpenRouter key"
-        case .ollama: return "Ollama profile"
         case .youtubeData: return "YouTube Data API key"
         case .twitch: return "Twitch credential"
         case .reddit: return "Reddit credential"
@@ -317,7 +311,6 @@ public enum APIKeyProviderType: String, Codable, Sendable, CaseIterable {
         case .cohere: return "command-a-plus-05-2026"
         case .groq: return "llama-3.3-70b-versatile"
         case .openRouter: return "openai/gpt-4.1-mini"
-        case .ollama: return "llama3.3"
         case .youtubeData, .twitch, .reddit, .xPlatform,
              .instagramGraph, .facebookGraph, .serper, .youSearch: return ""
         case .custom: return "custom-model"

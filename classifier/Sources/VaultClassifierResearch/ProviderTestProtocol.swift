@@ -138,15 +138,7 @@ public enum ProviderTestProtocol {
                 input,
                 output,
             ]))
-        case .ollamaChat:
-            guard let input = int(root, path: ["prompt_eval_count"]),
-                  let output = int(root, path: ["eval_count"]) else {
-                return .init(tokenCount: nil)
-            }
-            return .init(tokenCount: sum([
-                input,
-                output,
-            ]))
+
         default:
             if let total = int(root, path: ["usage", "total_tokens"]) {
                 return .init(tokenCount: total)
@@ -229,8 +221,7 @@ public enum ProviderTestProtocol {
         case .cohereChat:
             // The parser accepts one complete JSON reply, never an SSE stream.
             object = ["model": modelIdentifier, "messages": [["role": "user", "content": prompt]], "max_tokens": output, "stream": false]
-        case .ollamaChat:
-            object = ["model": modelIdentifier, "messages": [["role": "user", "content": prompt]], "stream": false, "options": ["num_predict": output]]
+
         case .embeddingInput:
             object = ["model": modelIdentifier, "input": [prompt]]
         default:
@@ -278,8 +269,7 @@ public enum ProviderTestProtocol {
             return joinedText(parts)
         case .cohereChat:
             return joinedText((root["message"] as? [String: Any])?["content"] as? [[String: Any]] ?? [])
-        case .ollamaChat:
-            return ((root["message"] as? [String: Any])?["content"] as? String)?.nonEmpty
+
         default:
             return nil
         }

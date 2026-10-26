@@ -72,7 +72,7 @@ public enum ProviderModelCatalogProtocol {
             candidates = models
         } else if let object = root as? [String: Any] {
             switch providerType {
-            case .gemini, .ollama, .cohere:
+            case .gemini, .cohere:
                 candidates = object["models"] as? [[String: Any]] ?? []
             default:
                 candidates = (object["data"] as? [[String: Any]]) ?? (object["models"] as? [[String: Any]]) ?? []
@@ -129,51 +129,9 @@ public enum ProviderModelCatalogProtocol {
         return Array(models.prefix(maximumModels)).sorted { $0.identifier < $1.identifier }
     }
 
-    public static func prepareOllamaToolCapabilityProbe(
-        profile: APIKeyProviderProfile,
-        modelIdentifier: String
-    ) throws -> ProviderTestPreparedRequest {
-        guard profile.type == .ollama,
-              !modelIdentifier.isEmpty,
-              modelIdentifier.count <= maximumModelIdentifierLength else {
-            throw ProviderModelCatalogProtocolError.invalidConfiguration
-        }
-        let descriptor = ProviderProtocolRegistry.descriptor(for: profile.type)
-        let url = try catalogURL(
-            profile: profile,
-            descriptor: descriptor,
-            path: "/api/show",
-            replacesBasePath: false,
-            queryItems: []
-        )
-        let plan = ProviderRequestPlan(
-            url: url,
-            method: "POST",
-            bodyFormat: .queryOnly,
-            headers: descriptor.staticHeaders.merging(["Accept": "application/json"]) { _, new in new },
-            authentication: descriptor.authentication,
-            authenticationHeader: descriptor.authenticationHeader,
-            requiredCredentialFields: descriptor.credentialFields
-        )
-        let body = try JSONSerialization.data(
-            withJSONObject: ["model": modelIdentifier],
-            options: [.sortedKeys]
-        )
-        return .init(plan: plan, operation: .generateText, prompt: "", body: body)
-    }
-
-    public static func ollamaModelSupportsTools(_ data: Data) -> Bool? {
-        guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let capabilities = root["capabilities"] as? [String] else {
-            return nil
-        }
-        return capabilities.contains("tools")
-    }
 
     private static func catalogEndpoint(for providerType: APIKeyProviderType) -> CatalogEndpoint {
         switch providerType {
-        case .ollama:
-            return .init(path: "/api/tags")
         case .cohere:
             // Cohere's Chat API is rooted at /v2, while its Models API is /v1.
             return .init(

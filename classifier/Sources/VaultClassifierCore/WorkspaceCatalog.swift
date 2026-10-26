@@ -252,6 +252,18 @@ public struct WorkspaceCatalog: Codable, Equatable, Sendable {
 
     /// Only the bounded import guard understands the retired local provider.
     /// Runtime configuration cannot represent or select it.
+    private struct ImportedProvider: Decodable {
+        let value: APIKeyProviderProfile?
+        let retiredID: String?
+        enum Keys: String, CodingKey { case type, id }
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: Keys.self)
+            if try c.decodeIfPresent(String.self, forKey: .type) == "ollama" {
+                value = nil; retiredID = try c.decodeIfPresent(String.self, forKey: .id)
+            } else { value = try APIKeyProviderProfile(from: decoder); retiredID = nil }
+        }
+    }
+
     private struct ImportedClassifierGroup: Decodable {
         let value: ClassifierTypeAsset?
         let retiredID: String?
@@ -289,7 +301,10 @@ public struct WorkspaceCatalog: Codable, Equatable, Sendable {
         let retiredTrees = Set(imported.compactMap(\.retiredTreeID))
         tokenUsage = try container.decodeIfPresent([TokenUsageRecord].self, forKey: .tokenUsage) ?? []
         providerRequestRecords = try container.decodeIfPresent([ProviderRequestRecord].self, forKey: .providerRequestRecords) ?? []
-        providerProfiles = try container.decodeIfPresent([APIKeyProviderProfile].self, forKey: .providerProfiles) ?? []
+        let importedProviders = try container.decodeIfPresent([ImportedProvider].self, forKey: .providerProfiles) ?? []
+        providerProfiles = importedProviders.compactMap(\.value)
+        let retiredProviderIDs = Set(importedProviders.compactMap(\.retiredID))
+        providerRequestRecords.removeAll { retiredProviderIDs.contains($0.profileID) }
         videoClassifications = try container.decodeIfPresent([VideoClassification].self, forKey: .videoClassifications) ?? []
         // Migration: older states stored terms and creators together in
         // `knowledgeEntries`. Keep terms there and move any creator entries into

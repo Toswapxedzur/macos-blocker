@@ -113,7 +113,7 @@ public enum GroundedGenerationProtocol {
                 "messages": [["role": "user", "content": userPrompt]],
                 "tools": [["type": "web_search_20250305", "name": "web_search"]],
             ]
-        case .openAIChatCompletions, .cohereChat, .ollamaChat, .embeddingInput,
+        case .openAIChatCompletions, .cohereChat, .embeddingInput,
              .serperSearch, .youSearch, .queryOnly, .replicatePrediction,
              .awsBedrockConverse, .cloudflareAIRun, .customJSON:
             // No app-defined native-search grammar for these formats.

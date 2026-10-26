@@ -32,7 +32,7 @@ final class LocalTaggingRetirementTests: XCTestCase {
         groups[1]["localModel"] = groups[1].removeValue(forKey: "tagging")
         catalog["classifierTypes"] = groups; object["workspaceCatalog"] = catalog
         let migrated = try JSONDecoder().decode(LocalClassifierState.self, from: JSONSerialization.data(withJSONObject: object))
-        XCTAssertEqual(migrated.schemaVersion, 5)
+        XCTAssertEqual(migrated.schemaVersion, LocalClassifierState.currentSchemaVersion)
         XCTAssertEqual(migrated.workspaceCatalog.classifierTypes, [state.workspaceCatalog.classifierTypes[1]])
         XCTAssertEqual(migrated.workspaceCatalog.videoClassifications, [state.workspaceCatalog.videoClassifications[1]])
         XCTAssertFalse(migrated.workspaceCatalog.trees.contains { $0.id == localTree.id })
@@ -46,7 +46,7 @@ final class LocalTaggingRetirementTests: XCTestCase {
         XCTAssertEqual(loaded.workspaceCatalog.classifierTypes, migrated.workspaceCatalog.classifierTypes)
         LocalStateFile.flushAllPendingWrites()
         let disk = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any])
-        XCTAssertEqual(disk["schemaVersion"] as? Int, 5)
+        XCTAssertEqual(disk["schemaVersion"] as? Int, LocalClassifierState.currentSchemaVersion)
         let encoded = try JSONEncoder().encode(migrated)
         XCTAssertFalse(String(decoding: encoded, as: UTF8.self).contains("localModel"))
         XCTAssertEqual(try JSONDecoder().decode(LocalClassifierState.self, from: encoded), migrated)

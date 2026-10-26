@@ -42,7 +42,7 @@ window.webkit={messageHandlers:{vaultClassifier:{postMessage(message){
   switch(action){
     case 'setClassifierTypePaused':type.isPaused=data.paused;break;
     case 'saveClassificationSettings':testState.settings.classificationEnabled=data.classificationEnabled;break;
-    case 'saveClassificationProvider':type.classificationProvider='chatGPT';type.chatGPT={accountID:testState.assets.chatGPT?.accountID||'',model:data.providerModel.startsWith('chatgpt:')?data.providerModel.slice(8):type.chatGPT?.model||'',searchEnabled:data.searchEnabled};break;
+    case 'saveClassificationProvider':if(data.providerModel.startsWith('api:')){const parts=data.providerModel.slice(4).split(':');type.classificationProvider='apiKey';type.apiKey={profileID:parts.shift(),model:parts.join(':'),searchEnabled:data.searchEnabled};}else{type.classificationProvider='chatGPT';type.chatGPT={accountID:testState.assets.chatGPT?.accountID||'',model:data.providerModel.startsWith('chatgpt:')?data.providerModel.slice(8):type.chatGPT?.model||'',searchEnabled:data.searchEnabled};}break;
     case 'saveChatGPTUsageLimit':testState.assets.chatGPT.dailyRequestLimit=data.dailyRequestLimit===''?null:Number(data.dailyRequestLimit);break;
     case 'connectChatGPT':testState.assets.chatGPT={...(testState.assets.chatGPT||{}),signingIn:true};break;
     case 'cancelChatGPTSignIn':testState.assets.chatGPT.signingIn=false;break;

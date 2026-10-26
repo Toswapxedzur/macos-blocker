@@ -22,11 +22,12 @@
   let state = null;
   let renderedPresentationRevision = 0;
   let activeTagPanel = null;
-  // Advanced local-model settings disclosure. Toggled without a re-render so
-  // the CSS grid transition can play; re-renders rebuild from this flag.
-  // Per-type local-model request overrides have their own disclosure state;
-  // they must not expand/collapse the app-wide engine settings modal.
-  // Per-type research defaults have a separate disclosure for the same reason.
+  let connectionTab = "chatGPT";
+  const KEY_CONNECTIONS = ["openAI", "gemini", "xAI"];
+  function selectedTaggingModel(type) {
+    if (type.classificationProvider === "apiKey") return type.apiKey?.model ? `api:${type.apiKey.profileID}:${type.apiKey.model}` : "";
+    return type.chatGPT?.model ? `${type.chatGPT?.accountID === state.assets?.chatGPT?.accountID ? "chatgpt" : "unavailable"}:${type.chatGPT.model}` : "";
+  }
   let tagDrag = null;
   let suppressTagClick = false;
   let connectionSource = null;
@@ -257,7 +258,7 @@
         minimumTagsOverride: type.tagging?.minimumTagsOverride == null ? "" : String(type.tagging.minimumTagsOverride),
         maximumTagsOverride: type.tagging?.maximumTagsOverride == null ? "" : String(type.tagging.maximumTagsOverride),
       };
-      case "saveClassificationProvider": return type && { providerModel: type.chatGPT?.model ? `${type.chatGPT?.accountID === state.assets?.chatGPT?.accountID ? "chatgpt" : "unavailable"}:${type.chatGPT.model}` : "", searchEnabled: type.chatGPT?.searchEnabled === true };
+      case "saveClassificationProvider": return type && { providerModel: selectedTaggingModel(type), searchEnabled: (type.classificationProvider === "apiKey" ? type.apiKey : type.chatGPT)?.searchEnabled === true };
       case "saveChatGPTUsageLimit": return { dailyRequestLimit: state.assets?.chatGPT?.dailyRequestLimit == null ? "" : String(state.assets.chatGPT.dailyRequestLimit) };
       case "saveClassifierTypeResearch": return type && {
         researchMode: type.researchEnabled === true ? "on" : type.researchEnabled === false ? "off" : "inherit",
@@ -700,11 +701,26 @@
 
   function cloudProviderSection(type) {
     const account = state.assets?.chatGPT || {};
-    const selected = type.chatGPT?.model ? `${type.chatGPT?.accountID === account.accountID ? "chatgpt" : "unavailable"}:${type.chatGPT.model}` : "";
+    const selected = selectedTaggingModel(type);
     const choices = [["", t("cloud.chooseModel")]];
-    if (account.planUsageEnabled) (account.models || []).forEach(model => choices.push([`chatgpt:${model.id}`, `ChatGPT · ${model.name}`]));
-    if (!choices.some(([value]) => value === selected)) choices.push([selected, `${type.chatGPT?.model || "ChatGPT"} · ${t("cloud.unavailable")}`]);
-    return `<section class="classifier-type-section" data-form-id="cloud-provider-${esc(type.id)}" data-autosave-action="saveClassificationProvider" data-type-id="${esc(type.id)}">${valueSelectField("cloud.provider", "", "providerModel", selected, choices)}${type.chatGPT?.model && type.chatGPT?.accountID === account.accountID ? `<p class="small-copy">${tx("cloud.usingPlan")} · <button type="button" class="secondary" data-action="openChatGPTUsage">${tx("cloud.manageUsage")}</button></p><p class="small-copy" data-info>${tx("cloud.confidence")}</p>${toggle("cloud.search", "searchEnabled", type.chatGPT?.searchEnabled === true)}<p class="small-copy" data-info>${tx("cloud.searchHint")}</p>` : `<input type="checkbox" hidden data-field="searchEnabled"${type.chatGPT?.searchEnabled === true ? " checked" : ""}>`}${!account.connected ? `<button type="button" class="secondary" data-action="connectChatGPT">${tx("cloud.connect")}</button>` : ""}${account.needsRetry || account.failedItems ? `<button type="button" class="secondary" data-action="retryChatGPTClassifications">${tx("cloud.retry")}</button>` : ""}</section>`;
+    if (account.planUsageEnabled) (account.models || []).forEach(model => choices.push([`chatgpt:${model.id}`, `${t("connections.subscription")} · ${model.name}`]));
+    for (const profile of state.assets?.providerProfiles || []) {
+      if (!KEY_CONNECTIONS.includes(profile.type) || !profile.hasCredential) continue;
+      for (const model of state.assets?.providerModelCatalogs?.[profile.id] || []) {
+        const id = model.id || model.identifier || model;
+        choices.push([`api:${profile.id}:${id}`, `${profile.name} · ${id}`]);
+      }
+    }
+    const configuration = type.classificationProvider === "apiKey" ? type.apiKey : type.chatGPT;
+    if (!choices.some(([value]) => value === selected)) choices.push([selected, `${configuration?.model || ""} · ${t("cloud.unavailable")}`]);
+    const configured = Boolean(configuration?.model);
+    const retry = account.needsRetry || account.failedItems || state.assets?.apiKeyClassification?.failedProfileIDs?.length;
+    return `<section class="classifier-type-section" data-form-id="cloud-provider-${esc(type.id)}" data-autosave-action="saveClassificationProvider" data-type-id="${esc(type.id)}">${valueSelectField("cloud.provider", "", "providerModel", selected, choices)}<div class="action-row"><button type="button" class="secondary" data-action="openConnections">${tx("connections.manage")}</button>${retry ? `<button type="button" class="secondary" data-action="retryChatGPTClassifications">${tx("cloud.retry")}</button>` : ""}</div>${configured ? `<p class="small-copy">${tx(type.classificationProvider === "apiKey" ? "connections.apiBilling" : "cloud.usingPlan")}</p>${toggle("cloud.search", "searchEnabled", configuration.searchEnabled === true)}<p class="small-copy" data-info>${tx("cloud.searchHint")}</p>` : '<input type="checkbox" hidden data-field="searchEnabled">'}</section>`;
+  }
+
+  function connectionsSection() {
+    const options = [["chatGPT","connections.subscription"],["openAI","connections.openAI"],["gemini","connections.gemini"],["xAI","connections.grok"]];
+    return `<div data-tagging-connections><h3 class="utility-settings-section-title">${tx("connections.title")}</h3><div class="connection-tabs" role="group" aria-label="${tx("connections.title")}">${options.map(([id,key])=>`<button type="button" class="${connectionTab===id ? "primary" : "secondary"}" aria-pressed="${connectionTab===id}" data-action="selectConnection" data-connection-type="${id}">${tx(key)}</button>`).join("")}</div>${connectionTab === "chatGPT" ? chatGPTAccountSection() : apiKeySettings(connectionTab)}</div>`;
   }
 
   function nativeSettingsContent() {
@@ -728,7 +744,7 @@
       }${
         researchModelPicker()
       }</div><p class="small-copy" data-info="research.constantsNote" data-info-target=".utility-research-section h3">${tx("research.constantsNote")}</p><p class="small-copy">${tx("research.usageToday", { used: research.tokensUsedToday ?? 0, limit: research.dailyTokenLimit ?? 10000 })}</p>${researchStatusBlock(research.status)}</section>`;
-      content = `${notice(state.issue, "red")}${classificationSection}${chatGPTAccountSection()}${apiKeySettings()}${researchSection}${dictionaryControls()}`;
+      content = `${notice(state.issue, "red")}${classificationSection}${connectionsSection()}<details data-expand="classifier-services"><summary>${tx("connections.advanced")}</summary>${apiKeySettings()}${researchSection}${dictionaryControls()}</details>`;
     }
     return content;
   }
@@ -995,6 +1011,7 @@
   function providerTypeLabelKey(type) {
     const keys = {
       openAI: "llm.provider.openAI",
+      xAI: "connections.grok",
       openAICompatible: "llm.provider.openAICompatible",
       deepSeek: "llm.provider.deepSeek",
       gemini: "llm.provider.gemini",
@@ -1003,7 +1020,6 @@
       cohere: "llm.provider.cohere",
       groq: "llm.provider.groq",
       openRouter: "llm.provider.openRouter",
-      ollama: "llm.provider.ollama",
       youtubeData: "llm.provider.youtubeData",
       twitch: "llm.provider.twitch",
       reddit: "llm.provider.reddit",
@@ -1065,8 +1081,8 @@
     }
   }
 
-  function apiKeySettings() {
-    const profiles = state.assets.providerProfiles || [];
+  function apiKeySettings(connectionType = null) {
+    const profiles = (state.assets.providerProfiles || []).filter(profile => connectionType ? profile.type === connectionType : !KEY_CONNECTIONS.includes(profile.type) && profile.type !== "ollama");
     const requestRecords = state.assets.providerRequestRecords || [];
     const protocols = state.assets.providerProtocols || {};
     const recordsByProfile = new Map();
@@ -1075,11 +1091,7 @@
       if (!records) { records = []; recordsByProfile.set(record.profileID, records); }
       records.push(record);
     }
-    const profileTypeGroups = [
-      ["llm.providerGroup.models", ["openAI", "deepSeek", "gemini", "anthropic", "mistral", "cohere", "groq", "openRouter", "ollama"].map((type) => [type, t(providerTypeLabelKey(type))])],
-      ["llm.providerGroup.platform", ["youtubeData", "twitch", "reddit", "xPlatform", "instagramGraph", "facebookGraph"].map((type) => [type, t(providerTypeLabelKey(type))])],
-      ["llm.providerGroup.custom", ["openAICompatible", "custom"].map((type) => [type, t(providerTypeLabelKey(type))])],
-    ];
+    const profileTypeGroups = [["llm.providerGroup.platform", ["youtubeData", "twitch", "reddit", "xPlatform", "instagramGraph", "facebookGraph"].map(type => [type,t(providerTypeLabelKey(type))])]];
     const panel = (profile) => {
       const formID = `provider-profile-${profile.id}`;
       const protocol = protocols[profile.type] || {};
@@ -1096,7 +1108,7 @@
         (total, record) => total + (Number(record.tokenCount) || 0),
         0
       );
-      const credentialField = protocol.credentialRequired ? field("llm.apiKeyOrToken", "", "credential", profile.credential || "", "text", "data-provider-connection autocapitalize=\"off\" spellcheck=\"false\"") : "";
+      const credentialField = protocol.credentialRequired ? field("llm.apiKeyOrToken", "", "credential", profile.credential || "", "password", "data-provider-connection autocapitalize=\"off\" spellcheck=\"false\"") : "";
       const endpointField = protocol.allowsEndpointOverride ? field("llm.apiEndpoint", "", "customEndpoint", profile.customEndpoint || "", "text", "data-provider-connection") : "";
       const testModelField = supportsLLM && (protocol.allowsEndpointOverride || !profile.defaultModelIdentifier)
         ? field("llm.testModel", "", "testModelIdentifier", profile.testModelIdentifier || "", "text", `data-provider-connection placeholder=\"${esc(profile.defaultModelIdentifier || "model-name")}\"`)
@@ -1110,6 +1122,10 @@
         "data-provider-connection"
       )).join("");
       const connectionFields = [credentialField, endpointField, testModelField, protocolFields].filter(Boolean).join("");
+      const modelError = state.assets.providerModelCatalogErrors?.[profile.id];
+      const modelLoading = (state.assets.loadingProviderModelProfileIDs || []).includes(profile.id);
+      const modelCount = (state.assets.providerModelCatalogs?.[profile.id] || []).length;
+      const models = connectionType ? `<div class="action-row"><button type="button" class="secondary" data-action="probeProviderModelCatalog" data-profile-id="${esc(profile.id)}"${disabled(!profile.hasCredential || modelLoading)}>${tx(modelLoading ? "research.fetchingModels" : modelError ? "research.retryModels" : modelCount ? "research.refreshModels" : "research.fetchModels")}</button>${modelCount ? `<span class="small-copy">${tx("connections.modelCount", {count:modelCount})}</span>` : ""}</div>${notice(modelError,"red")}` : "";
       const testAvailable = (supportsLLM || supportsPlatformData) && !retiredSearchProvider;
       const testButton = testAvailable ? `<button class="gold-action" data-action="testProviderProfile" data-form="${esc(formID)}" data-profile-id="${esc(profile.id)}"${disabled(profile.testing)}>${tx(profile.testing ? "llm.testing" : "llm.test")}</button>` : "";
       const usage = supportsPlatformData || retiredSearchProvider
@@ -1118,9 +1134,11 @@
       const responseDiagnostic = latestResponseDiagnostic
         ? `<p class="provider-response-shape"><span>${tx("llm.responseShape")}</span><strong>${esc(latestResponseDiagnostic.responseShape)}</strong></p>`
         : "";
-      return `<section class="provider-panel" data-vui-search-text="${esc(profile.name + " " + t(providerTypeLabelKey(profile.type)))}" data-provider-panel data-provider-id="${esc(profile.id)}" data-form-id="${esc(formID)}" data-autosave-action="updateProviderConnection"><div class="provider-panel-head"><h3>${esc(profile.name)}</h3><div class="provider-panel-actions">${testButton}<button class="danger" data-action="confirmDeleteProviderProfile" data-profile-id="${esc(profile.id)}">${deleteLabel(`provider:${profile.id}`, tx("llm.deleteProfile"))}</button></div></div>${retiredSearchProvider ? `<div class="notice navy">${tx("llm.retiredSearchProvider")}</div>` : ""}<div class="provider-panel-body">${connectionFields ? `<div class="provider-connection-fields">${connectionFields}</div>` : ""}</div><footer class="provider-request-summary">${usage}${responseDiagnostic}</footer>${profile.testSucceeded ? notice(t("llm.testSucceeded"), "green") : ""}</section>`;
+      return `<section class="provider-panel" data-vui-search-text="${esc(profile.name + " " + t(providerTypeLabelKey(profile.type)))}" data-provider-panel data-provider-id="${esc(profile.id)}" data-form-id="${esc(formID)}" data-autosave-action="updateProviderConnection"><div class="provider-panel-head"><h3>${esc(profile.name)}</h3><div class="provider-panel-actions">${testButton}<button class="danger" data-action="confirmDeleteProviderProfile" data-profile-id="${esc(profile.id)}">${deleteLabel(`provider:${profile.id}`, tx("llm.deleteProfile"))}</button></div></div>${retiredSearchProvider ? `<div class="notice navy">${tx("llm.retiredSearchProvider")}</div>` : ""}<div class="provider-panel-body">${connectionFields ? `<div class="provider-connection-fields">${connectionFields}</div>` : ""}${models}</div><footer class="provider-request-summary">${usage}${responseDiagnostic}</footer>${profile.testSucceeded ? notice(t("llm.testSucceeded"), "green") : ""}</section>`;
     };
-    return `<section class="utility-settings-section utility-api-keys"><h3 class="utility-settings-section-title">${tx("navigation.apiKeys")}</h3><p class="section-copy" data-info>${tx("llm.copy")}</p><div class="notice navy provider-local-only" data-info>${tx("llm.localOnlyDisclosure")}</div><section class="provider-create" data-form-id="new-provider-profile-form">${groupedValueSelectField("llm.providerType", "", "type", "", profileTypeGroups)}<button class="gold-action" data-action="createProviderProfile" data-form="new-provider-profile-form">${tx("llm.createKey")}</button><span class="small-copy" data-info="llm.createCopy">${tx("llm.createCopy")}</span></section><div class="provider-panels vui-list-box" data-vui-search="classifier-providers" data-vui-search-label="Search provider profiles" data-vui-search-items=".provider-panel" data-list-key="providers" tabindex="0" aria-label="${tx("llm.keyLibrary")}">${profiles.length ? listPlaceholder("classifier-providers", profiles, panel, profile => profile.name + " " + t(providerTypeLabelKey(profile.type))) : `<div class="empty">${tx("llm.empty")}</div>`}</div></section>`;
+    const create = connectionType ? `<div data-form-id="new-provider-profile-form"><input type="hidden" data-field="type" value="${esc(connectionType)}"><button type="button" class="secondary" data-action="createProviderProfile" data-form="new-provider-profile-form">${tx("connections.addKey")}</button></div>` : `<section class="provider-create" data-form-id="new-provider-profile-form">${groupedValueSelectField("llm.providerType", "", "type", "", profileTypeGroups)}<button class="secondary" data-action="createProviderProfile" data-form="new-provider-profile-form">${tx("llm.createKey")}</button></section>`;
+    return `<section class="utility-settings-section utility-api-keys"><p class="small-copy" data-info>${tx(connectionType ? "connections.apiBilling" : "llm.copy")}</p><p class="provider-local-only small-copy" data-info>${tx("llm.localOnlyDisclosure")}</p><div class="provider-panels vui-list-box" data-vui-search="classifier-providers" data-vui-search-label="Search connections" data-vui-search-items=".provider-panel" data-list-key="providers" tabindex="0" aria-label="${tx("llm.keyLibrary")}">${profiles.length ? listPlaceholder("classifier-providers", profiles, panel, profile => profile.name + " " + t(providerTypeLabelKey(profile.type))) : `<div class="empty">${tx("llm.empty")}</div>`}</div>${create}</section>`;
+
   }
 
   // The classifiable platforms as a checklist (owner 2026-09-30: a type may take
@@ -1695,6 +1713,18 @@
     if (action === "setClassifierTypePaused") {
       send(action, { typeID: button.dataset.typeId, paused: button.dataset.paused === "true" });
       return;
+    }
+    if (action === "selectConnection") {
+      if (["chatGPT", ...KEY_CONNECTIONS].includes(button.dataset.connectionType)) connectionTab = button.dataset.connectionType;
+      render(); return;
+    }
+    if (action === "openConnections") {
+      connectionTab = "chatGPT";
+      if (selectedTypeID) {
+        const type = (state.assets?.classifierTypes || []).find(item => item.id === selectedTypeID);
+        if (type?.classificationProvider === "apiKey") connectionTab = (state.assets.providerProfiles || []).find(profile=>profile.id===type.apiKey?.profileID)?.type || "openAI";
+      }
+      utilityPanel = "settings"; window.VaultSettings.open(); render(); return;
     }
     if (action === "workspace") {
       const nextWorkspace = button.dataset.workspace;

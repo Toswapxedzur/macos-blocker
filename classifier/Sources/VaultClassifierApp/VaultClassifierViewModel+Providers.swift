@@ -51,7 +51,11 @@ extension VaultClassifierViewModel {
                   var catalog = localState?.workspaceCatalog else {
                 throw WebBridgeInputError.invalidChoice("provider type")
             }
-            let profile = APIKeyProviderProfile(type: type)
+            var profile = APIKeyProviderProfile(type: type)
+            var number = 2
+            while catalog.providerProfiles.contains(where: { $0.name == profile.name }) {
+                profile.name = type.defaultProfileName + " \(number)"; number += 1
+            }
             catalog.providerProfiles.append(profile)
             try coordinator?.updateWorkspaceCatalog(catalog)
             refreshLocalState()
@@ -181,13 +185,7 @@ extension VaultClassifierViewModel {
                         : try self.providerCredential(for: profileID)
                     let response = try await self.performProviderRequest(plan: plan, body: nil, credential: credential, timeout: 30)
                     var models = try ProviderModelCatalogProtocol.parse(response.data, providerType: profile.type)
-                    if profile.type == .ollama {
-                        models = await self.ollamaModelsWithCapabilities(
-                            models,
-                            profile: profile,
-                            credential: credential
-                        )
-                    }
+
                     self.providerModelCatalogs[profileID] = models
                     self.persistProviderModelCatalogs()
                     self.issue = nil
@@ -203,35 +201,6 @@ extension VaultClassifierViewModel {
         }
     }
 
-    func ollamaModelsWithCapabilities(
-        _ models: [ProviderModelCatalogEntry],
-        profile: APIKeyProviderProfile,
-        credential: ProviderCredentialRecord
-    ) async -> [ProviderModelCatalogEntry] {
-        var resolved = [ProviderModelCatalogEntry]()
-        for model in models {
-            guard let request = try? ProviderModelCatalogProtocol.prepareOllamaToolCapabilityProbe(
-                profile: profile,
-                modelIdentifier: model.identifier
-            ) else {
-                resolved.append(model)
-                continue
-            }
-            guard let response = try? await performProviderRequest(
-                plan: request.plan,
-                body: request.body,
-                credential: credential,
-                timeout: 5
-            ) else {
-                resolved.append(model)
-                continue
-            }
-            var updated = model
-            updated.supportsTools = ProviderModelCatalogProtocol.ollamaModelSupportsTools(response.data)
-            resolved.append(updated)
-        }
-        return resolved
-    }
 
     func probeProviderModelCatalog(profileID: String) {
         guard let profile = localState?.workspaceCatalog.providerProfiles.first(where: { $0.id == profileID }),

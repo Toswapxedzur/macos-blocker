@@ -65,6 +65,11 @@ public actor APIKeyClassificationClient: CloudClassificationEngineResolving {
             let result = try await http.send(plan: request.plan, body: request.body, credential: credential, timeout: 60)
             try Task.checkCancellation()
             guard result.data.count <= 2_097_152 else { throw CloudClassificationError.invalidOutput }
+            let root = try JSONSerialization.jsonObject(with: result.data) as? [String: Any]
+            if request.plan.bodyFormat == .geminiGenerateContent {
+                guard let candidates = root?["candidates"] as? [[String: Any]], candidates.count == 1,
+                      candidates[0]["finishReason"] as? String == "STOP" else { throw CloudClassificationError.invalidOutput }
+            } else { guard root?["status"] as? String == "completed" else { throw CloudClassificationError.invalidOutput } }
             let parsed = try ProviderGenerationProtocol.parseGeneratedText(result.data, format: request.plan.bodyFormat)
             let text = parsed.content
             guard !text.isEmpty else { throw CloudClassificationError.invalidOutput }

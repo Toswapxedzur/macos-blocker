@@ -135,8 +135,8 @@ final class GroundedResearchQueueTests: XCTestCase {
 
     private func providers(outputTokens: Int = 100) -> GroundedResearchProviderConfiguration {
         .init(
-            llmProfile: .init(id: "llm", type: .ollama),
-            llmCredential: .init(values: [:]),
+            llmProfile: .init(id: "llm", type: .openAI),
+            llmCredential: .init(values: [.apiKey: "fixture-not-real"]),
             llmModelIdentifier: "model",
             maximumOutputTokens: outputTokens
         )
@@ -385,8 +385,8 @@ final class GroundedResearchFailureHandlingTests: XCTestCase {
 
     private func providers() -> GroundedResearchProviderConfiguration {
         .init(
-            llmProfile: .init(id: "llm", type: .ollama),
-            llmCredential: .init(values: [:]),
+            llmProfile: .init(id: "llm", type: .openAI),
+            llmCredential: .init(values: [.apiKey: "fixture-not-real"]),
             llmModelIdentifier: "model",
             maximumOutputTokens: 100
         )

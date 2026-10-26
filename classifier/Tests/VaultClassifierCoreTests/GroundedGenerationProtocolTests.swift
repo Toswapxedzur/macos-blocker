@@ -59,7 +59,7 @@ final class GroundedGenerationProtocolTests: XCTestCase {
                 "\(type) should support provider grounding"
             )
         }
-        for type in [APIKeyProviderType.serper, .youSearch, .ollama, .deepSeek] {
+        for type in [APIKeyProviderType.serper, .youSearch, .deepSeek] {
             XCTAssertFalse(
                 GroundedGenerationProtocol.supportsProviderGrounding(profile: .init(type: type)),
                 "\(type) should not support provider grounding"

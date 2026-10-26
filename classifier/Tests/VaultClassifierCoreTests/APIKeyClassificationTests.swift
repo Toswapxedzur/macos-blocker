@@ -11,9 +11,10 @@ final class APIKeyClassificationTests: XCTestCase {
         dynamicSuffix: "Title: Games tutorial" + ClassificationReplyFormat.current.runway, allowedTagNames: ["Games", "Mathematics"], maximumTags: 3) }
     private let reply = #"{"items":[{"index":0,"tags":[{"name":"Games","confidence":5}]}]}"#
     private func response(_ type: APIKeyProviderType) throws -> Data {
-        try JSONSerialization.data(withJSONObject: type == .gemini
-            ? ["candidates": [["finishReason": "STOP", "content": ["parts": [["text": reply]]]]]]
-            : ["status": "completed", "output": [["type": "message", "content": [["type": "output_text", "text": reply]]]]])
+        let object: [String: Any]
+        if type == .gemini { object = ["candidates": [["finishReason": "STOP", "content": ["parts": [["text": reply]]]]]] }
+        else { object = ["status": "completed", "output": [["type": "message", "content": [["type": "output_text", "text": reply]]]]] }
+        return try JSONSerialization.data(withJSONObject: object)
     }
     func testThreeProvidersUseOfficialEndpointsHeadersAndStructuredBodies() async throws {
         for (type, host, model, header) in [(APIKeyProviderType.openAI,"api.openai.com","gpt-4.1-mini","Authorization"),(.gemini,"generativelanguage.googleapis.com","gemini-3-fixture","x-goog-api-key"),(.xAI,"api.x.ai","grok-fixture","Authorization")] {
@@ -62,7 +63,7 @@ final class APIKeyClassificationTests: XCTestCase {
         for type in [APIKeyProviderType.openAI,.gemini,.xAI] {
             let profile = APIKeyProviderProfile(type: type)
             let request = try APIKeyClassificationEngine.prepare([item], configuration: .init(profileID: profile.id, model: "gemini-3-fixture", searchEnabled: true), profile: profile)
-            let body = try JSONSerialization.jsonObject(with: request.body!) as! [String: Any]
+            let body = try JSONSerialization.jsonObject(with: request.body) as! [String: Any]
             XCTAssertNotNil(body["tools"])
         }
         XCTAssertThrowsError(try APIKeyClassificationEngine.prepare([item], configuration: .init(profileID: "p", model: "gemini-2.5-flash", searchEnabled: true), profile: .init(type: .gemini)))

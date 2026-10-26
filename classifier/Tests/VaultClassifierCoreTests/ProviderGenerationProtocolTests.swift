@@ -26,10 +26,9 @@ final class ProviderGenerationProtocolTests: XCTestCase {
             (.anthropic, .anthropicMessages),
             (.gemini, .geminiGenerateContent),
             (.cohere, .cohereChat),
-            (.ollama, .ollamaChat),
         ]
         for (type, expectedFormat) in cases {
-            let profile = APIKeyProviderProfile(type: type, credential: type == .ollama ? nil : "key")
+            let profile = APIKeyProviderProfile(type: type, credential: "key")
             let prepared = try ProviderGenerationProtocol.prepareGenerateText(
                 profile: profile,
                 modelIdentifier: "model",
