@@ -163,9 +163,9 @@ public struct VideoClassificationPipeline: Sendable {
                 knowledgeFingerprint: DictionaryEvidence.fingerprint(title: inputs[index].title, creatorID: inputs[index].creatorID,
                     catalog: (dictionaryEvidence[inputs[index].entryID] ?? .init()).overlay(on: catalog, title: inputs[index].title, creatorID: inputs[index].creatorID),
                     settings: .init(), limit: maxKnowledgePerVideo, ttlDays: knowledgeTTLDays),
-                inputFingerprint: classifierType.classificationProvider == .chatGPT ? CloudClassificationCurrency.input(
+                inputFingerprint: CloudClassificationCurrency.input(
                     title: inputs[index].title, summary: inputs[index].summary, text: inputs[index].text, creatorID: inputs[index].creatorID,
-                    creatorName: catalog.datasets.flatMap(\.collectedEntries).first { $0.platformID == platformID && $0.entryID == inputs[index].entryID }?.creatorName) : nil,
+                    creatorName: catalog.datasets.flatMap(\.collectedEntries).first { $0.platformID == platformID && $0.entryID == inputs[index].entryID }?.creatorName),
                 source: knowledgeUsed[index].isEmpty ? .model : .modelKnowledge,
                 modelVersion: "\(llm.modelVersion)+\(promptVersion)",
                 tagBounds: TagBounds(minimum: minimumTags, maximum: maximumTags)

@@ -28,10 +28,10 @@ extension LocalClassifierCoordinator {
             // Browser tagging may arrive before collection updates the title.
             // Compare cloud rows with the actual request evidence when supplied.
             let entry = Self.collectedEntry(platformID: platformID, entryID: entryID, catalog: catalog)
-            let observed = (type.classificationProvider == .chatGPT ? input : nil) ?? entry.map {
+            let observed = input ?? entry.map {
                 VideoClassificationPipeline.Input(title: $0.title, summary: $0.summary, text: $0.text, entryID: $0.entryID, creatorID: $0.creatorID)
             }
-            if type.classificationProvider == .chatGPT, classification.source != .humanCorrected {
+            if classification.source != .humanCorrected {
                 guard let observed, observed.entryID == entryID,
                       classification.inputFingerprint == CloudClassificationCurrency.input(title: observed.title,
                         summary: observed.summary, text: observed.text, creatorID: observed.creatorID, creatorName: entry?.creatorName) else { return nil }
@@ -145,7 +145,7 @@ extension LocalClassifierCoordinator {
 
             let llm: any ClassificationEngine
             if let cloudResolver {
-                try type.chatGPT.validate()
+                if type.classificationProvider == .chatGPT { try type.chatGPT.validate() } else { try type.apiKey.validate() }
                 llm = try await cloudResolver.resolveCloudEngine(for: type)
             } else {
                 llm = defaultLLM // Explicit injection only; production default throws notConfigured.
@@ -156,8 +156,7 @@ extension LocalClassifierCoordinator {
             let bounds = settings.tagBounds
             let pipeline = VideoClassificationPipeline(
                 llm: llm, maximumTags: bounds.maximum, minimumTags: bounds.minimum,
-                secondaryConfidenceFloor: type.classificationProvider == .chatGPT
-                    ? (strictness == .strictest || strictness == .strict ? 5 : strictness == .balanced ? 4 : 3) : 4)
+                secondaryConfidenceFloor: strictness == .strictest || strictness == .strict ? 5 : strictness == .balanced ? 4 : 3)
             let trimmedRules = settings.houseRules.trimmingCharacters(in: .whitespacesAndNewlines)
             let typeHouseRules = trimmedRules.isEmpty ? nil : trimmedRules
             let results = try await pipeline.classifyBatch(

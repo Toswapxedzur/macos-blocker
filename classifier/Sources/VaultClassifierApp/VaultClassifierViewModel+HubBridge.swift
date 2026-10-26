@@ -60,7 +60,7 @@ extension VaultClassifierViewModel {
 
     func queueVideoClassification(platformID: String, items: [NativeVideoTagsBatchItem]) {
         guard !isShuttingDown else { return }
-        if coordinator?.snapshot().workspaceCatalog.classifierTypes.contains(where: { $0.applicablePlatformIDs.contains(platformID) && $0.classificationProvider == .chatGPT }) == true {
+        if coordinator?.snapshot().workspaceCatalog.classifierTypes.contains(where: { $0.applicablePlatformIDs.contains(platformID) }) == true {
             for item in items { latestCloudClassificationInputs[Self.inFlightKey(platformID, item.entryID)] = item }
         }
         let fresh = items.filter {
@@ -98,6 +98,7 @@ extension VaultClassifierViewModel {
             broadcastResolvedVideoTags(platformID: platformID, entryID: item.entryID, projection: projection)
         }
         if !updated.isEmpty { queueVideoClassification(platformID: platformID, items: updated) }
+        await refreshChatGPTStatus()
     }
 
     /// Resolves the chunk before delivery; retries and persisted model decisions
@@ -109,7 +110,7 @@ extension VaultClassifierViewModel {
                 title: $0.title, summary: $0.summary, text: $0.text, entryID: $0.entryID, creatorID: $0.creatorID)
         }
         var projections: [String: VideoTagsProjection]
-        let cloud = coordinator.snapshot().workspaceCatalog.classifierTypes.contains { $0.applicablePlatformIDs.contains(platformID) && $0.classificationProvider == .chatGPT }
+        let cloud = coordinator.snapshot().workspaceCatalog.classifierTypes.contains { $0.applicablePlatformIDs.contains(platformID) }
         do { projections = try await coordinator.classifyVideos(platformID: platformID, items: inputs) }
         catch {
             if error is CancellationError || isShuttingDown || Task.isCancelled { return [:] }

@@ -20,6 +20,7 @@ public struct ClassifierTypeAsset: Codable, Equatable, Sendable, Identifiable {
     /// This group owns concrete dial positions and house rules.
     public var tagging: TaggingSettings
     public var classificationProvider: ClassificationProvider
+    public var apiKey: APIKeyClassificationSettings
     public var chatGPT: ChatGPTClassificationSettings
     /// Pauses new automatic classification for this group without deleting it.
     public var isPaused: Bool
@@ -44,6 +45,7 @@ public struct ClassifierTypeAsset: Codable, Equatable, Sendable, Identifiable {
         tagging: TaggingSettings = .init(),
         classificationProvider: ClassificationProvider = .chatGPT,
         chatGPT: ChatGPTClassificationSettings = .init(),
+        apiKey: APIKeyClassificationSettings = .init(),
         isPaused: Bool = false,
         researchEnabled: Bool? = nil,
         order: Int = 0,
@@ -58,6 +60,7 @@ public struct ClassifierTypeAsset: Codable, Equatable, Sendable, Identifiable {
         self.applicablePlatformIDs = Self.cleanedPlatformIDs(applicablePlatformIDs)
         self.tagging = tagging
         self.classificationProvider = classificationProvider
+        self.apiKey = apiKey
         self.chatGPT = chatGPT
         self.isPaused = isPaused
         self.researchEnabled = researchEnabled
@@ -75,7 +78,7 @@ public struct ClassifierTypeAsset: Codable, Equatable, Sendable, Identifiable {
 
     private enum CodingKeys: String, CodingKey {
         case id, name, treeID, treeRevision, datasetID, datasetRevision, applicablePlatformIDs,
-             tagging, classificationProvider, chatGPT, isPaused, researchEnabled, order, updatedAtMilliseconds
+             tagging, classificationProvider, chatGPT, apiKey, isPaused, researchEnabled, order, updatedAtMilliseconds
         // Pre-dial keys (before 2026-09-23), read only to find the nearest position.
         case retiredLocalModel = "localModel"
         case researchOverrides
@@ -101,6 +104,7 @@ public struct ClassifierTypeAsset: Codable, Equatable, Sendable, Identifiable {
             ?? container.decodeIfPresent(TaggingSettings.self, forKey: .retiredLocalModel) ?? .init()
         classificationProvider = try container.decodeIfPresent(ClassificationProvider.self, forKey: .classificationProvider) ?? .chatGPT
         chatGPT = try container.decodeIfPresent(ChatGPTClassificationSettings.self, forKey: .chatGPT) ?? .init()
+        apiKey = try container.decodeIfPresent(APIKeyClassificationSettings.self, forKey: .apiKey) ?? .init()
         isPaused = (try? container.decodeIfPresent(Bool.self, forKey: .isPaused)) ?? false
         if let explicit = try container.decodeIfPresent(Bool.self, forKey: .researchEnabled) {
             researchEnabled = explicit
@@ -127,6 +131,7 @@ public struct ClassifierTypeAsset: Codable, Equatable, Sendable, Identifiable {
         try container.encode(tagging, forKey: .tagging)
         try container.encode(classificationProvider, forKey: .classificationProvider)
         try container.encode(chatGPT, forKey: .chatGPT)
+        try container.encode(apiKey, forKey: .apiKey)
         try container.encode(isPaused, forKey: .isPaused)
         try container.encodeIfPresent(researchEnabled, forKey: .researchEnabled)
         try container.encode(order, forKey: .order)

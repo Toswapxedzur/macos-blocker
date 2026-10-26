@@ -222,6 +222,7 @@ public enum ProviderCredentialError: Error, LocalizedError, Sendable {
 /// the connection settings needed for the selected provider protocol.
 public enum APIKeyProviderType: String, Codable, Sendable, CaseIterable {
     case openAI
+    case xAI
     case openAICompatible
     case deepSeek
     case gemini
@@ -255,7 +256,7 @@ public enum APIKeyProviderType: String, Codable, Sendable, CaseIterable {
     /// consumer product or agent integration can browse the web.
     public var supportsProviderNativeWebSearch: Bool {
         switch self {
-        case .openAI, .gemini, .anthropic:
+        case .openAI, .xAI, .gemini, .anthropic:
             return true
         default:
             return false
@@ -268,7 +269,7 @@ public enum APIKeyProviderType: String, Codable, Sendable, CaseIterable {
     /// that contract from an arbitrary `/models` response.
     public var supportsAttachedWebSearchTool: Bool {
         switch self {
-        case .openAI, .deepSeek, .gemini, .anthropic, .mistral, .cohere, .groq, .openRouter:
+        case .openAI, .xAI, .deepSeek, .gemini, .anthropic, .mistral, .cohere, .groq, .openRouter:
             return true
         case .ollama:
             // Probe retains every installed model and annotates each model's
@@ -282,6 +283,7 @@ public enum APIKeyProviderType: String, Codable, Sendable, CaseIterable {
     public var defaultProfileName: String {
         switch self {
         case .openAI: return "OpenAI key"
+        case .xAI: return "Grok key"
         case .openAICompatible: return "OpenAI-compatible API"
         case .deepSeek: return "DeepSeek key"
         case .gemini: return "Gemini key"
@@ -306,6 +308,7 @@ public enum APIKeyProviderType: String, Codable, Sendable, CaseIterable {
     public var defaultModelIdentifier: String {
         switch self {
         case .openAI: return "gpt-4.1-mini"
+        case .xAI: return ""
         case .openAICompatible: return ""
         case .deepSeek: return "deepseek-v4-flash"
         case .gemini: return "gemini-3.1-flash-lite"

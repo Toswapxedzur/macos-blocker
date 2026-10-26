@@ -231,6 +231,7 @@ extension VaultClassifierViewModel {
                     "applicablePlatformIDs": classifierType.applicablePlatformIDs,
                     "isPaused": classifierType.isPaused,
                     "classificationProvider": classifierType.classificationProvider.rawValue,
+                    "apiKey": ["profileID": classifierType.apiKey.profileID, "model": classifierType.apiKey.model, "searchEnabled": classifierType.apiKey.searchEnabled],
                     "chatGPT": ["accountID": classifierType.chatGPT.accountID, "model": classifierType.chatGPT.model, "searchEnabled": classifierType.chatGPT.searchEnabled] as [String: Any],
                     "tagging": [
                         "houseRules": classifierType.tagging.houseRules,
@@ -250,6 +251,7 @@ extension VaultClassifierViewModel {
             "issue": chatGPTStatus.issue ?? NSNull(),
             "dailyRequestLimit": state?.settings.chatGPTDailyRequestLimit.map { $0 as Any } ?? NSNull(),
             "models": chatGPTStatus.models.map { ["id": $0.identifier, "name": $0.displayName] }] as [String: Any]
+        assets["apiKeyClassification"] = ["failedProfileIDs": Array(apiKeyClassificationStatus?.failedProfileIDs ?? []), "requestsToday": apiKeyClassificationStatus?.requestsToday ?? 0]
         assets["providerProfiles"] = catalog.providerProfiles.map { profile in
                 let descriptor = ProviderProtocolRegistry.descriptor(for: profile.type)
                 return [

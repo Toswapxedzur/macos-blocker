@@ -10,7 +10,7 @@ import Foundation
 /// classifier, audit, content-block policy — now the extension's) are simply never
 /// read, and so are never written back; see LegacyStateDecodeTests.
 public struct LocalClassifierState: Codable, Equatable, Sendable {
-    public static let currentSchemaVersion = 5
+    public static let currentSchemaVersion = 6
     /// These are alpha document schemas, not beta product major numbers.
     /// Compatible unversioned/schema-1 forms reconcile once to schema 2.
     public static let minimumSupportedSchemaVersion = 0

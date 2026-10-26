@@ -250,6 +250,8 @@ public enum ProviderProtocolRegistry {
         switch type {
         case .openAI:
             return model(type, .openAIResponsesV1, "https://api.openai.com/v1", "/responses", .openAIResponses)
+        case .xAI:
+            return model(type, .openAIResponsesV1, "https://api.x.ai/v1", "/responses", .openAIResponses)
         case .openAICompatible:
             return model(type, .openAIChatCompletionsV1, nil, "/chat/completions", .openAIChatCompletions, override: true)
         case .deepSeek:

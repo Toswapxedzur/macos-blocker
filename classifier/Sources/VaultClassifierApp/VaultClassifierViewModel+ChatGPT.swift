@@ -17,7 +17,11 @@ extension VaultClassifierViewModel {
                 Task { @MainActor [weak self] in await self?.refreshChatGPTStatus() }
             }
             chatGPTClient = client
-            coordinator.setCloudEngineResolver(client)
+            let apiKeys = APIKeyClassificationClient(profiles: { [weak coordinator] id in
+                coordinator?.snapshot().workspaceCatalog.providerProfiles.first { $0.id == id }
+            })
+            apiKeyClassificationClient = apiKeys
+            coordinator.setCloudEngineResolver(ClassificationConnectionResolver(subscription: client, apiKeys: apiKeys))
             Task { [weak self] in
                 await self?.refreshChatGPTStatus()
                 if await client.status().connected { try? await client.refreshModels() }
@@ -28,6 +32,7 @@ extension VaultClassifierViewModel {
     func refreshChatGPTStatus() async {
         guard let client = chatGPTClient, !isShuttingDown else { return }
         chatGPTStatus = await client.status()
+        apiKeyClassificationStatus = await apiKeyClassificationClient?.status()
         onWebStateChange?()
     }
 
@@ -82,8 +87,15 @@ extension VaultClassifierViewModel {
             guard chatGPTStatus.planUsageEnabled, chatGPTStatus.models.contains(where: { $0.identifier == model }) else { throw CloudClassificationError.notConfigured }
             catalog.classifierTypes[index].classificationProvider = .chatGPT
             catalog.classifierTypes[index].chatGPT = .init(accountID: chatGPTStatus.accountID, model: model, searchEnabled: searchEnabled)
+        } else if providerModel.hasPrefix("api:") {
+            let parts = providerModel.dropFirst(4).split(separator: ":", maxSplits: 1).map(String.init)
+            guard parts.count == 2, let profile = catalog.providerProfiles.first(where: { $0.id == parts[0] }),
+                  APIKeyClassificationClient.supports(profile.type), profile.credential?.isEmpty == false,
+                  providerModelCatalogs[profile.id]?.contains(where: { $0.id == parts[1] }) == true else { throw CloudClassificationError.notConfigured }
+            if profile.type == .gemini && searchEnabled && !(parts[1].hasPrefix("gemini-3") || parts[1].hasPrefix("gemini-4")) { throw CloudClassificationError.notConfigured }
+            catalog.classifierTypes[index].classificationProvider = .apiKey
+            catalog.classifierTypes[index].apiKey = .init(profileID: profile.id, model: parts[1], searchEnabled: searchEnabled)
         } else { throw CloudClassificationError.notConfigured }
-        catalog.classifierTypes[index].chatGPT.searchEnabled = searchEnabled
         catalog.classifierTypes[index].updatedAtMilliseconds = WorkspaceCatalog.now()
         try coordinator.updateWorkspaceCatalog(catalog)
         refreshLocalState(); issue = nil
@@ -102,6 +114,7 @@ extension VaultClassifierViewModel {
         guard let client = chatGPTClient else { return }
         Task { [weak self] in
             await client.retryFailedRequests()
+            await self?.apiKeyClassificationClient?.retryFailedRequests()
             guard let self, !self.isShuttingDown else { return }
             let failed = self.failedCloudClassifications
             self.failedCloudClassifications.removeAll(); self.issue = nil
