@@ -10,7 +10,7 @@ window.runAPIConnectionTests = async () => {
   expect(buttons.map(b=>b.dataset.connectionType).join(',')==='chatGPT,openAI,gemini,xAI','subscription and three API-key choices are distinct');
   expect(!q('option[value="ollama"]')&&!q('[data-field="speedQuality"]')&&!q('[data-action="downloadModel"]'),'retired Local controls are absent');
   q('[data-connection-type="openAI"]').click();await tick();
-  expect(q('[data-field="credential"]').type==='password','stored API key is masked');
+  expect(q('[data-field="credential"]').type==='password' && q('[data-field="credential"]').value==='fixture-key-not-real','stored API key is masked and retained for connection edits');
   expect(q('[data-provider-panel][data-provider-id="provider-1"]'),'OpenAI key appears in its own connection');
   expect(q('[data-action="probeProviderModelCatalog"]'),'key connection exposes model-list fetch');
   const key=q('[data-field="credential"]');key.focus();key.value='updated-fixture-key';key.dispatchEvent(new InputEvent('input',{bubbles:true}));

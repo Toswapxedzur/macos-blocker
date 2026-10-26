@@ -438,7 +438,7 @@
   }
 
   function field(labelKey, hintKey, key, value, type = "text", extra = "") {
-    return `<label class="field"><span class="field-label" ${infoAttrs(labelKey, hintKey)}>${tx(labelKey)}${hintKey ? `<span class="field-hint" data-info> · ${tx(hintKey)}</span>` : ""}</span><input type="${type}" data-field="${esc(key)}" value="${type === "password" ? "" : esc(value)}" ${extra}></label>`;
+    return `<label class="field"><span class="field-label" ${infoAttrs(labelKey, hintKey)}>${tx(labelKey)}${hintKey ? `<span class="field-hint" data-info> · ${tx(hintKey)}</span>` : ""}</span><input type="${type}" data-field="${esc(key)}" value="${type === "password" && key !== "credential" ? "" : esc(value)}" ${extra}></label>`;
   }
 
   function textareaField(labelKey, hintKey, key, value, extra = "") {

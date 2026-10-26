@@ -18,6 +18,6 @@ window.runConnectionSettingsPreview = async () => {
   settings.querySelector('[data-tagging-connections]').scrollIntoView({block:'start'});
   await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));
   if(body.scrollWidth>body.clientWidth+1)throw Error('Settings overflow');
-  if(settings.querySelector('[data-field="credential"]').type!=='password')throw Error('Key must be masked');
+  if(settings.querySelector('[data-field="credential"]').type!=='password'||settings.querySelector('[data-field="credential"]').value!=='fixture-not-a-real-key')throw Error('Stored key must be masked and retained');
   return ['PASS real desktop Settings: four connections, masked key, bounded layout'];
 };
