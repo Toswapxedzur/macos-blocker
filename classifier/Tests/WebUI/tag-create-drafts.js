@@ -19,7 +19,7 @@ window.runTagDraftTests = async () => {
   const count = commands.length;
   // Real downloads change visible progress repeatedly, forcing a full render.
   for (let progress=0.1; progress<=0.3; progress+=0.1) {
-    testState.settings.localModels.modelLibrary=[{id:'test-model', displayName:'Qwen', ggufFileName:'test.gguf', tier:'balanced', state:{kind:'downloading', fraction:progress}}];
+    testState.settings.taggings.modelLibrary=[{id:'test-model', displayName:'Qwen', ggufFileName:'test.gguf', tier:'balanced', state:{kind:'downloading', fraction:progress}}];
     pushSnapshot(); await wait();
     name=q('[data-tree-popover] [data-field="name"]');
     description=q('[data-tree-popover] [data-field="description"]');
@@ -27,7 +27,7 @@ window.runTagDraftTests = async () => {
     check(scope.activeElement===name && name.selectionStart===3 && name.selectionEnd===7, 'Download progress lost the pending tag caret');
   }
   description.focus(); description.setSelectionRange(8, 15, 'backward');
-  testState.settings.localModels.modelLibrary[0].state.fraction=0.4;
+  testState.settings.taggings.modelLibrary[0].state.fraction=0.4;
   pushSnapshot(); await wait();
   description=q('[data-tree-popover] [data-field="description"]');
   check(scope.activeElement===description && description.selectionStart===8 && description.selectionEnd===15 && description.selectionDirection==='backward', 'Download progress lost the description caret');

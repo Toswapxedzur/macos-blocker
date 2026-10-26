@@ -47,10 +47,7 @@ extension LocalClassifierCoordinator {
         return Self.videoTagsProjection(entryID: entryID, platformID: platformID, types: types, catalog: catalog)
     }
 
-    /// Human corrections remain authoritative. Model rows must match this
-    /// group's selected tier, or the injected stub in screen-free callers.
-    /// With a live registry, provisional stub rows are retried so a completed
-    /// download is used without requiring an app restart.
+    /// Human corrections remain authoritative; automatic rows must match cloud settings.
     static func isClassificationCurrent(
         _ classification: VideoClassification,
         forType type: ClassifierTypeAsset,
@@ -90,14 +87,13 @@ extension LocalClassifierCoordinator {
                 state.workspaceCatalog,
                 classificationEngine,
                 state.settings.research,
-                groundedResearchQueue,
                 state.settings.classificationEnabled,
                 self.dictionaryProvider,
                 cloudEngineResolver
             )
         }
         let (
-            catalog, defaultLLM, globalResearchSettings, researchQueue, classificationEnabled, dictionaryProvider, cloudResolver
+            catalog, defaultLLM, globalResearchSettings, classificationEnabled, dictionaryProvider, cloudResolver
         ) = snapshot
 
         guard let binding = catalog.bindings.first(where: { $0.id == platformID }), binding.collectionEnabled else {
@@ -120,13 +116,6 @@ extension LocalClassifierCoordinator {
         }
 
         var classifications: [VideoClassification] = []
-        var researchCandidates: [(
-            type: ClassifierTypeAsset,
-            classification: VideoClassification,
-            settings: ResearchSettings,
-            input: VideoClassificationPipeline.Input
-        )] = []
-
         for type in types {
             try shutdownSignal.checkCancellation()
             guard enabledClassificationPlatformIDs().contains(platformID) else { break }
@@ -195,7 +184,7 @@ extension LocalClassifierCoordinator {
                     Double(DispatchTime.now().uptimeNanoseconds - tPersist.uptimeNanoseconds) / 1_000_000).utf8))
             }
         }
-        let (saved, authorTasks) = try lock.withLock { () -> (WorkspaceCatalog, [ResearchTask]) in
+        let saved = try lock.withLock { () -> WorkspaceCatalog in
             try shutdownSignal.checkCancellation()
             let activeIDs = state.settings.classificationEnabled
                 ? Set(state.workspaceCatalog.classifierTypes.filter { !$0.isPaused }.map(\.id)) : []
@@ -209,27 +198,8 @@ extension LocalClassifierCoordinator {
                    classification.source != .humanCorrected { continue }
                 state.workspaceCatalog.upsertVideoClassification(classification)
             }
-            // Author accumulation (§8): every model classification adds its derived
-            // urgency to the creator's windowed accumulator; a creator that is
-            // consistently hard to classify crosses the threshold → an author task.
-            var authorTasks: [ResearchTask] = []
-            let nowMilliseconds = WorkspaceCatalog.now()
-            for candidate in researchCandidates where candidate.classification.source == .model {
-                guard activeIDs.contains(candidate.type.id) else { continue }
-                guard let meanUrgency = state.workspaceCatalog.recordCreatorResearchUrgency(
-                    classifierTypeID: candidate.type.id,
-                    creatorID: candidate.input.creatorID,
-                    urgency: Self.researchUrgency(for: candidate.classification),
-                    threshold: candidate.settings.authorThreshold,
-                    nowMilliseconds: nowMilliseconds
-                ), let creatorSubject = ResearchSubject(kind: .creator, subject: candidate.input.creatorID) else { continue }
-                authorTasks.append(.init(
-                    classifierTypeID: candidate.type.id, platformID: platformID, entryID: candidate.input.entryID,
-                    creatorID: candidate.input.creatorID, subjects: [creatorSubject], urgency: meanUrgency
-                ))
-            }
             try stateFile.save(state)
-            return (state.workspaceCatalog, authorTasks)
+            return state.workspaceCatalog
         }
 
         var projections: [String: VideoTagsProjection] = [:]
@@ -244,13 +214,6 @@ extension LocalClassifierCoordinator {
             "classified": "\(classifications.count)",
             "tagged": "\(projections.values.filter { !$0.tags.isEmpty }.count)"
         ])
-        if let researchQueue {
-            // The §8 accumulator is the ONLY automatic research trigger: a creator
-            // seen often enough whose videos stay hard to classify. Terms are never
-            // picked automatically (the model picked ordinary words, and low
-            // confidence marks vague titles, not unknown names) — the user adds them.
-            for task in authorTasks { _ = await researchQueue.enqueue(task) }
-        }
         return projections
     }
 

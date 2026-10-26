@@ -13,12 +13,6 @@ private final class CloudCalls: @unchecked Sendable {
     var count: Int { lock.withLock { requests.count } }
 }
 
-private actor ForbiddenLocalResolver: RetiredLocalEngineResolving {
-    private(set) var calls = 0
-    func resolveEngine(forModel fileName: String, configuration: TaggingSettings) async throws -> any ClassificationEngine {
-        calls += 1; throw ClassificationEngineError.notReady("Local inference must not run in this test")
-    }
-}
 
 private actor ParallelCloudCalls {
     private(set) var active = 0
@@ -156,14 +150,12 @@ final class ChatGPTClassificationTests: XCTestCase {
             datasetID: dataset.id, datasetRevision: dataset.revision, applicablePlatformIDs: ["youtube"],
             classificationProvider: .chatGPT, chatGPT: .init(accountID: status.accountID, model: "fixture")))
         try coordinator.updateWorkspaceCatalog(catalog)
-        let local = ForbiddenLocalResolver()
-        coordinator.setClassificationEngineEngineResolver(local); coordinator.setCloudEngineResolver(client)
+        coordinator.setCloudEngineResolver(client)
         for _ in 0..<3 {
             do { _ = try await coordinator.classifyVideo(platformID: "youtube", entryID: "v", creatorID: "c", title: "Chess"); XCTFail("Cloud failure must remain unresolved") }
             catch {}
         }
         XCTAssertEqual(calls.count, 1)
-        let localCalls = await local.calls; XCTAssertEqual(localCalls, 0)
         XCTAssertTrue(coordinator.snapshot().workspaceCatalog.videoClassifications.isEmpty)
         await client.retryFailedRequests()
         do { _ = try await coordinator.classifyVideo(platformID: "youtube", entryID: "v", creatorID: "c", title: "Chess"); XCTFail("Retry must still report the fixture failure") } catch {}
@@ -223,26 +215,6 @@ final class ChatGPTClassificationTests: XCTestCase {
         await client.shutdown()
     }
 
-    func testSchemaThreeMigratesWithoutChangingExistingGroupSettings() throws {
-        var state = LocalClassifierState()
-        let tree = TagTreeAsset(id: "tree", name: "Topics", nodes: [.init(id: "g", name: "Games")])
-        state.workspaceCatalog.trees.append(tree)
-        let dataset = state.workspaceCatalog.datasets[0]
-        state.workspaceCatalog.classifierTypes.append(.init(name: "Group", treeID: tree.id, treeRevision: tree.revision,
-            datasetID: dataset.id, datasetRevision: dataset.revision, applicablePlatformIDs: ["youtube"],
-            tagging: .init(speedQuality: .best, strictness: .strict, houseRules: "My rules")))
-        var object = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(state)) as? [String: Any])
-        object["schemaVersion"] = 3
-        var metadata = try XCTUnwrap(object["storageMetadata"] as? [String: Any]); metadata["schemaVersion"] = 3; object["storageMetadata"] = metadata
-        var catalog = try XCTUnwrap(object["workspaceCatalog"] as? [String: Any])
-        var groups = try XCTUnwrap(catalog["classifierTypes"] as? [[String: Any]])
-        groups[0].removeValue(forKey: "classificationProvider"); groups[0].removeValue(forKey: "chatGPT")
-        catalog["classifierTypes"] = groups; object["workspaceCatalog"] = catalog
-        let decoded = try JSONDecoder().decode(LocalClassifierState.self, from: JSONSerialization.data(withJSONObject: object))
-        XCTAssertEqual(decoded.schemaVersion, 4)
-        XCTAssertEqual(decoded.workspaceCatalog.classifierTypes[0].classificationProvider, .local)
-        XCTAssertEqual(decoded.workspaceCatalog.classifierTypes[0].tagging, state.workspaceCatalog.classifierTypes[0].tagging)
-    }
 
     func testWelcomeAcknowledgementPersistsAcrossRestartAndCancellingReauthorization() async throws {
         let root = try root(); defer { try? FileManager.default.removeItem(at: root) }

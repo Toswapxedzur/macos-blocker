@@ -54,14 +54,9 @@ final class ClassificationCancellationTests: XCTestCase {
         XCTAssertEqual(singles, 0, "cancelled batch must not retry each item")
         XCTAssertTrue(model.coordinator?.snapshot().workspaceCatalog.videoClassifications.isEmpty == true)
     }
-    func testCancelledResolverDoesNotSubstituteStubOrPersistIt() async throws {
-        struct Resolver: RetiredLocalEngineResolving {
-            func resolveEngine(forModel fileName: String, configuration: TaggingSettings) async throws -> any ClassificationEngine {
-                throw CancellationError()
-            }
-        }
+    func testCancelledEngineDoesNotPersistTags() async throws {
         let model = try fixture(), coordinator = try XCTUnwrap(model.coordinator)
-        coordinator.setClassificationEngineEngineResolver(Resolver())
+        coordinator.setClassificationEngine(CancellationFixtureLLM())
         do {
             _ = try await coordinator.classifyVideo(platformID: "youtube", entryID: "youtube:video:cancel00002", creatorID: "creator", title: "Games")
             XCTFail("cancelled model resolution must throw")

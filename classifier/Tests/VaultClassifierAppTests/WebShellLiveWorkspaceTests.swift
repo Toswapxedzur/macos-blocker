@@ -32,12 +32,12 @@ final class WebShellLiveWorkspaceTests: XCTestCase {
         let appURL = try XCTUnwrap(VaultClassifierBundledAssets.url(named: "app", extension: "js"))
         let script = try String(contentsOf: appURL, encoding: .utf8)
         XCTAssertTrue(script.contains("saveClassifierTypeTagging"))
-        XCTAssertTrue(script.contains("classifier-local-model-form-"))
-        XCTAssertTrue(script.contains("localModelResidentNote"))
+        XCTAssertTrue(script.contains("classifier-tagging-form-"))
+        XCTAssertFalse(script.contains("localModelResidentNote"))
         let sectionStart = try XCTUnwrap(script.range(of: "const tagging = classifierType.tagging"))
         let sectionEnd = try XCTUnwrap(script.range(of: "const researchFormID", range: sectionStart.upperBound..<script.endIndex))
         let section = String(script[sectionStart.lowerBound..<sectionEnd.lowerBound])
-        for field in ["tagging.speedQuality", "tagging.strictness", "\"houseRules\"", "speedQualityCards(", "strictnessOptions("] {
+        for field in ["tagging.strictness", "\"houseRules\"", "strictnessOptions("] {
             XCTAssertTrue(section.contains(field), "per-type field missing: \(field)")
         }
         for retired in ["saveTaggingSettings", "followGlobal", "allowDecline", "confidenceBand", "modelFileName", "thumbnailOcrEvidence", "toggleLocalModelAdvanced"] {
@@ -193,29 +193,14 @@ final class WebShellLiveWorkspaceTests: XCTestCase {
         XCTAssertTrue(strings.contains("Research consent in Settings applies to every group"))
     }
 
-    func testSettingsModelLibraryExposesUserInitiatedDownloadControls() throws {
-        let appURL = try XCTUnwrap(VaultClassifierBundledAssets.url(named: "app", extension: "js"))
-        let stringsURL = try XCTUnwrap(VaultClassifierBundledAssets.url(named: "strings", extension: "js"))
-        let script = try String(contentsOf: appURL, encoding: .utf8)
-        let strings = try String(contentsOf: stringsURL, encoding: .utf8)
-
-        // The Speed↔Quality cards carry each tier's download controls.
-        XCTAssertTrue(script.contains("speedQualityCards"))
+    func testRetiredLocalRuntimeHasNoProductionControls() throws {
+        let url = try XCTUnwrap(VaultClassifierBundledAssets.url(named: "app", extension: "js"))
+        let script = try String(contentsOf: url, encoding: .utf8)
+        for retired in ["speedQualityCards", "downloadModel", "cancelModelDownload", "deleteModelFile", "localModelResidentNote"] {
+            XCTAssertFalse(script.contains(retired), "Retired Local control remains: \(retired)")
+        }
         XCTAssertTrue(script.contains("strictnessOptions"))
-        XCTAssertTrue(script.contains("downloadModel"))
-        XCTAssertTrue(script.contains("cancelModelDownload"))
-        XCTAssertTrue(script.contains("deleteModelFile"))
-        XCTAssertTrue(script.contains("role=\"progressbar\""))
-        for tier in ["fast", "balanced", "best"] {
-            XCTAssertTrue(strings.contains("\"tagging.tier.\(tier).name\""))
-            XCTAssertTrue(strings.contains("\"tagging.tier.\(tier).desc\""))
-        }
-        for position in 1...5 {
-            XCTAssertTrue(strings.contains("\"tagging.strictness.\(position).name\""))
-            XCTAssertTrue(strings.contains("\"tagging.strictness.\(position).desc\""))
-        }
-        XCTAssertTrue(strings.contains("Model files download from Hugging Face when you choose Download."))
-        XCTAssertFalse(strings.contains("LATENCY NOT MEASURED"))
+        XCTAssertTrue(script.contains("cloud.chooseModel"))
     }
 
     func testCreateGroupFlowAsksOnlyForPlatformAndName() throws {

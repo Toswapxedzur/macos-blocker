@@ -12,7 +12,7 @@ private struct SettlementDictionary: DictionaryEvidenceProviding {
 private actor SettlementLLM: BatchClassificationEngine {
     enum Mode { case allFail, mixed, succeed, empty }
     enum Failure: Error { case injected }
-    nonisolated let modelVersion = "llamacpp/" + SpeedQualityDial.balanced.ggufFileName
+    nonisolated let modelVersion = "fixture/v1"
     private var mode: Mode
     private let beforeBatch: (@Sendable () -> Void)?
     private(set) var batchSizes: [Int] = []
@@ -65,7 +65,7 @@ final class ClassificationFailureSettlementTests: XCTestCase {
         catalog.trees.append(tree)
         let dataset = catalog.datasets[0]
         catalog.classifierTypes.append(.init(id: "settlement-type", name: "YouTube", treeID: tree.id, treeRevision: tree.revision,
-                                            datasetID: dataset.id, datasetRevision: dataset.revision, applicablePlatformIDs: ["youtube"]))
+                                            datasetID: dataset.id, datasetRevision: dataset.revision, applicablePlatformIDs: ["youtube"], chatGPT: .init(accountID: "fixture", model: "fixture")))
         try coordinator.updateWorkspaceCatalog(catalog)
         coordinator.setDictionaryProvider(SettlementDictionary())
         for item in [failed, good] {
@@ -92,32 +92,19 @@ final class ClassificationFailureSettlementTests: XCTestCase {
 
     func testAllErrorsSettleEveryOriginalEntryWithoutSavingFalseDecisions() async throws {
         let model = try makeModel(), engine = SettlementLLM(.allFail)
-        model.coordinator?.setClassificationEngine(engine)
+        model.coordinator?.setFixtureEngine(engine)
         let resolved = await model.resolveClassificationChunk(platformID: "youtube", [failed, good])
         XCTAssertEqual(Set(resolved.keys), Set([failed.entryID, good.entryID]))
         try assertTerminal(resolved[failed.entryID]); try assertTerminal(resolved[good.entryID])
         let batches = await engine.batchSizes, singles = await engine.singleTitles
-        XCTAssertEqual(batches, [2]); XCTAssertEqual(singles.count, 2)
-        XCTAssertTrue(singles[0].contains(failed.title)); XCTAssertTrue(singles[1].contains(good.title))
+        XCTAssertEqual(batches, [2]); XCTAssertTrue(singles.isEmpty, "failed cloud batches require Retry")
         try assertNoFailedDecision(model)
         XCTAssertTrue(model.coordinator?.snapshot().workspaceCatalog.videoClassifications.isEmpty == true)
     }
 
-    func testBatchFailurePreservesSuccessfulSingleAndSettlesOnlyFailedSingle() async throws {
-        let model = try makeModel(), engine = SettlementLLM(.mixed)
-        model.coordinator?.setClassificationEngine(engine)
-        let resolved = await model.resolveClassificationChunk(platformID: "youtube", [failed, good])
-        try assertTerminal(resolved[failed.entryID])
-        XCTAssertEqual(resolved[good.entryID]?.tags.map(\.id), ["games"])
-        XCTAssertEqual(resolved[good.entryID]?.confidenceByTagID["games"], 5)
-        XCTAssertEqual(resolved[good.entryID], model.coordinator?.cachedVideoTags(platformID: "youtube", entryID: good.entryID))
-        XCTAssertEqual(model.coordinator?.snapshot().workspaceCatalog.videoClassifications.map(\.entryID), [good.entryID])
-        try assertNoFailedDecision(model)
-    }
-
     func testRetryAfterTerminalFailureCanReplaceItWithRealModelResult() async throws {
         let model = try makeModel(), engine = SettlementLLM(.allFail)
-        model.coordinator?.setClassificationEngine(engine)
+        model.coordinator?.setFixtureEngine(engine)
         let first = await model.resolveClassificationChunk(platformID: "youtube", [failed])
         try assertTerminal(first[failed.entryID]); try assertNoFailedDecision(model)
         await engine.setMode(.succeed)
@@ -130,7 +117,7 @@ final class ClassificationFailureSettlementTests: XCTestCase {
     func testHumanCorrectionSurvivesFailedSiblingWithoutRunningItsModel() async throws {
         let model = try makeModel(), engine = SettlementLLM(.allFail)
         let coordinator = try XCTUnwrap(model.coordinator)
-        coordinator.setClassificationEngine(engine)
+        coordinator.setFixtureEngine(engine)
         let manual = try coordinator.submitCorrection(classifierTypeID: "settlement-type", platformID: "youtube", entryID: good.entryID, correctTagIDs: ["games"])
         let resolved = await model.resolveClassificationChunk(platformID: "youtube", [failed, good])
         try assertTerminal(resolved[failed.entryID])
@@ -145,7 +132,7 @@ final class ClassificationFailureSettlementTests: XCTestCase {
     func testCurrentCachedModelResultSurvivesFailedSibling() async throws {
         let model = try makeModel(), engine = SettlementLLM(.succeed)
         let coordinator = try XCTUnwrap(model.coordinator)
-        coordinator.setClassificationEngine(engine)
+        coordinator.setFixtureEngine(engine)
         _ = await model.resolveClassificationChunk(platformID: "youtube", [good])
         let cached = try XCTUnwrap(coordinator.cachedVideoTags(platformID: "youtube", entryID: good.entryID))
         await engine.setMode(.allFail)
@@ -164,7 +151,7 @@ final class ClassificationFailureSettlementTests: XCTestCase {
             settings.classificationEnabled = false
             try? coordinator.updateSettings(settings)
         })
-        coordinator.setClassificationEngine(engine)
+        coordinator.setFixtureEngine(engine)
         let resolved = await model.resolveClassificationChunk(platformID: "youtube", [failed, good])
         XCTAssertTrue(resolved.isEmpty)
         let singles = await engine.singleTitles
@@ -175,7 +162,7 @@ final class ClassificationFailureSettlementTests: XCTestCase {
     func testNaturalEmptyModelDecisionRemainsCachedInsteadOfBeingAFailureFallback() async throws {
         let model = try makeModel(), engine = SettlementLLM(.empty)
         let coordinator = try XCTUnwrap(model.coordinator)
-        coordinator.setClassificationEngine(engine)
+        coordinator.setFixtureEngine(engine)
         let resolved = await model.resolveClassificationChunk(platformID: "youtube", [failed])
         XCTAssertTrue(resolved[failed.entryID]?.tags.isEmpty == true)
         XCTAssertEqual(resolved[failed.entryID], coordinator.cachedVideoTags(platformID: "youtube", entryID: failed.entryID))
@@ -185,7 +172,7 @@ final class ClassificationFailureSettlementTests: XCTestCase {
 
     func testProductionChunkClearsInFlightKeysAfterTerminalErrors() async throws {
         let model = try makeModel(), engine = SettlementLLM(.allFail)
-        model.coordinator?.setClassificationEngine(engine)
+        model.coordinator?.setFixtureEngine(engine)
         model.inFlightVideoClassifications = Set([failed, good].map { VaultClassifierViewModel.inFlightKey("youtube", $0.entryID) })
         await model.classifyChunk(platformID: "youtube", [failed, good])
         XCTAssertTrue(model.inFlightVideoClassifications.isEmpty)

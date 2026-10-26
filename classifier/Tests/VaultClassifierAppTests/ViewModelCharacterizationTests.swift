@@ -237,20 +237,12 @@ final class ViewModelCharacterizationTests: XCTestCase {
         XCTAssertTrue(snapshot["issue"] is NSNull)
     }
 
-    func testSharedModelCatalogHasNoGlobalDials() throws {
+    func testLocalRuntimeSettingsAreAbsent() throws {
         let vm = try makeViewModel()
         let settings = try XCTUnwrap(vm.webSnapshot()["settings"] as? [String: Any])
-        XCTAssertNil(settings["localLLM"])
-        let library = try XCTUnwrap(settings["localModels"] as? [String: Any])
-        XCTAssertEqual(Set(library.keys), ["systemRAMGB", "modelLibrary"])
-        XCTAssertEqual((library["modelLibrary"] as? [[String: Any]])?.count, 3)
+        XCTAssertNil(settings["localModels"])
     }
 
-    // MARK: - Action routing
-
-    // Return-value contract: `true` means "re-send the snapshot" — including
-    // after an error, because the error is surfaced through `issue` inside that
-    // snapshot. Only a successful workspace switch returns `false` (no echo).
     func testUnknownActionSurfacesAnIssueAndAsksForARerender() throws {
         let vm = try makeViewModel()
         let before = vm.webSnapshot()
@@ -287,7 +279,7 @@ final class ViewModelCharacterizationTests: XCTestCase {
             "typeID": groups[0].id, "speedQuality": "fast", "strictness": "5", "houseRules": "prefer specific tags"
         ])
         XCTAssertNil(vm.issue)
-        XCTAssertEqual(vm.localState?.workspaceCatalog.classifierTypes[0].tagging.speedQuality, .fast)
+        XCTAssertEqual(vm.localState?.workspaceCatalog.classifierTypes[0].tagging.strictness, .broadest)
         XCTAssertEqual(vm.localState?.workspaceCatalog.classifierTypes[1].tagging, .init())
         let before = vm.localState
         _ = vm.performWebAction("saveTaggingSettings", data: ["speedQuality": "best", "strictness": "1"])
@@ -307,7 +299,7 @@ final class ViewModelCharacterizationTests: XCTestCase {
             "confirmDeleteClassifierType", "createProviderProfile", "testProviderProfile", "updateProviderConnection",
             "probeProviderModelCatalog", "confirmDeleteProviderProfile", "rearrangeTree",
             "addTag", "moveTag", "renameTag", "updateTag", "connectTag", "disconnectTag", "deleteTag",
-            "downloadModel", "cancelModelDownload", "deleteModelFile",
+
             "deleteKnowledgeEntry", "addKnowledgeCreator", "editKnowledgeEntry", "retryFailedResearch", "saveResearchSettings", "saveClassifierTypeTagging", "saveClassifierTypeResearch", "setBackupOwnerCode", "unlockBackup",
             "saveBackup", "backupNow",
         ]

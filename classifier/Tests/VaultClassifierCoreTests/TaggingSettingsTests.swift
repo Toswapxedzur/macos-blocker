@@ -1,8 +1,8 @@
 import XCTest
 @testable import VaultClassifierCore
 
-/// The two dials (2026-09-23) and what old state decodes to.
-final class LocalModelSettingsTests: XCTestCase {
+/// Shared cloud tagging controls and bounded state decoding.
+final class TaggingSettingsTests: XCTestCase {
     func testOptionalTagBoundsFollowEachDialDefaultIndependently() throws {
         for dial in StrictnessDial.allCases {
             let defaults = TaggingSettings(strictness: dial)
@@ -39,13 +39,6 @@ final class LocalModelSettingsTests: XCTestCase {
         XCTAssertNil(StrictnessDial.resolve(0)); XCTAssertNil(StrictnessDial.resolve(6)); XCTAssertNil(StrictnessDial.resolve(nil))
     }
 
-    func testSpeedQualityTiersNameOneCatalogModelEach() {
-        XCTAssertEqual(SpeedQualityDial.default, .balanced)
-        XCTAssertEqual(SpeedQualityDial.fast.ggufFileName, "Qwen2.5-3B-Instruct-Q4_K_M.gguf")
-        XCTAssertEqual(SpeedQualityDial.balanced.ggufFileName, "Qwen2.5-7B-Instruct-Q4_K_M.gguf")
-        XCTAssertEqual(SpeedQualityDial.best.ggufFileName, "Qwen2.5-14B-Instruct-Q4_K_M.gguf")
-        XCTAssertNil(SpeedQualityDial.resolve("turbo")); XCTAssertNil(SpeedQualityDial.resolve(" "))
-    }
 
     func testNearestPositionsForPreDialValues() {
         XCTAssertNil(StrictnessDial.nearest(maximumTags: nil, minimumTags: nil, extraTagMinimumOdds: nil))
@@ -56,46 +49,10 @@ final class LocalModelSettingsTests: XCTestCase {
         XCTAssertEqual(StrictnessDial.nearest(maximumTags: 5, minimumTags: nil, extraTagMinimumOdds: 0.80), .broad)
         XCTAssertEqual(StrictnessDial.nearest(maximumTags: 3, minimumTags: nil, extraTagMinimumOdds: nil), .balanced)
 
-        XCTAssertNil(SpeedQualityDial.nearest(modelFileName: nil)); XCTAssertNil(SpeedQualityDial.nearest(modelFileName: ""))
-        XCTAssertEqual(SpeedQualityDial.nearest(modelFileName: "Qwen2.5-7B-Instruct-Q4_K_M.gguf"), .balanced)
-        XCTAssertEqual(SpeedQualityDial.nearest(modelFileName: "Llama-3.2-3B-Instruct-Q4_K_M.gguf"), .fast)
-        XCTAssertEqual(SpeedQualityDial.nearest(modelFileName: "Qwen2.5-14B-Instruct-Q4_K_M.gguf"), .best)
-        XCTAssertEqual(SpeedQualityDial.nearest(modelFileName: "Mistral-7B-Instruct-v0.3-Q4_K_M.gguf"), .balanced)
-        XCTAssertNil(SpeedQualityDial.nearest(modelFileName: "mystery.gguf"))
     }
 
     // MARK: - TaggingSettings
 
-    func testSettingsDeriveEverythingFromTheDials() {
-        let settings = TaggingSettings(speedQuality: .best, strictness: .strict, houseRules: String(repeating: "x", count: 4_100))
-        XCTAssertEqual(settings.modelFileName, "Qwen2.5-14B-Instruct-Q4_K_M.gguf")
-        XCTAssertEqual(settings.maximumTags, 3); XCTAssertEqual(settings.minimumTags, 0)
-        XCTAssertEqual(settings.extraTagMinimumOdds, 0.97)
-        XCTAssertEqual(settings.houseRules.count, 4_000)
-        // Runtime constants.
-        XCTAssertEqual(settings.contextTokens, 4_096); XCTAssertEqual(settings.batchTokens, 512)
-        XCTAssertTrue(settings.gpuOffload); XCTAssertEqual(settings.maximumOutputTokens, 16)
-        XCTAssertEqual(settings.temperature, 0); XCTAssertTrue(settings.allowDecline)
-        XCTAssertEqual(settings.confidenceThresholds, [0.20, 0.40, 0.60, 0.85])
-        XCTAssertEqual(settings.maxResidentModels, 2)
-        XCTAssertEqual(TaggingSettings(), TaggingSettings(speedQuality: .balanced, strictness: .balanced, houseRules: ""))
-    }
-
-    func testPreDialSettingsDecodeToTheNearestPositionsAndNeverReencodeOldKeys() throws {
-        let legacy = Data(#"{"modelFileName":"Qwen2.5-7B-Instruct-Q4_K_M.gguf","engineEnabled":true,"contextTokens":4096,"maximumTags":3,"minimumTags":0,"extraTagMinimumOdds":0.97,"allowDecline":true,"confidenceThresholds":[0.2,0.4,0.6,0.85],"houseRules":"rule","maxResidentModels":2}"#.utf8)
-        let decoded = try JSONDecoder().decode(TaggingSettings.self, from: legacy)
-        XCTAssertEqual(decoded, TaggingSettings(speedQuality: .balanced, strictness: .strict, houseRules: "rule"))
-        let reencoded = String(decoding: try JSONEncoder().encode(decoded), as: UTF8.self)
-        for retired in ["modelFileName", "engineEnabled", "contextTokens", "maximumTags", "minimumTags", "extraTagMinimumOdds", "allowDecline", "confidenceThresholds", "maxResidentModels"] {
-            XCTAssertFalse(reencoded.contains(retired), "retired key written back: \(retired)")
-        }
-        XCTAssertEqual(try JSONDecoder().decode(TaggingSettings.self, from: Data(reencoded.utf8)), decoded)
-        // An empty pre-dial state lands on the defaults.
-        XCTAssertEqual(try JSONDecoder().decode(TaggingSettings.self, from: Data("{}".utf8)), TaggingSettings())
-        // A stored dial wins over leftover pre-dial keys.
-        let mixed = try JSONDecoder().decode(TaggingSettings.self, from: Data(#"{"strictness":4,"maximumTags":1}"#.utf8))
-        XCTAssertEqual(mixed.strictness, .broad)
-    }
 
     func testRetiredPackageUpdatePolicyIsIgnoredWithoutLosingActiveSettings() throws {
         let old = Data(#"{"packageUpdateMode":{"invalid":true},"classificationEnabled":false,"research":{"enabled":true},"dictionaries":{"creatorMode":"full","creatorCacheSize":27}}"#.utf8)

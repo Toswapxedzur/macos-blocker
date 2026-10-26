@@ -5,14 +5,14 @@ import Foundation
 ///
 /// Live requests arrive one card at a time (the page hydrates cards in
 /// separate ticks, so the extension's per-tick batcher sees one item each), and
-/// the engine serializes everything on a single llama context. Without this
+/// cloud requests benefit from bounded batches. Without this
 /// queue each single-item request ran alone, paying the full unbatchable prompt
 /// prefill by itself. Policy:
 ///
 /// * If the engine is busy when a request arrives, the items just join the
 ///   pending queue; nothing else happens.
 /// * When the engine frees, drain **everything waiting**, up to `chunkSize` per
-///   multi-sequence pass, and keep draining until the queue is empty — items
+///   provider batch, and keep draining until the queue is empty — items
 ///   that arrive mid-drain join the next pass.
 /// * When idle, the first arrival waits a short `arrivalWindow` so its
 ///   neighbours (the rest of the screen) can join it before the engine starts.

@@ -23,3 +23,20 @@ public struct StubClassificationEngine: ClassificationEngine {
         return LLMClassificationResult(tags: Array(chosen))
     }
 }
+
+/// Hermetic provider adapter with real cloud cache currency and no network.
+struct FixtureCloudResolver: CloudClassificationEngineResolving {
+    let engine: any ClassificationEngine
+    func resolveCloudEngine(for type: ClassifierTypeAsset) async throws -> any ClassificationEngine {
+        FixtureCloudEngine(engine: engine, modelVersion: type.cloudModelVersion)
+    }
+}
+private struct FixtureCloudEngine: BatchClassificationEngine {
+    let engine: any ClassificationEngine
+    let modelVersion: String
+    func classify(_ request: LLMClassificationRequest) async throws -> LLMClassificationResult { try await engine.classify(request) }
+    func classifyBatch(_ requests: [LLMClassificationRequest]) async throws -> [LLMClassificationResult] { try await engine.classifyAll(requests) }
+}
+extension LocalClassifierCoordinator {
+    func setFixtureEngine(_ engine: any ClassificationEngine) { setCloudEngineResolver(FixtureCloudResolver(engine: engine)) }
+}

@@ -21,32 +21,12 @@ class PackagingTests(unittest.TestCase):
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory(prefix='vault-release-fixture-')
         self.base = Path(self.temporary.name)
-        self.prefix = self.base / 'runtime'
         self.arch = subprocess.check_output(['uname', '-m'], text=True).strip()
-        (self.prefix / 'include').mkdir(parents=True)
-        (self.prefix / 'lib').mkdir()
-        (self.prefix / 'include/llama.h').write_text('fixture')
-        (self.prefix / 'include/ggml.h').write_text('fixture')
-        source = self.base / 'library.c'
-        source.write_text('int fixture(void) { return 0; }')
-        names = ['libllama.0.dylib', 'libggml.0.dylib', 'libggml-base.0.dylib', 'libomp.dylib',
-                 'libggml-cpu.so', 'libggml-blas.so']
-        if self.arch == 'arm64':
-            names.append('libggml-metal.so')
-        for name in names:
-            subprocess.run(['xcrun', 'clang', '-dynamiclib', '-mmacosx-version-min=13.3',
-                            '-Wl,-headerpad_max_install_names', '-install_name', str(self.prefix / 'lib' / name),
-                            str(source), '-o', str(self.prefix / 'lib' / name)], check=True, capture_output=True)
-        self.main = self.base / 'FixtureVault'
-        source.write_text('extern int fixture(void); int main(void) { return fixture(); }')
-        subprocess.run(['xcrun', 'clang', '-mmacosx-version-min=13.3', '-Wl,-headerpad_max_install_names',
-                        str(source), str(self.prefix / 'lib/libllama.0.dylib'), '-o', str(self.main)],
-                       check=True, capture_output=True)
-        notices = self.prefix / 'share/vault-notices'
-        notices.mkdir(parents=True)
-        for name in ['llama-LICENSE.txt', 'ggml-LICENSE.txt', 'OpenMP-LICENSE.txt']:
-            (notices / name).write_text('fixture notice')
-        self.receipt()
+        source = self.base / 'main.c'
+        source.write_text('int main(void) { return 0; }')
+        self.main = self.base / 'main'
+        subprocess.run(['xcrun', 'clang', '-mmacosx-version-min=13.3', str(source), '-o', str(self.main)], check=True, capture_output=True)
+        self.env = dict(os.environ)
         self.app = self.base / 'FixtureVault.app'
         (self.app / 'Contents/MacOS').mkdir(parents=True)
         (self.app / 'Contents/Resources').mkdir()
@@ -60,45 +40,16 @@ class PackagingTests(unittest.TestCase):
     def tearDown(self):
         self.temporary.cleanup()
 
-    def receipt(self):
-        files = {str(path.relative_to(self.prefix)): verifier.digest(path) for path in self.prefix.rglob('*')
-                 if path.is_file() and path.name != 'vault-runtime.json'}
-        receipt = dict(verifier.CONFIG, schema=1, architecture=self.arch, files=files)
-        (self.prefix / 'vault-runtime.json').write_text(json.dumps(receipt))
-
-    def bundle(self):
-        return subprocess.run(['/bin/bash', str(ROOT / 'classifier/scripts/bundle-llama-runtime.sh'),
-                               str(self.app), 'FixtureVault'], env=self.env, capture_output=True, text=True)
-
-    def test_stock_bash_real_binaries_are_self_contained_and_executable(self):
-        result = self.bundle()
-        self.assertEqual(result.returncode, 0, result.stderr)
+    def test_cloud_only_app_is_self_contained_and_executable(self):
         verifier.verify_app(self.app, self.arch)
-        signed = subprocess.run(['codesign', '--force', '--deep', '--sign', '-', str(self.app)],
-                                text=True, capture_output=True)
-        self.assertEqual(signed.returncode, 0, signed.stderr)
-        # Prove the executable uses the bundled copy after its build prefix moves.
-        self.prefix.rename(self.base / 'runtime-unavailable')
         subprocess.run([str(self.app / 'Contents/MacOS/FixtureVault')], check=True, capture_output=True)
-        self.assertTrue((self.app / 'Contents/Resources/ThirdPartyNotices/OpenMP-LICENSE.txt').is_file())
 
-    def test_newer_dependency_is_refused_before_copy(self):
-        target = self.prefix / 'lib/libomp.dylib'
-        subprocess.run(['xcrun', 'clang', '-dynamiclib', '-mmacosx-version-min=14.0',
-                        '-x', 'c', '-o', str(target), '-'], input='int x(void){return 0;}', text=True,
-                       check=True, capture_output=True)
-        self.receipt()
-        result = self.bundle()
-        self.assertNotEqual(result.returncode, 0)
-        self.assertIn('unsupported minimum OS', result.stderr)
-        self.assertFalse((self.app / 'Contents/Frameworks').exists())
-
-    def test_tampered_runtime_is_refused(self):
-        with (self.prefix / 'lib/libomp.dylib').open('ab') as stream:
-            stream.write(b'tampered')
-        result = self.bundle()
-        self.assertNotEqual(result.returncode, 0)
-        self.assertIn('hash mismatch', result.stderr)
+    def test_retired_runtime_is_rejected(self):
+        frameworks = self.app / 'Contents/Frameworks'
+        frameworks.mkdir()
+        shutil.copy2(self.main, frameworks / 'libllama.0.dylib')
+        with self.assertRaisesRegex(ValueError, 'retired local inference'):
+            verifier.verify_app(self.app, self.arch)
 
     def test_release_builder_resolves_swiftpm_output_for_architecture(self):
         commands = self.base / 'commands'

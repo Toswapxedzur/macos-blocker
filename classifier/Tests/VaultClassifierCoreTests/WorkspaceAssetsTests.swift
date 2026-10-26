@@ -211,18 +211,16 @@ final class WorkspaceAssetsTests: XCTestCase {
         let legacy = Data(#"{"id":"type","name":"Type","treeID":"tree","treeRevision":1,"datasetID":"dataset","datasetRevision":1,"applicablePlatformID":"youtube","order":0}"#.utf8)
         let decodedLegacy = try JSONDecoder().decode(ClassifierTypeAsset.self, from: legacy)
         XCTAssertEqual(decodedLegacy.tagging, TaggingSettings())
-        XCTAssertEqual(decodedLegacy.modelFileName, SpeedQualityDial.balanced.ggufFileName)
         XCTAssertNil(decodedLegacy.researchEnabled)
 
         let value = ClassifierTypeAsset(
             id: "type", name: "Type", treeID: "tree", treeRevision: 1,
             datasetID: "dataset", datasetRevision: 1, applicablePlatformIDs: ["youtube"],
-            tagging: .init(speedQuality: .best, strictness: .strict, houseRules: "Prefer documentaries."),
+            tagging: .init(strictness: .strict, houseRules: "Prefer documentaries."),
             researchEnabled: false
         )
         let roundTrip = try JSONDecoder().decode(ClassifierTypeAsset.self, from: JSONEncoder().encode(value))
         XCTAssertEqual(roundTrip.tagging, value.tagging)
-        XCTAssertEqual(roundTrip.modelFileName, "Qwen2.5-14B-Instruct-Q4_K_M.gguf")
         XCTAssertEqual(roundTrip.researchEnabled, false)
     }
 
@@ -232,7 +230,6 @@ final class WorkspaceAssetsTests: XCTestCase {
         let old = #"{"id":"type","name":"Type","treeID":"tree","treeRevision":1,"datasetID":"dataset","datasetRevision":1,"applicablePlatformID":"youtube","order":0,"modelFileName":"Qwen2.5-3B-Instruct-Q4_K_M.gguf","localModelOverrides":{"allowDecline":false,"maximumTags":1},"researchOverrides":{"enabled":false,"requestsPerMinute":6,"dailyTokenLimit":5000,"cooldownHours":24},"presetID":"gentle"}"#
         let decoded = try JSONDecoder().decode(ClassifierTypeAsset.self, from: Data(old.utf8))
         XCTAssertEqual(decoded.tagging, TaggingSettings(), "retired overrides reconcile only while decoding the complete state")
-        XCTAssertEqual(decoded.modelFileName, SpeedQualityDial.balanced.ggufFileName)
         XCTAssertEqual(decoded.researchEnabled, false)
         let reencoded = String(decoding: try JSONEncoder().encode(decoded), as: UTF8.self)
         for retired in ["presetID", "researchOverrides", "\"modelFileName\"", "allowDecline", "maximumTags"] {

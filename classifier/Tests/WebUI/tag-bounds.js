@@ -3,12 +3,12 @@ window.runTagBoundsTests=async()=>{
   const expect=(c,label)=>{if(!c)throw Error(label);results.push('PASS '+label)};
   const poll=async(fn)=>{const until=performance.now()+5000;while(!fn()){if(performance.now()>until)throw Error('Timed out');await new Promise(r=>setTimeout(r,20))}};
   const tick=()=>new Promise(r=>setTimeout(r,360));
-  const form='[data-form-id="classifier-local-model-form-group-1"]';
+  const form='[data-form-id="classifier-tagging-form-group-1"]';
   const minimum=form+' [data-field="minimumTagsOverride"]',maximum=form+' [data-field="maximumTagsOverride"]';
   const input=(selector,value)=>{const c=q(selector);c.focus();c.value=value;c.dispatchEvent(new InputEvent('input',{bubbles:true}));};
   const dial=position=>{const c=q(form+' [data-field="strictness"][value="'+position+'"]');c.checked=true;c.dispatchEvent(new Event('change',{bubbles:true}));};
-  const saves=()=>commands.filter(c=>c.action==='saveClassifierTypeLocalModel').length;
-  const model=()=>testState.assets.classifierTypes[0].localModel;
+  const saves=()=>commands.filter(c=>c.action==='saveClassifierTypeTagging').length;
+  const model=()=>testState.assets.classifierTypes[0].tagging;
   await poll(()=>q('[data-action="selectType"]'));q('[data-action="selectType"]').click();
   const more='[data-expand="type-more:group-1"]';
   expect(!q(more).open && q(form+' [data-field="houseRules"]').checkVisibility()
@@ -37,9 +37,9 @@ window.runTagBoundsTests=async()=>{
   await poll(()=>model().minimumTagsOverride===3);await new Promise(r=>setTimeout(r,500));ackDelay=0;
   q(more+' summary').click();pushSnapshot();
   expect(!q(more).open && q(more+' summary').textContent.includes('3–3'),'collapsed More preserves its custom tag-count summary through snapshots');
-  testState.assets.classifierTypes.push({id:'group-2',name:'Other group',treeID:'tree-1',applicablePlatformIDs:['reddit'],localModel:{speedQuality:'balanced',strictness:3,houseRules:''},researchEnabled:null,order:1});pushSnapshot();
+  testState.assets.classifierTypes.push({id:'group-2',name:'Other group',treeID:'tree-1',applicablePlatformIDs:['reddit'],tagging:{speedQuality:'balanced',strictness:3,houseRules:''},researchEnabled:null,order:1});pushSnapshot();
   q('[data-action="selectType"][data-type-id="group-2"]').click();q('[data-expand="type-more:group-2"] summary').click();
-  expect(q('[data-form-id="classifier-local-model-form-group-2"] [data-field="minimumTagsOverride"]').value==='' && model().minimumTagsOverride===3,'another group keeps its own blank bounds');
+  expect(q('[data-form-id="classifier-tagging-form-group-2"] [data-field="minimumTagsOverride"]').value==='' && model().minimumTagsOverride===3,'another group keeps its own blank bounds');
   expect(uiErrors.length===0,'no renderer errors');
   return results;
 };

@@ -85,8 +85,7 @@ final class ChatGPTLiveAcceptanceTests: XCTestCase {
                 datasetID: dataset.id, datasetRevision: dataset.revision, applicablePlatformIDs: ["youtube"],
                 classificationProvider: .chatGPT, chatGPT: .init(accountID: status.accountID, model: model.identifier)))
             try coordinator.updateWorkspaceCatalog(catalog); coordinator.setCloudEngineResolver(client)
-            let local = LiveForbiddenLocalResolver(); coordinator.setClassificationEngineEngineResolver(local)
-            let titles = ["An introduction to quadratic equations", "Minecraft redstone door tutorial", "How to bake sourdough bread"]
+                let titles = ["An introduction to quadratic equations", "Minecraft redstone door tutorial", "How to bake sourdough bread"]
             let expected = ["Mathematics", "Gaming", "Cooking"]
             let inputs = titles.enumerated().map {
                 VideoClassificationPipeline.Input(title: $0.element, entryID: "diagnostic-\($0.offset)", creatorID: "diagnostic-creator")
@@ -106,17 +105,15 @@ final class ChatGPTLiveAcceptanceTests: XCTestCase {
             let dispatched = await client.status().requestsToday - requestsBefore
             XCTAssertEqual(cacheHits, inputs.count)
             XCTAssertEqual(dispatched, 1, "Browser cache lookups must not dispatch another provider request")
-            let localCalls = await local.calls
             let rows: [[String: Any]] = titles.indices.map { index in
                 ["title": titles[index], "expected": expected[index], "tags": output["diagnostic-\(index)"]?.tags.map(\.name) ?? []]
             }
             let result: [String: Any] = ["model": model.identifier, "searchEnabled": false,
-                "seconds": inferenceSeconds, "dispatchedRequests": dispatched, "cacheLookupHits": cacheHits, "cacheOnlyRepeat": dispatched == 1 && cacheHits == inputs.count, "localEngineResolutions": localCalls,
+                "seconds": inferenceSeconds, "dispatchedRequests": dispatched, "cacheLookupHits": cacheHits, "cacheOnlyRepeat": dispatched == 1 && cacheHits == inputs.count,
                 "cases": rows, "scope": "three diagnostic examples; not a production accuracy benchmark"]
             try JSONSerialization.data(withJSONObject: result, options: [.prettyPrinted, .sortedKeys]).write(to: run.appendingPathComponent("result.json"), options: .atomic)
             let finished: [String: Any] = ["status": "response-received", "resultPath": run.appendingPathComponent("result.json").path]
             try JSONSerialization.data(withJSONObject: finished).write(to: root.appendingPathComponent("live-status.json"), options: .atomic)
-            XCTAssertEqual(localCalls, 0)
             for index in titles.indices { XCTAssertTrue(output["diagnostic-\(index)"]?.tags.contains { $0.name == expected[index] } == true, "Live diagnostic \(index) did not receive the expected topic") }
             try await client.acknowledgePlanUsage()
             await client.shutdown()
@@ -128,12 +125,6 @@ final class ChatGPTLiveAcceptanceTests: XCTestCase {
     }
 }
 
-private actor LiveForbiddenLocalResolver: RetiredLocalEngineResolving {
-    private(set) var calls = 0
-    func resolveEngine(forModel fileName: String, configuration: TaggingSettings) async throws -> any ClassificationEngine {
-        calls += 1; throw ClassificationEngineError.notReady("Local inference is forbidden in live cloud acceptance.")
-    }
-}
 
 private final class LiveDiagnosticWire: @unchecked Sendable {
     private let lock = NSLock()

@@ -24,30 +24,8 @@ final class ClassifierTypeTaggingWebInputTests: XCTestCase {
             ["maximumTagsOverride": "oops"]
         ] { XCTAssertThrowsError(try parse(invalid), "invalid tag counts must not become defaults: \(invalid)") }
     }
-    func testModelLibraryPayloadMarksDownloadedCatalogFileAndProgress() throws {
-        let downloadedEntry = LocalModelCatalog.entry(for: .fast)
-        let downloadingEntry = LocalModelCatalog.entry(for: .balanced)
-        let payload = VaultClassifierViewModel.modelLibraryPayload(
-            availableModelFiles: ["manual.gguf", downloadedEntry.ggufFileName],
-            downloadFractions: [downloadingEntry.id: 0.4],
-            systemRAMGB: 16
-        )
 
-        XCTAssertEqual(payload.count, 3, "one row per Speed↔Quality tier")
-        let downloaded = try XCTUnwrap(payload.first { ($0["id"] as? String) == downloadedEntry.id })
-        XCTAssertEqual((downloaded["state"] as? [String: Any])?["kind"] as? String, "downloaded")
-        XCTAssertEqual(downloaded["tier"] as? String, "fast")
-        let downloading = try XCTUnwrap(payload.first { ($0["id"] as? String) == downloadingEntry.id })
-        XCTAssertEqual((downloading["state"] as? [String: Any])?["kind"] as? String, "downloading")
-        XCTAssertEqual((downloading["state"] as? [String: Any])?["fraction"] as? Double, 0.4)
-        XCTAssertEqual(downloading["tier"] as? String, "balanced")
-        XCTAssertNil(downloaded["latencyBand"], "the unmeasured latency band was retired")
-        XCTAssertEqual(payload.filter { ($0["recommended"] as? Bool) == true }.map { $0["tier"] as? String }, ["balanced"])
-    }
-
-    // MARK: - Per-type local model form
-
-    func testBothDialPositionsAreRequiredAndEmptyRulesAreIndependent() throws {
+    func testStrictnessIsRequiredAndEmptyRulesAreIndependent() throws {
         XCTAssertThrowsError(try VaultClassifierViewModel.parseClassifierTypeTaggingWebInput([
             "typeID": "type", "speedQuality": "", "strictness": ""
         ]))
@@ -57,7 +35,7 @@ final class ClassifierTypeTaggingWebInputTests: XCTestCase {
         let input = try VaultClassifierViewModel.parseClassifierTypeTaggingWebInput([
             "typeID": "type", "speedQuality": "best", "strictness": "2", "houseRules": ""
         ])
-        XCTAssertEqual(input.settings, TaggingSettings(speedQuality: .best, strictness: .strict))
+        XCTAssertEqual(input.settings, TaggingSettings(strictness: .strict))
     }
 
     func testUnknownPositionsAreRefused() {

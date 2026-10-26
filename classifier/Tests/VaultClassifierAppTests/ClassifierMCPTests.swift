@@ -94,7 +94,7 @@ final class ClassifierMCPTests: XCTestCase {
         let types = try XCTUnwrap(vm.mcpSnapshot(section: "assets.classifierTypes"))
         XCTAssertEqual(Set(types.keys), ["assets.classifierTypes"])
         let settings = try XCTUnwrap(vm.mcpSnapshot(section: "settings"))
-        XCTAssertNotNil((settings["settings"] as? [String: Any])?["localModels"])
+        XCTAssertNil((settings["settings"] as? [String: Any])?["localModels"])
         let all = try XCTUnwrap(vm.mcpSnapshot(section: "all"))
         XCTAssertEqual(Set(all.keys), Set(vm.webSnapshot().keys))
         XCTAssertNil(vm.mcpSnapshot(section: "nope"))

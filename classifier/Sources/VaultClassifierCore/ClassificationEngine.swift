@@ -1,10 +1,6 @@
 import Foundation
 
-// The on-device LLM inference boundary for the local-model rework. The rest of
-// the pipeline (prompt assembly, mapping, storage) is written against this
-// protocol so it stays runtime-agnostic and fully testable; the real MLX-backed
-// implementation plugs in behind it, and a deterministic stub stands in until
-// then (and in tests).
+// Provider-neutral inference contracts used by the classification pipeline.
 
 /// A tag the model may choose, presented by readable **name** (a small model
 /// reasons over meaning, not opaque ids). The pipeline maps names back to ids.
@@ -97,10 +93,7 @@ public protocol ClassificationEngine: Sendable {
     func classify(_ request: LLMClassificationRequest) async throws -> LLMClassificationResult
 }
 
-/// An engine that can decode MANY classification requests in one multi-sequence
-/// pass (LATENCY-REFINEMENT Phase 1). Generation is memory-bandwidth-bound — each
-/// step re-reads all the weights — so advancing N videos per step costs about the
-/// same as one. Results are positional: `result[i]` answers `requests[i]`.
+/// Batched inference. Results preserve request positions.
 public protocol BatchClassificationEngine: ClassificationEngine {
     func classifyBatch(_ requests: [LLMClassificationRequest]) async throws -> [LLMClassificationResult]
 }

@@ -192,10 +192,7 @@ public struct TagBounds: Codable, Equatable, Sendable {
     }
 }
 
-/// The local model's settings: group dials, house rules and optional tag bounds. Everything else
-/// the engine needs is a constant here (owner decision 2026-09-23: replace all
-/// parameters with Speed↔Quality and Strict↔Broad). State written before that
-/// day decodes to the nearest dial positions.
+/// Per-group tagging strictness, house rules and optional tag bounds.
 public struct TaggingSettings: Codable, Equatable, Sendable {
     public var strictness: StrictnessDial
     public var houseRules: String
@@ -223,8 +220,8 @@ public struct TaggingSettings: Codable, Equatable, Sendable {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         self.init(strictness: StrictnessDial.resolve(try c.decodeIfPresent(Int.self, forKey: .strictness)) ?? .default,
             houseRules: try c.decodeIfPresent(String.self, forKey: .houseRules) ?? "",
-            minimumTagsOverride: try c.decodeIfPresent(Int.self, forKey: .minimumTagsOverride),
-            maximumTagsOverride: try c.decodeIfPresent(Int.self, forKey: .maximumTagsOverride))
+            minimumTagsOverride: try? c.decodeIfPresent(Int.self, forKey: .minimumTagsOverride),
+            maximumTagsOverride: try? c.decodeIfPresent(Int.self, forKey: .maximumTagsOverride))
     }
 }
 
