@@ -39,12 +39,13 @@ public struct APIKeyClassificationSettings: Codable, Equatable, Sendable {
 }
 
 public enum CloudClassificationError: Error, LocalizedError, Equatable, Sendable {
-    case notConfigured, signInRequired, usageLimit, invalidOutput
+    case notConfigured, signInRequired, usageLimit, invalidOutput, searchUnavailable
     public var errorDescription: String? {
         switch self {
         case .notConfigured: return "Choose a connection and model for tagging."
         case .signInRequired: return "Connect the selected ChatGPT account again."
         case .usageLimit: return "The classification request limit has been reached. Retry later or change the limit."
+        case .searchUnavailable: return "This model cannot combine web search with structured tagging. Turn off web search or choose another model."
         case .invalidOutput: return "The provider did not return valid classification tags. Retry the request."
         }
     }

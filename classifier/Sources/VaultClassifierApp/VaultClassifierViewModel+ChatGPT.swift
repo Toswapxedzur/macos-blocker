@@ -92,7 +92,7 @@ extension VaultClassifierViewModel {
             guard parts.count == 2, let profile = catalog.providerProfiles.first(where: { $0.id == parts[0] }),
                   APIKeyClassificationClient.supports(profile.type), profile.credential?.isEmpty == false,
                   providerModelCatalogs[profile.id]?.contains(where: { $0.id == parts[1] }) == true else { throw CloudClassificationError.notConfigured }
-            if profile.type == .gemini && searchEnabled && !(parts[1].hasPrefix("gemini-3") || parts[1].hasPrefix("gemini-4")) { throw CloudClassificationError.notConfigured }
+            if profile.type == .gemini && searchEnabled && !(parts[1].hasPrefix("gemini-3") || parts[1].hasPrefix("gemini-4")) { throw CloudClassificationError.searchUnavailable }
             catalog.classifierTypes[index].classificationProvider = .apiKey
             catalog.classifierTypes[index].apiKey = .init(profileID: profile.id, model: parts[1], searchEnabled: searchEnabled)
         } else { throw CloudClassificationError.notConfigured }

@@ -13,6 +13,9 @@ window.runAPIConnectionTests = async () => {
   expect(q('[data-field="credential"]').type==='password' && q('[data-field="credential"]').value==='fixture-key-not-real','stored API key is masked and retained for connection edits');
   expect(q('[data-provider-panel][data-provider-id="provider-1"]'),'OpenAI key appears in its own connection');
   expect(q('[data-action="probeProviderModelCatalog"]'),'key connection exposes model-list fetch');
+  const endpoint=q('[data-field="customEndpoint"]');endpoint.value='https://fixture.example/api';endpoint.dispatchEvent(new InputEvent('input',{bubbles:true}));
+  await new Promise(r=>setTimeout(r,350));
+  expect(testState.assets.providerProfiles[0].credential==='fixture-key-not-real','editing another field preserves the saved key');
   const key=q('[data-field="credential"]');key.focus();key.value='updated-fixture-key';key.dispatchEvent(new InputEvent('input',{bubbles:true}));
   pushSnapshot();await tick();expect(q('[data-field="credential"]').value==='updated-fixture-key','snapshots preserve unsaved key draft');
   await new Promise(r=>setTimeout(r,350));

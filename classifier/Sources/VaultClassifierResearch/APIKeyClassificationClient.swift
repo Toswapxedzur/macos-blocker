@@ -116,7 +116,7 @@ struct APIKeyClassificationEngine: BatchClassificationEngine {
         let instructions = body["instructions"] as! String
         let schema = ((body["text"] as! [String: Any])["format"] as! [String: Any])["schema"]!
         if profile.type == .gemini {
-            if configuration.searchEnabled && !supportsGeminiSearch(configuration.model) { throw ProviderTestProtocolError.unsupportedProvider }
+            if configuration.searchEnabled && !supportsGeminiSearch(configuration.model) { throw CloudClassificationError.searchUnavailable }
             let input = body["input"] as! [[String: Any]]
             let text = ((input.first?["content"] as? [[String: Any]])?.first?["text"] as? String) ?? (input.first?["content"] as? String) ?? ""
             guard !text.isEmpty else { throw CloudClassificationError.invalidOutput }
