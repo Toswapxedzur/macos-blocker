@@ -209,22 +209,6 @@ h3 { font-size: 14px; }
   width: 100%; padding: 8px 10px; border-radius: 9px;
   border: none; background: #fff; color: var(--ink); font-size: 12px;
 }
-.dial-card-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; }
-.dial-card {
-  display: flex; flex-direction: column; gap: 4px; align-items: flex-start;
-  padding: 10px 12px; border-radius: 11px; text-align: start; cursor: pointer;
-  border: none; background: #f8fafc;
-  transition: border-color .12s ease, background .12s ease;
-}
-.dial-card:hover { border-color: var(--navy-300); }
-.dial-card.active { border-color: var(--navy-700); background: var(--navy-100); box-shadow: inset 0 0 0 1px var(--navy-700); }
-.dial-card-head { display: flex; align-items: center; gap: 6px; width: 100%; }
-.dial-card-name { font-size: 12px; font-weight: 600; color: var(--ink); }
-.dial-card-badge {
-  margin-inline-start: auto; font-size: 10px; font-weight: 600; letter-spacing: .02em;
-  padding: 2px 6px; border-radius: 6px; color: var(--green-text); background: var(--green-50);
-}
-.dial-card-desc { font-size: 11px; line-height: 1.4; color: var(--muted); }
 .classifier-type-head-pills { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
 
 .incremental-list-sentinel {
@@ -922,19 +906,6 @@ textarea:focus {
   gap: 4px;
   min-width: 0;
 }
-
-/* Local model settings: advanced disclosure. The body animates via the
-   grid-template-rows 0fr -> 1fr trick so height is fully content-driven;
-   opacity and a small translate ride along for a soft reveal. */
-.classifier-local-model .section-copy { margin: 2px 0 10px; }
-
-/* Two-dial local model settings (2026-09-23). */
-.dial-card { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; text-align: start; }
-.dial-card-meta { font-size: 11px; color: var(--muted); }
-.dial-card-warning { font-size: 11px; color: var(--pink-700); }
-.dial-card-controls { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; margin-top: 2px; }
-.dial-card input[type="radio"] { position: absolute; opacity: 0; pointer-events: none; }
-.dial-card:has(input:checked) { border-color: var(--navy-700); background: var(--navy-100); }
 .strictness-options { display: grid; gap: 6px; margin-top: 6px; }
 .strictness-option { display: grid; gap: 2px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 10px; cursor: pointer; }
 .strictness-option:hover { border-color: var(--navy-300); }
@@ -942,7 +913,7 @@ textarea:focus {
 .strictness-option input[type="radio"] { position: absolute; opacity: 0; pointer-events: none; }
 .strictness-option-name { font-size: 12px; font-weight: 600; color: var(--ink); }
 .strictness-option-desc { font-size: 11px; line-height: 1.4; color: var(--muted); }
-@media (max-width: 760px) { .dial-card-grid { grid-template-columns: 1fr; } }
+
 
 /* ═══ The owner's rules on top of the extension look (2026-09-28) ══════════
    Everything above is the Classifier's own stylesheet as it matched the
@@ -1016,30 +987,19 @@ textarea:focus {
 .utility-research-section {
   box-shadow: 0 8px 24px rgba(15, 23, 42, 0.05);
 }
-
-/* Model tiers and Strict ↔ Broad positions: tiles without outlines. */
-.dial-card,
 .strictness-option {
   border: none;
   background: #ffffff;
   box-shadow: 0 3px 10px rgba(15, 23, 42, 0.06);
 }
-
-.dial-card:hover,
 .strictness-option:hover {
   box-shadow: 0 6px 16px rgba(30, 58, 138, 0.12);
 }
-
-.dial-card.active,
-.dial-card:has(input:checked),
 .strictness-option.active,
 .strictness-option:has(input:checked) {
   background: var(--navy-100);
   box-shadow: 0 6px 16px rgba(30, 58, 138, 0.16);
 }
-
-.dial-card.active .dial-card-name,
-.dial-card:has(input:checked) .dial-card-name,
 .strictness-option:has(input:checked) .strictness-option-name {
   color: var(--navy-700);
 }

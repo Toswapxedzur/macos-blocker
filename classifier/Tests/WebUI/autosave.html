@@ -125,7 +125,7 @@ window.runAutosaveTests=async()=>{
   const other=q('[data-form-id="classifier-tagging-form-group-2"] [data-field="strictness"][value="2"]');
   other.checked=true;other.dispatchEvent(new Event('change',{bubbles:true}));
   await poll(()=>testState.assets.classifierTypes[1].tagging.strictness===2);
-  expect(testState.assets.classifierTypes[0]testState.assets.classifierTypes[0].tagging.houseRules==='Keep my vocabulary' && testState.assets.classifierTypes[1].tagging.strictness===2, 'editing another group changes only its own dial and preserves both groups rules');
+  expect(testState.assets.classifierTypes[0].tagging.houseRules==='Keep my vocabulary' && testState.assets.classifierTypes[1].tagging.strictness===2, 'editing another group changes only its own dial and preserves both groups rules');
   q('[data-action="selectType"][data-type-id="group-1"]').click();
   testState.assets.classifierTypes.pop();pushSnapshot();
 
@@ -192,8 +192,8 @@ window.runAutosaveTests=async()=>{
   expect(q('#fixture-settings').hidden && scope.activeElement===q('[data-action="openUtilityPanel"]'),'Escape closes settings and returns focus');
   testState.issue=null;pushSnapshot();
   const dialForm=q('[data-form-id="classifier-tagging-form-group-1"]');
-  expect(dialForm.querySelectorAll('[data-field="strictness"]').length===5, 'each group contains all model tier cards and strictness positions');
-  expect(!dialForm.querySelector('option[value=""]'), 'group dials have no global inheritance choice');
+  expect(dialForm.querySelectorAll('[data-field="strictness"]').length===5, 'each group contains all strictness positions');
+  expect(!dialForm.querySelector('[data-field="speedQuality"]'), 'Local model tiers are absent');
   testState.trash=[{id:'retired-trash',name:'Deleted group',kind:'classifierType'}];pushSnapshot();
   expect(!q('[data-expand="trash"], [data-action="selectTrash"], [data-action="restoreTrashedEntry"]'),'obsolete Trash snapshots produce no controls');
   const deletion='[data-action="confirmDeleteClassifierType"][data-type-id="group-1"]';

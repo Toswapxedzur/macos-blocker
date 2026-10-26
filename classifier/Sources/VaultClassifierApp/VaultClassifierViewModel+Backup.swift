@@ -57,7 +57,7 @@ extension VaultClassifierViewModel {
         do {
             guard backupUnlocked else { throw AppInputError.backupLocked }
             let destination = try coordinator?.backupClassifierNow()
-            backupNotice = destination.map { "Local model snapshot created in \($0.lastPathComponent)." }
+            backupNotice = destination.map { "Classifier snapshot created in \($0.lastPathComponent)." }
             issue = nil
         } catch {
             backupNotice = nil

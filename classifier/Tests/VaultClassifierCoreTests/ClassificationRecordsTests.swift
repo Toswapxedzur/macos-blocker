@@ -1,7 +1,7 @@
 import XCTest
 @testable import VaultClassifierCore
 
-final class LocalLLMModelTests: XCTestCase {
+final class ClassificationRecordsTests: XCTestCase {
 
     // MARK: - ScoredTag
 
@@ -300,7 +300,7 @@ final class LocalLLMModelTests: XCTestCase {
         var b = a
         b.entryID = "v2"
         catalog.videoClassifications = [a, b] // same id "dup"
-        XCTAssertThrowsError(try catalog.validateLocalLLMStores())
+        XCTAssertThrowsError(try catalog.validateClassificationStores())
     }
 
     func testStarterHasEmptyNewStores() {

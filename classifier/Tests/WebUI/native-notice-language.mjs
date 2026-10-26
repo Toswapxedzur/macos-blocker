@@ -20,7 +20,7 @@ assert.equal(localize('Use at most 2048 characters for the name.'),'le nom : 204
 assert.equal(localize('The provider protocol requires an endpoint.'),'Ce protocole exige une adresse.');
 assert.equal(localize('The provider protocol requires apiVersion.'),'Ce protocole exige apiVersion.');
 assert.equal(localize('The provider returned HTTP 429.'),'Le fournisseur a répondu HTTP 429.');
-assert.equal(localize('Local model snapshot created in model-用户-01.'),'Sauvegarde créée dans model-用户-01.');
+assert.equal(localize('Classifier snapshot created in model-用户-01.'),'Sauvegarde créée dans model-用户-01.');
 assert.equal(localize('Looking up “ユーザー”. It appears under Known terms when the lookup finishes.'),'Recherche de « ユーザー » en cours.');
 for(const raw of ['Provider-specific error: secret-code-123','Check the name and try again. extra text','Taxonomy has a parent cycle at 私のタグ.','',null]) {
  assert.equal(localize(raw),String(raw??''));

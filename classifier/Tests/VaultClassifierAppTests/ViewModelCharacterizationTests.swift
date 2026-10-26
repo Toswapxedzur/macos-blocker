@@ -303,7 +303,7 @@ final class ViewModelCharacterizationTests: XCTestCase {
             "deleteKnowledgeEntry", "addKnowledgeCreator", "editKnowledgeEntry", "retryFailedResearch", "saveResearchSettings", "saveClassifierTypeTagging", "saveClassifierTypeResearch", "setBackupOwnerCode", "unlockBackup",
             "saveBackup", "backupNow",
         ]
-        XCTAssertEqual(actions.count, 36)
+        XCTAssertEqual(actions.count, 33)
         let unsupported = WebBridgeInputError.invalidChoice("action").localizedDescription
         for action in actions {
             let vm = try makeViewModel()

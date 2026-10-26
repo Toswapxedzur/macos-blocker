@@ -452,7 +452,7 @@
   },
   {
     "translationKey": "notice.backupCreated",
-    "template": "Local model snapshot created in {folder}."
+    "template": "Classifier snapshot created in {folder}."
   },
   {
     "translationKey": "notice.termLookupPending",

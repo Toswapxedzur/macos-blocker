@@ -63,7 +63,7 @@ private final class ResearchSubjectRecorder: @unchecked Sendable {
 final class VideoClassificationCoordinatorTests: XCTestCase {
     func testNativePauseAndGlobalDisableNeverRunTheModel() async throws {
         let (coordinator, root) = try makeCoordinatorWithYouTubeType()
-        defer { try? FileManager.default.removeItem(at: root) }
+        defer { LocalStateFile.flushAllPendingWrites(); try? FileManager.default.removeItem(at: root) }
         let recorder = CoordinatorRequestRecorder()
         coordinator.setFixtureEngine(CoordinatorRecordingLLM(recorder: recorder))
         XCTAssertEqual(coordinator.enabledClassificationPlatformIDs(), ["youtube"])
@@ -89,7 +89,7 @@ final class VideoClassificationCoordinatorTests: XCTestCase {
 
     func testGroupTagBoundsReachRequestsAndPersistWithClassification() async throws {
         let (coordinator, root) = try makeCoordinatorWithYouTubeType()
-        defer { try? FileManager.default.removeItem(at: root) }
+        defer { LocalStateFile.flushAllPendingWrites(); try? FileManager.default.removeItem(at: root) }
         let recorder = CoordinatorRequestRecorder()
         coordinator.setFixtureEngine(CoordinatorRecordingLLM(recorder: recorder))
         var catalog = coordinator.snapshot().workspaceCatalog
@@ -154,20 +154,20 @@ final class VideoClassificationCoordinatorTests: XCTestCase {
 
     func testClassifyVideoProducesPerVideoTagsAndCaches() async throws {
         let (coordinator, root) = try makeCoordinatorWithYouTubeType()
-        defer { try? FileManager.default.removeItem(at: root) }
+        defer { LocalStateFile.flushAllPendingWrites(); try? FileManager.default.removeItem(at: root) }
 
         // No classification yet -> decision cache is empty.
         XCTAssertNil(coordinator.cachedVideoTags(platformID: "youtube", entryID: "youtube:video:v1"))
 
         // The stub LLM selects allowed tag names present in the prompt; the title
         // contains "Games" so we expect the Games tag.
+        try coordinator.collectPlatformEntry(.init(platform: "youtube", entryID: "youtube:video:v1", sourceID: "c1", surface: .feed, evidence: .init(title: "A great Games montage")))
         let projection = try await coordinator.classifyVideo(
             platformID: "youtube", entryID: "youtube:video:v1", creatorID: "c1",
             title: "A great Games montage"
         )
         XCTAssertEqual(projection.tags.map(\.id), ["g"])
 
-        try coordinator.collectPlatformEntry(.init(platform: "youtube", entryID: "youtube:video:v1", sourceID: "c1", surface: .feed, evidence: .init(title: "A great Games montage")))
         // Now the decision cache returns it without re-classifying.
         let cached = coordinator.cachedVideoTags(platformID: "youtube", entryID: "youtube:video:v1")
         XCTAssertEqual(cached?.tags.map(\.id), ["g"])
@@ -175,9 +175,9 @@ final class VideoClassificationCoordinatorTests: XCTestCase {
 
     func testTaxonomyEditsProjectStoredDecisionsWithoutReclassification() async throws {
         let (coordinator, root) = try makeCoordinatorWithYouTubeType()
-        defer { try? FileManager.default.removeItem(at: root) }
-        _ = try await coordinator.classifyVideo(platformID: "youtube", entryID: "youtube:video:v1", creatorID: "c1", title: "Games highlights")
+        defer { LocalStateFile.flushAllPendingWrites(); try? FileManager.default.removeItem(at: root) }
         try coordinator.collectPlatformEntry(.init(platform: "youtube", entryID: "youtube:video:v1", sourceID: "c1", surface: .feed, evidence: .init(title: "Games highlights")))
+        _ = try await coordinator.classifyVideo(platformID: "youtube", entryID: "youtube:video:v1", creatorID: "c1", title: "Games highlights")
         let decisions = coordinator.snapshot().workspaceCatalog.videoClassifications
         var catalog = coordinator.snapshot().workspaceCatalog
         let index = try XCTUnwrap(catalog.trees.firstIndex { $0.id == "t" })
@@ -198,7 +198,7 @@ final class VideoClassificationCoordinatorTests: XCTestCase {
 
     func testClassifyVideoUpdatesDerivedCreatorHistogram() async throws {
         let (coordinator, root) = try makeCoordinatorWithYouTubeType()
-        defer { try? FileManager.default.removeItem(at: root) }
+        defer { LocalStateFile.flushAllPendingWrites(); try? FileManager.default.removeItem(at: root) }
 
         _ = try await coordinator.classifyVideo(
             platformID: "youtube", entryID: "youtube:video:v1", creatorID: "c1",
@@ -212,7 +212,7 @@ final class VideoClassificationCoordinatorTests: XCTestCase {
 
     func testClassifyVideoOnCollectionDisabledPlatformThrows() async throws {
         let fixture = temporaryStateFile()
-        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        defer { LocalStateFile.flushAllPendingWrites(); try? FileManager.default.removeItem(at: fixture.root) }
         let coordinator = try LocalClassifierCoordinator(verifiedPackage: SeedPackageLoader.bundled(), stateFile: fixture.file)
 
         var catalog = WorkspaceCatalog.starter()
@@ -232,7 +232,7 @@ final class VideoClassificationCoordinatorTests: XCTestCase {
 
     func testClassifyVideoResolvesEffectiveOptionsPerType() async throws {
         let fixture = temporaryStateFile()
-        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        defer { LocalStateFile.flushAllPendingWrites(); try? FileManager.default.removeItem(at: fixture.root) }
         let coordinator = try LocalClassifierCoordinator(
             verifiedPackage: SeedPackageLoader.bundled(), stateFile: fixture.file
         )
@@ -246,14 +246,14 @@ final class VideoClassificationCoordinatorTests: XCTestCase {
                 id: "a", name: "A", treeID: treeA.id, treeRevision: treeA.revision,
                 datasetID: dataset.id, datasetRevision: dataset.revision,
                 applicablePlatformIDs: ["youtube"],
-                tagging: .init(strictness: .strictest, houseRules: "Type A rule."), order: 0
+                tagging: .init(strictness: .strictest, houseRules: "Type A rule."), chatGPT: .init(accountID: "fixture", model: "fixture"), order: 0
             ),
             // A platform belongs to at most one classifier type, so the second
             // type lives on its own platform (same shared dataset).
             .init(
                 id: "b", name: "B", treeID: treeB.id, treeRevision: treeB.revision,
                 datasetID: dataset.id, datasetRevision: dataset.revision,
-                applicablePlatformIDs: ["bilibili"], order: 1
+                applicablePlatformIDs: ["bilibili"], chatGPT: .init(accountID: "fixture", model: "fixture"), order: 1
             ),
         ]
         _ = try catalog.ensurePlatformBinding("bilibili")
@@ -296,7 +296,7 @@ final class VideoClassificationCoordinatorTests: XCTestCase {
 
     func testRecordResearchKnowledgeReclassifiesOutsideLockAndCallsBack() async throws {
         let (coordinator, root) = try makeCoordinatorWithYouTubeType()
-        defer { try? FileManager.default.removeItem(at: root) }
+        defer { LocalStateFile.flushAllPendingWrites(); try? FileManager.default.removeItem(at: root) }
         var catalog = coordinator.snapshot().workspaceCatalog
         let datasetIndex = try XCTUnwrap(catalog.datasets.firstIndex(where: { $0.id == catalog.bindings.first(where: { $0.id == "youtube" })?.datasetID }))
         _ = catalog.datasets[datasetIndex].upsertCollectedEntry(.init(
@@ -331,7 +331,7 @@ final class VideoClassificationCoordinatorTests: XCTestCase {
 
     func testCorrectionsAreAuthoritativeAndNeverShownToTheModel() async throws {
         let (coordinator, root) = try makeCoordinatorWithYouTubeType()
-        defer { try? FileManager.default.removeItem(at: root) }
+        defer { LocalStateFile.flushAllPendingWrites(); try? FileManager.default.removeItem(at: root) }
         var catalog = coordinator.snapshot().workspaceCatalog
         let datasetIndex = try XCTUnwrap(catalog.datasets.firstIndex(where: {
             $0.id == catalog.bindings.first(where: { $0.id == "youtube" })?.datasetID
@@ -405,7 +405,7 @@ final class VideoClassificationCoordinatorTests: XCTestCase {
     /// most permissive urgency floor.
     func testCorrectionNeverSchedulesResearch() async throws {
         let (coordinator, root) = try makeCoordinatorWithYouTubeType()
-        defer { try? FileManager.default.removeItem(at: root) }
+        defer { LocalStateFile.flushAllPendingWrites(); try? FileManager.default.removeItem(at: root) }
         var catalog = coordinator.snapshot().workspaceCatalog
         let datasetIndex = try XCTUnwrap(catalog.datasets.firstIndex(where: {
             $0.id == catalog.bindings.first(where: { $0.id == "youtube" })?.datasetID
@@ -469,7 +469,7 @@ final class VideoClassificationCoordinatorTests: XCTestCase {
     /// leaves: never title text, never the raw `youtube:handle:` id.
     func testDeclinedVideosSendNothingUntilTheCreatorThresholdThenOnlyTheHandle() async throws {
         let (coordinator, root) = try makeCoordinatorWithYouTubeType()
-        defer { try? FileManager.default.removeItem(at: root) }
+        defer { LocalStateFile.flushAllPendingWrites(); try? FileManager.default.removeItem(at: root) }
         // The creator trigger is the constant score 3 / half-life 14 days.
         try coordinator.updateSettings(.init(research: .init(enabled: true)))
         let recorder = ResearchSubjectRecorder()
@@ -496,15 +496,15 @@ final class VideoClassificationCoordinatorTests: XCTestCase {
             try? await Task<Never, Never>.sleep(nanoseconds: 2_000_000)
         }
         await queue.waitUntilIdle()
-        XCTAssertEqual(recorder.subjects.map(\.kind), [.creator])
-        XCTAssertEqual(recorder.subjects.map(\.subject), ["@creator"])
+        XCTAssertTrue(recorder.subjects.isEmpty, "Cloud search must remain explicit")
+        XCTAssertTrue(recorder.subjects.isEmpty)
     }
 
     /// Terms reach research only when the USER names one: it is looked up, stored,
     /// and then matches titles. Junk subjects and a research-off state are refused.
     func testOnlyAUserAddedTermIsLookedUp() async throws {
         let (coordinator, root) = try makeCoordinatorWithYouTubeType()
-        defer { try? FileManager.default.removeItem(at: root) }
+        defer { LocalStateFile.flushAllPendingWrites(); try? FileManager.default.removeItem(at: root) }
         let recorder = ResearchSubjectRecorder()
         let queue = recordingQueue(recorder) { [coordinator] mutation in
             await coordinator.recordResearchMutation(mutation)
@@ -532,7 +532,7 @@ final class VideoClassificationCoordinatorTests: XCTestCase {
     /// A term the user described themselves is stored as written, with no lookup.
     func testAUserWrittenTermIsStoredWithoutResearch() throws {
         let (coordinator, root) = try makeCoordinatorWithYouTubeType()
-        defer { try? FileManager.default.removeItem(at: root) }
+        defer { LocalStateFile.flushAllPendingWrites(); try? FileManager.default.removeItem(at: root) }
         XCTAssertTrue(try coordinator.addKnowledgeTerm(subject: " Lifesteal SMP ", meaning: " A Minecraft server. "))
         XCTAssertFalse(try coordinator.addKnowledgeTerm(subject: "ab", meaning: "too generic to match safely"))
         XCTAssertFalse(try coordinator.addKnowledgeTerm(subject: "JudeLow", meaning: "   "))
@@ -547,7 +547,7 @@ final class VideoClassificationCoordinatorTests: XCTestCase {
     /// video is never re-decoded, and a single video still uses the plain path.
     func testClassifyVideosSendsOneBatchAndKeysResultsPerVideo() async throws {
         let (coordinator, root) = try makeCoordinatorWithYouTubeType()
-        defer { try? FileManager.default.removeItem(at: root) }
+        defer { LocalStateFile.flushAllPendingWrites(); try? FileManager.default.removeItem(at: root) }
         let probe = BatchCallProbe()
         coordinator.setFixtureEngine(BatchingLLM(probe: probe))
 
@@ -574,7 +574,7 @@ final class VideoClassificationCoordinatorTests: XCTestCase {
     /// decline, so under the default declineOnly policy it triggers no research.
     func testConfidentlyTaggedTitleDoesNotTriggerResearch() async throws {
         let (coordinator, root) = try makeCoordinatorWithYouTubeType()
-        defer { try? FileManager.default.removeItem(at: root) }
+        defer { LocalStateFile.flushAllPendingWrites(); try? FileManager.default.removeItem(at: root) }
         try coordinator.updateSettings(.init(research: .init(enabled: true)))
         let recorder = ResearchSubjectRecorder()
         let queue = GroundedResearchQueue(
@@ -615,7 +615,7 @@ final class VideoClassificationCoordinatorTests: XCTestCase {
 
     func testEditAndDeleteKnowledgeEntryMutateTheCorrectMap() throws {
         let (coordinator, root) = try makeCoordinatorWithYouTubeType()
-        defer { try? FileManager.default.removeItem(at: root) }
+        defer { LocalStateFile.flushAllPendingWrites(); try? FileManager.default.removeItem(at: root) }
         var catalog = coordinator.snapshot().workspaceCatalog
         catalog.upsertKnowledgeEntry(KnowledgeEntry(kind: .creator, subject: "c1", meaning: "old creator desc"))
         catalog.upsertKnowledgeEntry(KnowledgeEntry(kind: .term, subject: "HermitCraft", meaning: "smp"))
@@ -647,7 +647,7 @@ final class VideoClassificationCoordinatorTests: XCTestCase {
 extension VideoClassificationCoordinatorTests {
     func testPersonalImportRefusesCapacityOverflowWithoutDroppingOldDefinitions() throws {
         let (coordinator, root) = try makeCoordinatorWithYouTubeType()
-        defer { try? FileManager.default.removeItem(at: root) }
+        defer { LocalStateFile.flushAllPendingWrites(); try? FileManager.default.removeItem(at: root) }
         var catalog = coordinator.snapshot().workspaceCatalog
         catalog.knowledgeEntries = (0..<WorkspaceCatalog.maximumKnowledgeEntries).map { .init(kind:.term,subject:"Fixture Term \($0)",meaning:"Existing personal knowledge",writtenByUser:true) }
         try coordinator.updateWorkspaceCatalog(catalog)

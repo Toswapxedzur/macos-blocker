@@ -39,6 +39,7 @@ try{
     },{storage:JSON.parse(process.env.UI_INITIAL_STORAGE),language:process.env.UI_EXPECTED_LANGUAGE || 'en',program:process.env.UI_EXPECTED_PROGRAM || 'macapp'});
   }
   const page=await context.newPage();
+  page.on("pageerror", error => console.error("BROWSER:", error.message));
   const evaluate=expression=>page.evaluate(expression);
   await page.goto(url);
   const until=Date.now()+10000;

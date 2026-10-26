@@ -45,7 +45,7 @@ public struct WorkspaceCatalog: Codable, Equatable, Sendable {
     /// the local WebView; browser-bridge messages and request diagnostics do
     /// not include them.
     public var providerProfiles: [APIKeyProviderProfile]
-    // Local-LLM rework stores (additive; see LocalLLMModel.swift). Primary per-video
+    // Classification records (see ClassificationRecords.swift): per-video
     // labels, the grounded-research knowledge map, user corrections, and the derived
     // creator priors. Empty until the new pipeline populates them.
     public var videoClassifications: [VideoClassification]
@@ -173,7 +173,7 @@ public struct WorkspaceCatalog: Codable, Equatable, Sendable {
 
     public func validate() throws {
         try unique(trees.map(\.id) + datasets.map(\.id) + bindings.map(\.id) + classifierTypes.map(\.id) + providerProfiles.map(\.id))
-        try validateLocalLLMStores()
+        try validateClassificationStores()
         for binding in bindings {
             guard CollectionPlatformRegistry.definition(for: binding.id) != nil else {
                 throw WorkspaceCatalogError.unsupportedCollectionPlatform(binding.id)
@@ -312,11 +312,19 @@ public struct WorkspaceCatalog: Codable, Equatable, Sendable {
         collectionKeepDays = max(0, try container.decodeIfPresent(Int.self, forKey: .collectionKeepDays) ?? 365)
         // One-way retirement: never convert a local group into a cloud group
         // or start sending its data to a provider without a new selection.
-        videoClassifications.removeAll { retiredIDs.contains($0.classifierTypeID) }
-        correctionExamples.removeAll { retiredIDs.contains($0.classifierTypeID) }
-        creatorHistograms.removeAll { retiredIDs.contains($0.classifierTypeID) }
-        creatorResearchAccumulators.removeAll { retiredIDs.contains($0.id.components(separatedBy: "\u{1F}").first ?? "") }
-        researchAttempts.removeAll { retiredIDs.contains($0.classifierTypeID ?? "") }
+        let activeGroupIDs = Set(classifierTypes.map(\.id))
+        // Older Local group deletion could leave model rows behind. Recognize
+        // only that retired engine's orphan rows; preserve unrelated stored data.
+        let orphanLocalIDs = Set(videoClassifications.filter {
+            !activeGroupIDs.contains($0.classifierTypeID)
+                && ($0.modelVersion.hasPrefix("llamacpp/") || $0.modelVersion.hasPrefix("stub/"))
+        }.map(\.classifierTypeID))
+        let retiredDataIDs = retiredIDs.union(orphanLocalIDs)
+        videoClassifications.removeAll { retiredDataIDs.contains($0.classifierTypeID) }
+        correctionExamples.removeAll { retiredDataIDs.contains($0.classifierTypeID) }
+        creatorHistograms.removeAll { retiredDataIDs.contains($0.classifierTypeID) }
+        creatorResearchAccumulators.removeAll { retiredDataIDs.contains($0.id.components(separatedBy: "\u{1F}").first ?? "") }
+        researchAttempts.removeAll { retiredDataIDs.contains($0.classifierTypeID ?? "") }
         let retainedTrees = Set(bindings.map(\.treeID) + classifierTypes.map(\.treeID))
         trees.removeAll { retiredTrees.contains($0.id) && !retainedTrees.contains($0.id) }
         for i in bindings.indices where retiredIDs.contains(bindings[i].activeClassifierTypeID ?? "") {

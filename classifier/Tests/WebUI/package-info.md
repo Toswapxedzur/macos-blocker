@@ -18,7 +18,7 @@ and `UI_TEST_EXPRESSION='runTaggingControlTests()'` on mini1.
 state and an in-memory native-action receiver. `autosave.mjs` serves that
 fixture and drives an owned headless Chrome for Testing through Playwright on mini1. It checks real
 input/change/focus/composition handlers, delayed snapshots, dialog Escape/Tab
-focus restoration, creation drafts and complete group dial cards;
+focus restoration, creation drafts and group strictness controls;
 Knowledge access, permanent deletion confirmation, group More state, independent group edits and dial summaries;
 it never connects to the owner's Classifier state or any provider.
 
@@ -55,11 +55,7 @@ API fields with a usage footer, and creator suggestion/caret preservation.
 Run with `UI_TEST_SCRIPT=classifier/Tests/WebUI/dropdown-layout.js`
 `UI_TEST_EXPRESSION='runDropdownLayoutTests()'`, at wide and narrow widths.
 
-`group-dials.js` checks independent tier selection and house rules, shared model
-Downloads/Delete/RAM controls, confined tier-card geometry, snapshot preservation
-and removal of global settings UI. Run at wide and narrow widths with
-`UI_TEST_SCRIPT=classifier/Tests/WebUI/group-dials.js`
-`UI_TEST_EXPRESSION='runGroupDialTests()'` and the same runner.
+`group-dials.js` verifies removal of Local provider, model tiers and download/delete controls, while retaining strictness and rule drafts. Run through `autosave.mjs` with `UI_TEST_SCRIPT=classifier/Tests/WebUI/group-dials.js` and `UI_TEST_EXPRESSION=runGroupDialTests()` at wide and narrow widths.
 
 `tag-bounds.js` checks directly visible core settings, optional per-group min/max
 fields under More, independent blank defaults, preservation across dial changes,
@@ -87,7 +83,7 @@ Windows assets on mini1; native Windows verification remains in the VM.
 `tag-create-drafts.js` reproduces model-progress snapshots replacing a pending tag form, verifies both fields and caret survive, keeps creation explicit, and checks create/cancel draft isolation. Run with `UI_TEST_SCRIPT=classifier/Tests/WebUI/tag-create-drafts.js UI_TEST_EXPRESSION="runTagDraftTests()"` through `autosave.mjs` at wide and narrow widths. Verified on owner-selected mini2 during the public-release audit.
 
 `chatgpt.js` covers the optional account/provider selector, unavailable saved
-models, cloud/local controls, explicit search, usage limits, Retry, sign-in
+models, cloud-only tagging controls, explicit search, usage limits, Retry, sign-in
 cancellation, plan-use welcome, and drafts across snapshots. Run through
 `autosave.mjs` with `UI_TEST_SCRIPT=classifier/Tests/WebUI/chatgpt.js` and
 `UI_TEST_EXPRESSION='runChatGPTTests()'` at wide and narrow widths. The fixture

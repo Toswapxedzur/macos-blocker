@@ -210,11 +210,8 @@ extension LocalClassifierCoordinator {
         }
     }
 
-    /// Videos handed to the engine together when research re-classifies — its
-    /// parallel-sequence capacity. Must track `VaultLocalLLMEngine
-    /// .maximumParallelSequences` (and the live pill path's chunk size); it is
-    /// a literal here because Core deliberately cannot import the LLM layer.
-    static let reclassificationChunkSize = 16
+    /// Bound each reclassification request group to one cloud queue chunk.
+    static let reclassificationChunkSize = 32
 
     static func pruneTokenUsage(_ records: inout [TokenUsageRecord]) {
         let todayStart = Int64(Calendar.current.startOfDay(for: Date()).timeIntervalSince1970 * 1_000)

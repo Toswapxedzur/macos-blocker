@@ -35,7 +35,6 @@ class PackagingTests(unittest.TestCase):
             'LSMinimumSystemVersion': '13.3', 'CFBundleIdentifier': 'com.adamancia.fixture',
             'CFBundleExecutable': 'FixtureVault', 'CFBundlePackageType': 'APPL',
             'CFBundleInfoDictionaryVersion': '6.0'}))
-        self.env = dict(os.environ, VAULT_LLAMA_PREFIX=str(self.prefix))
 
     def tearDown(self):
         self.temporary.cleanup()

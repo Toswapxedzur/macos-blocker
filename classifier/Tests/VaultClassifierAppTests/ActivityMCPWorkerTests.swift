@@ -162,8 +162,15 @@ final class ActivityMCPWorkerTests: XCTestCase {
         let service = try worker { events.append($0) }
         _ = try await service.handle(operation: "activity", data: ["kind": "ready"])
         let id = try await save(service, "Visible", [])
-        for _ in 0..<100 where !events.contains(where: { $0["event"] as? String == "activity" }) { try await Task.sleep(nanoseconds: 5_000_000) }
-        let first = try XCTUnwrap(events.last { $0["event"] as? String == "activity" })
+        func containsSavedGroup(_ event: [String: Any]) -> Bool {
+            guard event["event"] as? String == "activity",
+                  let value = event["value"] as? [String: Any],
+                  let snapshot = value["snapshot"] as? [String: Any],
+                  let groups = snapshot["groups"] as? [[String: Any]] else { return false }
+            return groups.contains { $0["id"] as? String == id }
+        }
+        for _ in 0..<100 where !events.contains(where: containsSavedGroup) { try await Task.sleep(nanoseconds: 5_000_000) }
+        let first = try XCTUnwrap(events.last(where: containsSavedGroup))
         let snapshot = try object(try object(first["value"] as Any)["snapshot"] as Any)
         XCTAssertEqual((snapshot["groups"] as? [[String: Any]])?.first?["id"] as? String, id)
         events.removeAll()

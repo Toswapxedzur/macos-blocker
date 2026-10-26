@@ -1,13 +1,10 @@
 import Foundation
 
-// Data model for the local-LLM-centered, per-video pipeline.
+// Persisted per-item classification, knowledge and correction records.
 
 // MARK: - Scored tag (discrete 1–5 confidence)
 
-/// A predicted tag with a coarse, discrete confidence. The scale is intentionally
-/// small (1–5) because a small on-device LLM's finer confidence is poorly
-/// calibrated; the value is derived from constrained-decode logprobs where the
-/// runtime exposes them, otherwise self-reported. Always clamped into range.
+/// A predicted tag with clamped model-estimated confidence on a 1–5 scale.
 public struct ScoredTag: Codable, Equatable, Sendable {
     public static let minConfidence = 1
     public static let maxConfidence = 5
@@ -750,7 +747,7 @@ public extension WorkspaceCatalog {
 
     /// Light structural validation for the new stores. Empty stores pass trivially,
     /// so existing/greenfield states are unaffected.
-    func validateLocalLLMStores() throws {
+    func validateClassificationStores() throws {
         guard videoClassifications.count <= Self.maximumRetainedVideoClassifications else {
             throw WorkspaceCatalogError.invalidCollectedEntry("videoClassifications")
         }
