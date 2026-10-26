@@ -108,7 +108,7 @@ final class ChatGPTLiveAcceptanceTests: XCTestCase {
             let rows: [[String: Any]] = titles.indices.map { index in
                 ["title": titles[index], "expected": expected[index], "tags": output["diagnostic-\(index)"]?.tags.map(\.name) ?? []]
             }
-            let result: [String: Any] = ["model": model.identifier, "searchEnabled": false,
+            let result: [String: Any] = ["model": model.identifier, "searchEnabled": true,
                 "seconds": inferenceSeconds, "dispatchedRequests": dispatched, "cacheLookupHits": cacheHits, "cacheOnlyRepeat": dispatched == 1 && cacheHits == inputs.count,
                 "cases": rows, "scope": "three diagnostic examples; not a production accuracy benchmark"]
             try JSONSerialization.data(withJSONObject: result, options: [.prettyPrinted, .sortedKeys]).write(to: run.appendingPathComponent("result.json"), options: .atomic)

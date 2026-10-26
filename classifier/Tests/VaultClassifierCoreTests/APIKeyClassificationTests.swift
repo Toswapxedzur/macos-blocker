@@ -17,7 +17,7 @@ final class APIKeyClassificationTests: XCTestCase {
         return try JSONSerialization.data(withJSONObject: object)
     }
     func testThreeProvidersUseOfficialEndpointsHeadersAndStructuredBodies() async throws {
-        for (type, host, model, header) in [(APIKeyProviderType.openAI,"api.openai.com","gpt-4.1-mini","Authorization"),(.gemini,"generativelanguage.googleapis.com","gemini-3-fixture","x-goog-api-key"),(.xAI,"api.x.ai","grok-fixture","Authorization")] {
+        for (type, host, model, header) in [(APIKeyProviderType.openAI,"api.openai.com","gpt-4.1-mini","Authorization"),(.gemini,"generativelanguage.googleapis.com","gemini-3.1-flash-lite","x-goog-api-key"),(.xAI,"api.x.ai","grok-fixture","Authorization")] {
             let profile = APIKeyProviderProfile(id: "fixture", type: type, credential: "fixture-key-not-real")
             let expected = try response(type)
             let http = URLSessionProviderHTTPClient { request in
@@ -25,7 +25,7 @@ final class APIKeyClassificationTests: XCTestCase {
                 XCTAssertEqual(request.value(forHTTPHeaderField: header), type == .gemini ? "fixture-key-not-real" : "Bearer fixture-key-not-real")
                 XCTAssertFalse(request.url!.absoluteString.contains("fixture-key"))
                 let body = try JSONSerialization.jsonObject(with: request.httpBody!) as! [String: Any]
-                XCTAssertNil(body["tools"], "search must remain explicitly disabled")
+                XCTAssertNotNil(body["tools"], "search must be offered for every tagging request")
                 XCTAssertFalse(String(decoding: request.httpBody!, as: UTF8.self).contains("fixture-key"))
                 if type == .gemini { XCTAssertNotNil(body["generationConfig"]); XCTAssertNotNil(body["contents"]) }
                 else { XCTAssertEqual(body["stream"] as? Bool, false); XCTAssertNotNil(body["text"]) }
@@ -62,11 +62,11 @@ final class APIKeyClassificationTests: XCTestCase {
     func testSearchIsExplicitAndUnsupportedGeminiCombinationIsRefused() throws {
         for type in [APIKeyProviderType.openAI,.gemini,.xAI] {
             let profile = APIKeyProviderProfile(type: type)
-            let request = try APIKeyClassificationEngine.prepare([item], configuration: .init(profileID: profile.id, model: "gemini-3-fixture", searchEnabled: true), profile: profile)
+            let request = try APIKeyClassificationEngine.prepare([item], configuration: .init(profileID: profile.id, model: "gemini-3.1-flash-lite"), profile: profile)
             let body = try JSONSerialization.jsonObject(with: request.body) as! [String: Any]
             XCTAssertNotNil(body["tools"])
         }
-        XCTAssertThrowsError(try APIKeyClassificationEngine.prepare([item], configuration: .init(profileID: "p", model: "gemini-2.5-flash", searchEnabled: true), profile: .init(type: .gemini)))
+        XCTAssertThrowsError(try APIKeyClassificationEngine.prepare([item], configuration: .init(profileID: "p", model: "gemini-2.5-flash"), profile: .init(type: .gemini)))
     }
     func testProviderAndModelChangesInvalidateOnlyAutomaticCacheCurrency() throws {
         var group = ClassifierTypeAsset(name: "Fixture", treeID: "t", treeRevision: 1, datasetID: "d", datasetRevision: 1)
@@ -174,7 +174,7 @@ extension APIKeyClassificationTests {
         var state = LocalClassifierState()
         let tree = state.workspaceCatalog.trees[0], dataset = state.workspaceCatalog.datasets[0]
         state.workspaceCatalog.classifierTypes = [.init(name: "Existing", treeID: tree.id, treeRevision: tree.revision,
-            datasetID: dataset.id, datasetRevision: dataset.revision, chatGPT: .init(accountID: "saved", model: "selected", searchEnabled: true))]
+            datasetID: dataset.id, datasetRevision: dataset.revision, chatGPT: .init(accountID: "saved", model: "selected"))]
         var root = try JSONSerialization.jsonObject(with: JSONEncoder().encode(state)) as! [String: Any]
         root["schemaVersion"] = 5
         var metadata = root["storageMetadata"] as! [String: Any]; metadata["schemaVersion"] = 5; root["storageMetadata"] = metadata
@@ -182,7 +182,7 @@ extension APIKeyClassificationTests {
         catalog["providerProfiles"] = [["id": "retired", "type": "ollama", "credential": ["malformed": true]]]
         root["workspaceCatalog"] = catalog
         let loaded = try JSONDecoder().decode(LocalClassifierState.self, from: JSONSerialization.data(withJSONObject: root))
-        XCTAssertEqual(loaded.schemaVersion, 6)
+        XCTAssertEqual(loaded.schemaVersion, 7)
         XCTAssertEqual(loaded.workspaceCatalog.classifierTypes, state.workspaceCatalog.classifierTypes)
         XCTAssertTrue(loaded.workspaceCatalog.providerProfiles.isEmpty)
         XCTAssertEqual(loaded.workspaceCatalog.classifierTypes[0].cloudModelVersion, state.workspaceCatalog.classifierTypes[0].cloudModelVersion)

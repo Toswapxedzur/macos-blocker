@@ -231,8 +231,8 @@ extension VaultClassifierViewModel {
                     "applicablePlatformIDs": classifierType.applicablePlatformIDs,
                     "isPaused": classifierType.isPaused,
                     "classificationProvider": classifierType.classificationProvider.rawValue,
-                    "apiKey": ["profileID": classifierType.apiKey.profileID, "model": classifierType.apiKey.model, "searchEnabled": classifierType.apiKey.searchEnabled],
-                    "chatGPT": ["accountID": classifierType.chatGPT.accountID, "model": classifierType.chatGPT.model, "searchEnabled": classifierType.chatGPT.searchEnabled] as [String: Any],
+                    "apiKey": ["profileID": classifierType.apiKey.profileID, "model": classifierType.apiKey.model, "reasoningEffort": classifierType.apiKey.reasoningEffort.rawValue],
+                    "chatGPT": ["accountID": classifierType.chatGPT.accountID, "model": classifierType.chatGPT.model, "reasoningEffort": classifierType.chatGPT.reasoningEffort.rawValue] as [String: Any],
                     "tagging": [
                         "houseRules": classifierType.tagging.houseRules,
                         "strictness": classifierType.tagging.strictness.rawValue,
@@ -251,6 +251,16 @@ extension VaultClassifierViewModel {
             "issue": chatGPTStatus.issue ?? NSNull(),
             "dailyRequestLimit": state?.settings.chatGPTDailyRequestLimit.map { $0 as Any } ?? NSNull(),
             "models": chatGPTStatus.models.map { ["id": $0.identifier, "name": $0.displayName] }] as [String: Any]
+        var classificationCapabilities: [String: Any] = [:]
+        func capability(_ provider: APIKeyProviderType?, _ model: String) -> [String: Any] {
+            ["searchCompatible": ClassificationModelPolicy.searchCompatible(provider: provider, model: model),
+             "reasoningEfforts": ClassificationModelPolicy.efforts(provider: provider, model: model).map(\.rawValue)]
+        }
+        for model in chatGPTStatus.models { classificationCapabilities["chatgpt:" + model.identifier] = capability(nil, model.identifier) }
+        for profile in catalog.providerProfiles where APIKeyClassificationClient.supports(profile.type) {
+            for model in providerModelCatalogs[profile.id] ?? [] { classificationCapabilities["api:" + profile.id + ":" + model.identifier] = capability(profile.type, model.identifier) }
+        }
+        assets["classificationModelCapabilities"] = classificationCapabilities
         assets["apiKeyClassification"] = ["failedProfileIDs": Array(apiKeyClassificationStatus?.failedProfileIDs ?? []), "requestsToday": apiKeyClassificationStatus?.requestsToday ?? 0]
         assets["providerProfiles"] = catalog.providerProfiles.map { profile in
                 let descriptor = ProviderProtocolRegistry.descriptor(for: profile.type)
@@ -480,8 +490,9 @@ extension VaultClassifierViewModel {
                 guard raw == nil || Int(raw!) != nil else { throw WebBridgeInputError.invalidChoice("daily request limit") }
                 try saveChatGPTUsageLimit(raw.flatMap(Int.init))
             case "saveClassificationProvider":
+                guard let effort = ClassificationReasoningEffort(rawValue: try webString(data, key: "reasoningEffort", limit: 32)) else { throw WebBridgeInputError.invalidChoice("reasoning effort") }
                 try saveClassificationProvider(typeID: webString(data, key: "typeID", limit: 256),
-                    providerModel: webString(data, key: "providerModel", limit: 520), searchEnabled: webBool(data, key: "searchEnabled"))
+                    providerModel: webString(data, key: "providerModel", limit: 520), reasoningEffort: effort)
             case "setClassifierTypePaused":
                 setClassifierTypePaused(typeID: try webString(data, key: "typeID", limit: 256), paused: try webBool(data, key: "paused"))
             case "saveDictionarySettings":

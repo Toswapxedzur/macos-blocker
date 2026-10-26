@@ -79,23 +79,24 @@ extension VaultClassifierViewModel {
         }
     }
 
-    func saveClassificationProvider(typeID: String, providerModel: String, searchEnabled: Bool) throws {
+    func saveClassificationProvider(typeID: String, providerModel: String, reasoningEffort: ClassificationReasoningEffort) throws {
         guard let coordinator else { throw CloudClassificationError.notConfigured }
         var catalog = coordinator.snapshot().workspaceCatalog
         guard let index = catalog.classifierTypes.firstIndex(where: { $0.id == typeID }) else { throw CloudClassificationError.notConfigured }
         if providerModel.hasPrefix("chatgpt:") {
             let model = String(providerModel.dropFirst(8))
             guard chatGPTStatus.planUsageEnabled, chatGPTStatus.models.contains(where: { $0.identifier == model }) else { throw CloudClassificationError.notConfigured }
+            try ClassificationModelPolicy.validate(provider: nil, model: model, effort: reasoningEffort)
             catalog.classifierTypes[index].classificationProvider = .chatGPT
-            catalog.classifierTypes[index].chatGPT = .init(accountID: chatGPTStatus.accountID, model: model, searchEnabled: searchEnabled)
+            catalog.classifierTypes[index].chatGPT = .init(accountID: chatGPTStatus.accountID, model: model, reasoningEffort: reasoningEffort)
         } else if providerModel.hasPrefix("api:") {
             let parts = providerModel.dropFirst(4).split(separator: ":", maxSplits: 1).map(String.init)
             guard parts.count == 2, let profile = catalog.providerProfiles.first(where: { $0.id == parts[0] }),
                   APIKeyClassificationClient.supports(profile.type), profile.credential?.isEmpty == false,
                   providerModelCatalogs[profile.id]?.contains(where: { $0.id == parts[1] }) == true else { throw CloudClassificationError.notConfigured }
-            if profile.type == .gemini && searchEnabled && !(parts[1].hasPrefix("gemini-3") || parts[1].hasPrefix("gemini-4")) { throw CloudClassificationError.searchUnavailable }
+            try ClassificationModelPolicy.validate(provider: profile.type, model: parts[1], effort: reasoningEffort)
             catalog.classifierTypes[index].classificationProvider = .apiKey
-            catalog.classifierTypes[index].apiKey = .init(profileID: profile.id, model: parts[1], searchEnabled: searchEnabled)
+            catalog.classifierTypes[index].apiKey = .init(profileID: profile.id, model: parts[1], reasoningEffort: reasoningEffort)
         } else { throw CloudClassificationError.notConfigured }
         catalog.classifierTypes[index].updatedAtMilliseconds = WorkspaceCatalog.now()
         try coordinator.updateWorkspaceCatalog(catalog)

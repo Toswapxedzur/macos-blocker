@@ -225,6 +225,13 @@
     const key = liveEditKey(form);
     const previous = liveEdits.get(key);
     window.clearTimeout(previous?.timer);
+    if (form.dataset.autosaveAction === "saveClassificationProvider" && control.dataset.field === "providerModel") {
+      const effort = form.querySelector('[data-field="reasoningEffort"]');
+      const options = reasoningChoices(control.value);
+      const previousEffort = effort.value;
+      effort.innerHTML = options.map(([value,label]) => `<option value="${esc(value)}">${esc(label)}</option>`).join("");
+      effort.value = options.some(([value]) => value === previousEffort) ? previousEffort : "default";
+    }
     const values = collect(form.dataset.formId);
     if (form.dataset.autosaveAction === "configureClassifierType") {
       Object.keys(values).forEach((field) => { if (field !== "name") delete values[field]; });
@@ -258,7 +265,7 @@
         minimumTagsOverride: type.tagging?.minimumTagsOverride == null ? "" : String(type.tagging.minimumTagsOverride),
         maximumTagsOverride: type.tagging?.maximumTagsOverride == null ? "" : String(type.tagging.maximumTagsOverride),
       };
-      case "saveClassificationProvider": return type && { providerModel: selectedTaggingModel(type), searchEnabled: (type.classificationProvider === "apiKey" ? type.apiKey : type.chatGPT)?.searchEnabled === true };
+      case "saveClassificationProvider": return type && { providerModel: selectedTaggingModel(type), reasoningEffort: (type.classificationProvider === "apiKey" ? type.apiKey : type.chatGPT)?.reasoningEffort || (type.classificationProvider === "apiKey" ? "default" : "low") };
       case "saveChatGPTUsageLimit": return { dailyRequestLimit: state.assets?.chatGPT?.dailyRequestLimit == null ? "" : String(state.assets.chatGPT.dailyRequestLimit) };
       case "saveClassifierTypeResearch": return type && {
         researchMode: type.researchEnabled === true ? "on" : type.researchEnabled === false ? "off" : "inherit",
@@ -703,23 +710,32 @@
     return `<section class="utility-settings-section" data-chatgpt-account><h3>${tx("cloud.title")}</h3><p class="small-copy">${account.connected ? esc(account.email || t("cloud.connected")) : tx("cloud.disconnected")}</p><p class="small-copy" data-info>${tx("cloud.disclosure")}</p><div class="action-row">${busy ? `<span role="status">${tx("cloud.signingIn")}</span><button type="button" class="secondary" data-action="cancelChatGPTSignIn">${tx("cloud.cancel")}</button>` : `<button type="button" class="secondary" data-action="connectChatGPT">${tx("cloud.connect")}</button>`}${account.connected ? `<button type="button" class="secondary" data-action="refreshChatGPTModels">${tx("cloud.refreshModels")}</button><button type="button" class="secondary" data-action="disconnectChatGPT">${tx("cloud.disconnect")}</button>` : ""}</div>${account.connected && !account.planUsageEnabled ? `<p role="alert">${tx("cloud.planRequired")}</p>` : ""}${notice(account.issue, "red")}<div data-form-id="chatgpt-limit-form" data-autosave-action="saveChatGPTUsageLimit">${field("cloud.dailyLimit", "cloud.dailyLimitHint", "dailyRequestLimit", account.dailyRequestLimit ?? "", "number", 'min="1" max="100000" step="1"')}</div><p class="small-copy">${tx("cloud.requestsToday", {count: account.requestsToday || 0})}</p>${account.connected ? `<button type="button" class="${account.needsRetry ? "primary" : "secondary"}" data-action="openChatGPTUsage">${tx("cloud.manageUsage")}</button>` : ""}${account.needsRetry || account.failedItems ? `<button type="button" class="secondary" data-action="retryChatGPTClassifications">${tx("cloud.retry")}</button>` : ""}</section>`;
   }
 
+  function reasoningChoices(model) {
+    const levels = state.assets?.classificationModelCapabilities?.[model]?.reasoningEfforts || ["default", "low", "medium", "high"];
+    return levels.map(value => [value, t(`cloud.reasoning.${value}`)]);
+  }
   function cloudProviderSection(type) {
     const account = state.assets?.chatGPT || {};
     const selected = selectedTaggingModel(type);
     const choices = [["", t("cloud.chooseModel")]];
-    if (account.planUsageEnabled) (account.models || []).forEach(model => choices.push([`chatgpt:${model.id}`, `${t("connections.subscription")} · ${model.name}`]));
+    if (account.planUsageEnabled) (account.models || []).forEach(model => {
+      if (state.assets?.classificationModelCapabilities?.[`chatgpt:${model.id}`]?.searchCompatible !== false) choices.push([`chatgpt:${model.id}`, `${t("connections.subscription")} · ${model.name}`]);
+    });
     for (const profile of state.assets?.providerProfiles || []) {
       if (!KEY_CONNECTIONS.includes(profile.type) || !profile.hasCredential) continue;
       for (const model of state.assets?.providerModelCatalogs?.[profile.id] || []) {
         const id = model.id || model.identifier || model;
-        choices.push([`api:${profile.id}:${id}`, `${profile.name} · ${id}`]);
+        if (state.assets?.classificationModelCapabilities?.[`api:${profile.id}:${id}`]?.searchCompatible !== false) choices.push([`api:${profile.id}:${id}`, `${profile.name} · ${id}`]);
       }
     }
     const configuration = type.classificationProvider === "apiKey" ? type.apiKey : type.chatGPT;
     if (!choices.some(([value]) => value === selected)) choices.push([selected, `${configuration?.model || ""} · ${t("cloud.unavailable")}`]);
     const configured = Boolean(configuration?.model);
+    const effort = configuration?.reasoningEffort || (type.classificationProvider === "apiKey" ? "default" : "low");
+    const efforts = reasoningChoices(selected);
+    if (!efforts.some(([value]) => value === effort)) efforts.push([effort, `${t(`cloud.reasoning.${effort}`)} · ${t("cloud.unavailable")}`]);
     const retry = account.needsRetry || account.failedItems || state.assets?.apiKeyClassification?.failedProfileIDs?.length;
-    return `<section class="classifier-type-section" data-form-id="cloud-provider-${esc(type.id)}" data-autosave-action="saveClassificationProvider" data-type-id="${esc(type.id)}">${valueSelectField("cloud.provider", "", "providerModel", selected, choices)}<div class="action-row"><button type="button" class="secondary" data-action="openConnections">${tx("connections.manage")}</button>${retry ? `<button type="button" class="secondary" data-action="retryChatGPTClassifications">${tx("cloud.retry")}</button>` : ""}</div>${configured ? `<p class="small-copy">${tx(type.classificationProvider === "apiKey" ? "connections.apiBilling" : "cloud.usingPlan")}</p>${toggle("cloud.search", "searchEnabled", configuration.searchEnabled === true)}<p class="small-copy" data-info>${tx("cloud.searchHint")}</p>` : '<input type="checkbox" hidden data-field="searchEnabled">'}</section>`;
+    return `<section class="classifier-type-section" data-form-id="cloud-provider-${esc(type.id)}" data-autosave-action="saveClassificationProvider" data-type-id="${esc(type.id)}">${valueSelectField("cloud.provider", "", "providerModel", selected, choices)}${valueSelectField("cloud.reasoning", "cloud.reasoningHint", "reasoningEffort", effort, efforts)}<div class="action-row"><button type="button" class="secondary" data-action="openConnections">${tx("connections.manage")}</button>${retry ? `<button type="button" class="secondary" data-action="retryChatGPTClassifications">${tx("cloud.retry")}</button>` : ""}</div>${configured ? `<p class="small-copy">${tx(type.classificationProvider === "apiKey" ? "connections.apiBilling" : "cloud.usingPlan")}</p><p class="small-copy" data-search-always>${tx("cloud.searchAlways")}</p>` : ""}</section>`;
   }
 
   function connectionsSection() {

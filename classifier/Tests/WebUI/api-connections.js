@@ -30,7 +30,7 @@ window.runAPIConnectionTests = async () => {
   expect([...select.options].some(o=>o.value==='api:provider-1:fixture-model'),'group offers model from the saved API key');
   select.value='api:provider-1:fixture-model';select.dispatchEvent(new Event('change',{bubbles:true}));await tick();
   const saved=commands.filter(c=>c.action==='saveClassificationProvider').at(-1);
-  expect(saved.data.providerModel==='api:provider-1:fixture-model'&&saved.data.searchEnabled===false,'API selection remains explicit and search starts off');
+  expect(saved.data.providerModel==='api:provider-1:fixture-model'&&saved.data.reasoningEffort==='low'&&!('searchEnabled' in saved.data),'API selection remains explicit with reasoning and no search-off field');
   expect(q('[data-form-id="cloud-provider-group-1"]').textContent.includes('API billing'),'API billing is distinct from subscription plan use');
   q('[data-action="openConnections"]').click();await tick();
   expect(q('[data-connection-type="openAI"]').getAttribute('aria-pressed')==='true','group link opens the selected connection');

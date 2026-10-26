@@ -70,7 +70,7 @@ struct ChatGPTClassificationEngine: BatchClassificationEngine {
         let input = String(decoding: try JSONSerialization.data(withJSONObject: evidence, options: [.sortedKeys]), as: UTF8.self)
         let base = try ChatGPTPlanProtocol.inferenceRequest(model: configuration.model, instructions: instructions, input: input)
         var body = try JSONSerialization.jsonObject(with: base.body!) as! [String: Any]
-        body["reasoning"] = ["effort": "low"]
+        if configuration.reasoningEffort != .providerDefault { body["reasoning"] = ["effort": configuration.reasoningEffort.rawValue] }
         let tag: [String: Any] = ["type": "object", "additionalProperties": false, "required": ["name", "confidence"],
             "properties": ["name": ["type": "string", "enum": first.allowedTagNames], "confidence": ["type": "integer", "minimum": 1, "maximum": 5]]]
         let item: [String: Any] = ["type": "object", "additionalProperties": false, "required": ["index", "tags"],
@@ -79,7 +79,7 @@ struct ChatGPTClassificationEngine: BatchClassificationEngine {
         body["text"] = ["format": ["type": "json_schema", "name": "vault_classification", "strict": true,
             "schema": ["type": "object", "additionalProperties": false, "required": ["items"],
                 "properties": ["items": ["type": "array", "items": item, "minItems": requests.count, "maxItems": requests.count]]]]]
-        if configuration.searchEnabled { body["tools"] = [["type": "web_search"]] }
+        body["tools"] = [["type": "web_search"]]
         return .init(url: base.url, method: base.method, contentType: base.contentType, body: try JSONSerialization.data(withJSONObject: body, options: [.sortedKeys]))
     }
 

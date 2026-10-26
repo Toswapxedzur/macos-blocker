@@ -11,12 +11,13 @@ window.runChatGPTTests = async () => {
   expect(q(provider+'[data-field="providerModel"]').value==='','new group requires an explicit ChatGPT model');
   change(provider+'[data-field="providerModel"]','chatgpt:fixture-a');await tick();
   const selected=commands.filter(message=>message.action==='saveClassificationProvider').at(-1);
-  expect(selected?.data.typeID==='group-1' && selected.data.searchEnabled===false,'provider selection sends explicit group identity and boolean search-off');
+  expect(selected?.data.typeID==='group-1' && selected.data.reasoningEffort==='low' && !('searchEnabled' in selected.data),'provider selection sends group identity and explicit reasoning without a retired search switch');
   expect(testState.assets.classifierTypes[0].classificationProvider==='chatGPT','selecting an account model persists the optional provider');
   expect(!q('[data-tagging-section] .dial-card-grid') && !q('[data-tagging-section] [data-action="downloadModel"]'),'cloud group hides local downloads and model tiers');
   expect(scope.querySelectorAll('[data-tagging-section] [data-field="strictness"]').length===5 && q('[data-tagging-section] [data-field="houseRules"]'),'cloud group retains strictness and house rules');
-  const search=q(provider+'[data-field="searchEnabled"]');search.checked=true;search.dispatchEvent(new Event('change',{bubbles:true}));await tick();
-  expect(testState.assets.classifierTypes[0].chatGPT.searchEnabled===true && !testState.settings.research.enabled,'search choice is independent of API-key research consent');
+  expect(!q(provider+'[data-field="searchEnabled"]') && q(provider+'[data-search-always]'),'search is always available without an off switch');
+  change(provider+'[data-field="reasoningEffort"]','high');await tick();
+  expect(testState.assets.classifierTypes[0].chatGPT.reasoningEffort==='high' && !testState.settings.research.enabled,'reasoning selection autosaves independently of research consent');
   const rules=q('[data-tagging-section] [data-field="houseRules"]');rules.value='Keep my terminology';rules.focus();rules.setSelectionRange(4,7);rules.dispatchEvent(new InputEvent('input',{bubbles:true}));
   testState.assets.chatGPT.requestsToday=1;pushSnapshot();await tick();
   const current=q('[data-tagging-section] [data-field="houseRules"]');

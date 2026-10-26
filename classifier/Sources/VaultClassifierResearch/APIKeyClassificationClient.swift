@@ -110,28 +110,40 @@ struct APIKeyClassificationEngine: BatchClassificationEngine {
             return ordered.flatMap { $0 }
         }
     }
+    /// Gemini rejects the expanded bounded-array grammar for larger batches.
+    /// Keep its schema small; the shared strict parser enforces exact indices,
+    /// item/tag counts, allowed names and confidence after generation.
+    static func geminiSchema(_ value: Any) -> Any {
+        if let object = value as? [String: Any] { return object.filter { !["minItems", "maxItems"].contains($0.key) }.mapValues(geminiSchema) }
+        if let array = value as? [Any] { return array.map(geminiSchema) }
+        return value
+    }
     static func prepare(_ batch: [LLMClassificationRequest], configuration: APIKeyClassificationSettings, profile: APIKeyProviderProfile) throws -> ProviderTestPreparedRequest {
         guard APIKeyClassificationClient.supports(profile.type) else { throw ProviderTestProtocolError.unsupportedProvider }
-        let template = try ChatGPTClassificationEngine.prepare(batch, configuration: .init(model: configuration.model, searchEnabled: configuration.searchEnabled))
+        try ClassificationModelPolicy.validate(provider: profile.type, model: configuration.model, effort: configuration.reasoningEffort)
+        let template = try ChatGPTClassificationEngine.prepare(batch, configuration: .init(model: configuration.model, reasoningEffort: configuration.reasoningEffort))
         var body = try JSONSerialization.jsonObject(with: template.body!) as! [String: Any]
         let instructions = body["instructions"] as! String
         let schema = ((body["text"] as! [String: Any])["format"] as! [String: Any])["schema"]!
         if profile.type == .gemini {
-            if configuration.searchEnabled && !supportsGeminiSearch(configuration.model) { throw CloudClassificationError.searchUnavailable }
             let input = body["input"] as! [[String: Any]]
             let text = ((input.first?["content"] as? [[String: Any]])?.first?["text"] as? String) ?? (input.first?["content"] as? String) ?? ""
             guard !text.isEmpty else { throw CloudClassificationError.invalidOutput }
             body = ["systemInstruction": ["parts": [["text": instructions]]],
                 "contents": [["role": "user", "parts": [["text": text]]]],
-                "generationConfig": ["maxOutputTokens": 4096, "responseFormat": ["text": ["mimeType": "APPLICATION_JSON", "schema": schema]]]]
-            if configuration.searchEnabled { body["tools"] = [["googleSearch": [:]]] }
+                "generationConfig": ["maxOutputTokens": 4096, "responseFormat": ["text": ["mimeType": "APPLICATION_JSON", "schema": Self.geminiSchema(schema)]]]]
+            body["tools"] = [["googleSearch": [:]]]
+            if configuration.reasoningEffort != .providerDefault {
+                var generation = body["generationConfig"] as! [String: Any]
+                generation["thinkingConfig"] = ["thinkingLevel": configuration.reasoningEffort.rawValue]
+                body["generationConfig"] = generation
+            }
         } else {
             body["stream"] = false; body["max_output_tokens"] = 4096
-            if profile.type == .xAI || !(configuration.model.hasPrefix("gpt-5") || configuration.model.hasPrefix("gpt-6") || configuration.model.hasPrefix("o3") || configuration.model.hasPrefix("o4")) { body.removeValue(forKey: "reasoning") }
+
         }
         let descriptor = ProviderProtocolRegistry.descriptor(for: profile.type)
         let plan = try DescriptorBackedProviderProtocol(descriptor: descriptor).requestPlan(for: profile, operation: .generateText, modelIdentifier: configuration.model)
         return .init(plan: plan, operation: .generateText, prompt: "", body: try JSONSerialization.data(withJSONObject: body, options: [.sortedKeys]))
     }
-    static func supportsGeminiSearch(_ model: String) -> Bool { model.hasPrefix("gemini-3") || model.hasPrefix("gemini-4") }
 }
