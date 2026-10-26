@@ -5,7 +5,6 @@ import FoundationNetworking
 import VaultClassifierCore
 import VaultClassifierResearch
 import VaultClassifierBridge
-import VaultClassifierLLM
 
 // The cloud-provider sub-app: profile CRUD, live connection tests, model-catalog probing and the persisted test/usage records. Research-grounding only — tagging never touches a provider.
 // Split out of VaultClassifierApp.swift (CLASSIFIER-INDEPENDENCE §7, Phase 5):

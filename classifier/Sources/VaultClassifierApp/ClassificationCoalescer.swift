@@ -24,7 +24,6 @@ final class ClassificationCoalescer<Item> {
     typealias Run = (_ platformID: String, _ items: [Item]) async -> Void
 
     let chunkSize: Int
-    private let chunkSizeForPlatform: ((String) -> Int)?
     let arrivalWindowNanoseconds: UInt64
     /// Fired each time a drain empties the queue and the engine goes idle.
     var onIdle: (() -> Void)?
@@ -35,9 +34,8 @@ final class ClassificationCoalescer<Item> {
     private var arrivalTask: Task<Void, Never>?
     private var isShuttingDown = false
 
-    init(chunkSize: Int, chunkSizeForPlatform: ((String) -> Int)? = nil, arrivalWindowNanoseconds: UInt64, run: @escaping Run) {
+    init(chunkSize: Int, arrivalWindowNanoseconds: UInt64, run: @escaping Run) {
         self.chunkSize = max(1, chunkSize)
-        self.chunkSizeForPlatform = chunkSizeForPlatform
         self.arrivalWindowNanoseconds = arrivalWindowNanoseconds
         self.run = run
     }
@@ -82,8 +80,7 @@ final class ClassificationCoalescer<Item> {
             return nil
         }
         let platformID = pending[index].platformID
-        let capacity = max(1, chunkSizeForPlatform?(pending[index].platformID) ?? chunkSize)
-        let take = min(capacity, pending[index].items.count)
+        let take = min(chunkSize, pending[index].items.count)
         let items = Array(pending[index].items.prefix(take))
         pending[index].items.removeFirst(take)
         if pending[index].items.isEmpty { pending.remove(at: index) }

@@ -8,14 +8,13 @@ import Combine
 import VaultClassifierCore
 import VaultClassifierResearch
 import VaultClassifierBridge
-import VaultClassifierLLM
 
 @MainActor
 final class VaultClassifierViewModel: ObservableObject {
     /// A group's concrete dial positions and house rules from the web form.
-    struct ClassifierTypeLocalModelWebInput: Equatable {
+    struct ClassifierTypeTaggingWebInput: Equatable {
         var typeID: String
-        var settings: LocalLLMSettings
+        var settings: TaggingSettings
     }
     /// A type's research switch from the web form (nil = follow the global switch).
     struct ClassifierTypeResearchWebInput: Equatable {
@@ -32,7 +31,6 @@ final class VaultClassifierViewModel: ObservableObject {
     @Published var workspace: Workspace = .browserBridge
     @Published var issue: String?
     @Published var localState: LocalClassifierState?
-    @Published private(set) var modelEngineStatuses: [String: String] = [:]
     @Published var backupOwnerCode = ""
     @Published var backupDirectory = ""
     @Published var backupEnabled = false
@@ -46,11 +44,6 @@ final class VaultClassifierViewModel: ObservableObject {
     var onWebStateChange: (() -> Void)?
 
     private(set) var isShuttingDown = false
-    var localLLMRegistry: LocalLLMEngineRegistry?
-    var modelWarmupTask: Task<Void, Never>?
-    var liveEngineRuntime = false
-    var activeLocalRuntimeID: UUID?
-    var retiringLocalModels: [UUID: Task<Void, Never>] = [:]
     var chatGPTClient: ChatGPTAccountClient?
     @Published var chatGPTStatus = ChatGPTAccountStatus()
     var failedCloudClassifications: [String: (platform: String, item: NativeVideoTagsBatchItem)] = [:]
@@ -65,29 +58,13 @@ final class VaultClassifierViewModel: ObservableObject {
         sharedHubClient?.onStateChange = nil
         sharedHubClient?.disconnect()
         coordinator?.beginShutdown()
-        modelWarmupTask?.cancel()
-        let registry = localLLMRegistry
-        let warmup = modelWarmupTask
-        let retiring = Array(retiringLocalModels.values)
         let task = Task { [self] in
-            // Start native cancellation before waiting for queues that may be
-            // blocked on a synchronous llama call. Never free during that call.
-            let closeModels = Task { await registry?.shutdown() }
             let closeResearch = Task { await groundedResearchQueue?.shutdown() }
             let closeCloud = Task { await chatGPTClient?.shutdown() }
             await classificationCoalescer.shutdown()
-            await closeResearch.value
-            await closeCloud.value
-            await warmup?.value
-            await closeModels.value
-            for task in retiring { await task.value }
-            retiringLocalModels.removeAll()
-            coordinator?.setOnDeviceLLMEngineResolver(nil)
+            await closeResearch.value; await closeCloud.value
             coordinator?.setCloudEngineResolver(nil)
-            localLLMRegistry = nil
-            modelWarmupTask = nil
-            inFlightVideoClassifications.removeAll()
-            latestCloudClassificationInputs.removeAll()
+            inFlightVideoClassifications.removeAll(); latestCloudClassificationInputs.removeAll()
             LocalStateFile.flushAllPendingWrites()
         }
         shutdownTask = task
@@ -116,11 +93,8 @@ final class VaultClassifierViewModel: ObservableObject {
     var providerModelCatalogs = [String: [ProviderModelCatalogEntry]]()
     var providerModelCatalogErrors = [String: String]()
     var loadingProviderModelProfileIDs = Set<String>()
-    let modelDownloadManager: ModelDownloadManager
-    var modelDownloadFractions: [String: Double] = [:]
 
-    init(modelDownloadManager: ModelDownloadManager = ModelDownloadManager()) {
-        self.modelDownloadManager = modelDownloadManager
+    init() {
         do {
             let vaultDirectory = try VaultClassifierDirectory.prepare()
             let package = try SeedPackageLoader.bundled()
@@ -161,7 +135,6 @@ final class VaultClassifierViewModel: ObservableObject {
             sharedHubClient.connect()
             installGroundedResearch(coordinator: coordinator)
             installChatGPT(directory: vaultDirectory, coordinator: coordinator)
-            installLocalLLMEngine(coordinator: coordinator)
             try installDictionaries(directory: vaultDirectory, coordinator: coordinator, automaticallyCheck: true)
         } catch {
             issue = error.localizedDescription
@@ -173,8 +146,7 @@ final class VaultClassifierViewModel: ObservableObject {
     /// app-support directory, the Keychain, the local hub, the GGUF engine, the
     /// network or the startup migrations. The coordinator runs on the stub LLM,
     /// so `webSnapshot()` / `performWebAction` can be characterised exactly.
-    init(headlessVaultDirectory vaultDirectory: URL, modelDownloadManager: ModelDownloadManager = ModelDownloadManager()) throws {
-        self.modelDownloadManager = modelDownloadManager
+    init(headlessVaultDirectory vaultDirectory: URL) throws {
         let package = try SeedPackageLoader.bundled()
         let collectionDiagnostics = CollectionDiagnosticsStore(fileURL: vaultDirectory.appendingPathComponent("collection-diagnostics.json"))
         self.collectionDiagnostics = collectionDiagnostics
@@ -190,38 +162,7 @@ final class VaultClassifierViewModel: ObservableObject {
         self.providerModelCatalogStore = providerModelCatalogStore
         self.providerModelCatalogs = providerModelCatalogStore.load(allowedProfileIDs: llmProviderProfileIDs())
         loadBackupConfiguration(from: coordinator.snapshot().backupConfiguration)
-        coordinator.setOnDeviceLLM(StubOnDeviceLLM())
         try installDictionaries(directory: vaultDirectory, coordinator: coordinator, automaticallyCheck: false)
-    }
-
-    /// Each group's selected model loads lazily through the shared registry.
-    /// Missing model files produce provisional stub results, never another group's tier.
-    func installLocalLLMEngine(coordinator: LocalClassifierCoordinator) {
-        guard !isShuttingDown else { return }
-        liveEngineRuntime = true
-        let runtimeID = UUID(); activeLocalRuntimeID = runtimeID
-        coordinator.setOnDeviceLLM(StubOnDeviceLLM())
-        let registry = LocalLLMEngineRegistry { [weak self] fileName, status in
-            Task { @MainActor [weak self] in
-                guard let self, !self.isShuttingDown, self.activeLocalRuntimeID == runtimeID, self.modelEngineStatuses[fileName] != status else { return }
-                self.modelEngineStatuses[fileName] = status
-                self.onWebStateChange?()
-            }
-        }
-        localLLMRegistry = registry
-        coordinator.setOnDeviceLLMEngineResolver(registry)
-        var seen = Set<SpeedQualityDial>()
-        let configurations = coordinator.snapshot().workspaceCatalog.classifierTypes
-            .filter { $0.classificationProvider == .local && !$0.isPaused }
-            .map(\.localModel).filter { seen.insert($0.speedQuality).inserted }
-            .prefix(LocalLLMSettings.maxResidentModels)
-        // Keep the normal first-video path warm without choosing an app-wide tier.
-        modelWarmupTask = Task.detached(priority: .userInitiated) {
-            for configuration in configurations {
-                guard !Task.isCancelled else { return }
-                _ = try? await registry.engine(forModel: configuration.modelFileName, configuration: configuration)
-            }
-        }
     }
 
     // Dev-only instrumentation, routed into the unified VaultDevLog file.
@@ -241,7 +182,6 @@ final class VaultClassifierViewModel: ObservableObject {
     lazy var classificationCoalescer: ClassificationCoalescer<NativeVideoTagsBatchItem> = {
         let coalescer = ClassificationCoalescer<NativeVideoTagsBatchItem>(
             chunkSize: Self.classificationChunkSize,
-            chunkSizeForPlatform: { [weak self] in self?.classificationChunkSize(for: $0) ?? Self.classificationChunkSize },
             arrivalWindowNanoseconds: Self.classificationArrivalWindowNanoseconds
         ) { [weak self] platformID, chunk in
             await self?.classifyChunk(platformID: platformID, chunk)
@@ -255,16 +195,7 @@ final class VaultClassifierViewModel: ObservableObject {
     /// the hub so provisional pills resolve the moment the result exists,
     /// instead of waiting for the extension's next poll.
     /// Videos handed to the engine together — its parallel-sequence capacity.
-    static let classificationChunkSize = 16
-
-    /// Feed two provider batches to cloud-only platforms. Local or mixed
-    /// platforms retain their existing 16-item queue/Metal scheduling.
-    func classificationChunkSize(for platformID: String) -> Int {
-        let types = coordinator?.snapshot().workspaceCatalog.classifierTypes.filter {
-            !$0.isPaused && $0.applicablePlatformIDs.contains(platformID)
-        } ?? []
-        return !types.isEmpty && types.allSatisfy { $0.classificationProvider == .chatGPT } ? 32 : Self.classificationChunkSize
-    }
+    static let classificationChunkSize = 32
 
     /// How long an idle engine waits for the rest of a screenful before it
     /// starts (a lone video pays this in full). `VAULT_ARRIVAL_WINDOW_MS`
@@ -307,7 +238,6 @@ final class VaultClassifierViewModel: ObservableObject {
         if Self.browserStateChanged(from: previous, to: localState) {
             sharedHubClient?.broadcast(operation: SharedBrowserBridgeOperation.classifierStateUpdatedBroadcast, body: [:] as [String: String])
         }
-        reconcileLocalRuntime()
     }
 
     // Refresh browser projections and covers without invalidating stored decisions.
@@ -388,7 +318,7 @@ enum WebBridgeInputError: Error, LocalizedError {
     private static func label(for field: String) -> String {
         let labels = [
             "name": "the name", "houseRules": "tagging instructions",
-            "speedQuality": "Speed ↔ Quality", "strictness": "Strict ↔ Broad",
+            "strictness": "Strict ↔ Broad",
             "researchMode": "research for this group", "minimumTags": "minimum tags",
             "maximumTags": "maximum tags", "minimumTagsOverride": "minimum tags",
             "maximumTagsOverride": "maximum tags",

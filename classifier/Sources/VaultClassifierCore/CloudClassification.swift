@@ -6,7 +6,7 @@ import Crypto
 #endif
 
 public enum ClassificationProvider: String, Codable, CaseIterable, Sendable {
-    case local, chatGPT
+    case chatGPT
 }
 
 /// Public configuration only. Account credentials never enter classifier state,
@@ -39,7 +39,7 @@ public enum CloudClassificationError: Error, LocalizedError, Equatable, Sendable
 }
 
 public protocol CloudClassificationEngineResolving: Sendable {
-    func resolveCloudEngine(for type: ClassifierTypeAsset) async throws -> any OnDeviceLLM
+    func resolveCloudEngine(for type: ClassifierTypeAsset) async throws -> any ClassificationEngine
 }
 
 extension ClassifierTypeAsset {
@@ -50,8 +50,8 @@ extension ClassifierTypeAsset {
         let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
         let data = (try? encoder.encode(CloudCurrency(
             account: chatGPT.accountID, model: chatGPT.model,
-            search: chatGPT.searchEnabled, rules: localModel.houseRules,
-            strictness: localModel.strictness, bounds: localModel.tagBounds))) ?? Data()
+            search: chatGPT.searchEnabled, rules: tagging.houseRules,
+            strictness: tagging.strictness, bounds: tagging.tagBounds))) ?? Data()
         return "chatgpt/self-reported-v1/" + SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
     }
 }

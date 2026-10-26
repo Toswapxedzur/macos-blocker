@@ -1,7 +1,6 @@
 import Foundation
 import VaultClassifierCore
 import VaultClassifierBridge
-import VaultClassifierLLM
 
 // The tag-tree graph editor: rearrange a type's tree and add/move/rename/update/connect/disconnect/delete tags, bumping the tree revision. A tree is created and deleted with its type.
 // Split out of VaultClassifierApp.swift (CLASSIFIER-INDEPENDENCE §7, Phase 5):

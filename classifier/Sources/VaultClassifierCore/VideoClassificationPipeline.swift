@@ -7,14 +7,14 @@ import Foundation
 // step, so this stays a pure transform and is easy to test with the stub LLM.
 
 public struct VideoClassificationPipeline: Sendable {
-    public let llm: any OnDeviceLLM
+    public let llm: any ClassificationEngine
     /// Upper bound on tags per video. The engine now emits up to this many names
     /// (grammar-bounded), so it is a real knob — but see `secondaryConfidenceFloor`:
     /// only the top tag is unconditional; additional tags must clear the floor, so
     /// a single-topic video still resolves to one tag even at a high cap.
     public let maximumTags: Int
     /// Fewest tags to keep (0 = may decline). ≥1 forbids declining and forces the
-    /// best guesses even below the secondary floor; see LocalLLMSettings.minimumTags.
+    /// best guesses even below the secondary floor; see TaggingSettings.minimumTags.
     public let minimumTags: Int
     /// A secondary (non-top) tag is kept only when its confidence is at least this.
     /// Ungated multi-tag floods low-confidence guesses (eval 2026-09-16: at cap 3,
@@ -26,7 +26,7 @@ public struct VideoClassificationPipeline: Sendable {
     public let promptVersion: String
 
     public init(
-        llm: any OnDeviceLLM,
+        llm: any ClassificationEngine,
         maximumTags: Int = 5,
         minimumTags: Int = 0,
         secondaryConfidenceFloor: Int = 4,

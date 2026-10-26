@@ -3,25 +3,6 @@
 import PackageDescription
 import Foundation
 
-// Every transitive engine import uses the same headers as classifier/Package.swift.
-// Release builds select the pinned source runtime; ordinary development may
-// continue to use the shared Homebrew include root.
-let brewPrefix: String = {
-    if let runtime = ProcessInfo.processInfo.environment["VAULT_LLAMA_PREFIX"], !runtime.isEmpty {
-        return runtime
-    }
-    if let override = ProcessInfo.processInfo.environment["HOMEBREW_PREFIX"], !override.isEmpty {
-        return override
-    }
-    for candidate in ["/opt/homebrew", "/usr/local"] where FileManager.default.fileExists(atPath: candidate + "/include") {
-        return candidate
-    }
-    return "/opt/homebrew"
-}()
-// Unconditional on purpose: Xcode does not apply a platform-conditioned unsafe
-// flag to a package target.
-let cllamaIncludeFlags: [SwiftSetting] = [.unsafeFlags(["-Xcc", "-I\(brewPrefix)/include"])]
-
 let package = Package(
     name: "macosBlocker",
     platforms: [
@@ -83,14 +64,12 @@ let package = Package(
                     package: "classifier",
                     condition: .when(platforms: [.macOS])
                 )
-            ],
-            swiftSettings: cllamaIncludeFlags
+            ]
         ),
         .executableTarget(
             name: "MacBlockerPanel",
             dependencies: ["MacBlockerAppFeature", "MacBlockerCore"],
-            resources: [.copy("Resources")],
-            swiftSettings: cllamaIncludeFlags
+            resources: [.copy("Resources")]
         ),
         .testTarget(
             name: "MacBlockerCoreTests",
@@ -102,8 +81,7 @@ let package = Package(
         ),
         .testTarget(
             name: "MacBlockerAppFeatureTests",
-            dependencies: ["MacBlockerAppFeature"],
-            swiftSettings: cllamaIncludeFlags
+            dependencies: ["MacBlockerAppFeature"]
         )
     ]
 )

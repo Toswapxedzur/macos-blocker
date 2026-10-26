@@ -8,7 +8,7 @@ private final class CoordinatorRequestRecorder: @unchecked Sendable {
     var requests: [LLMClassificationRequest] { lock.withLock { stored } }
 }
 
-private struct CoordinatorRecordingLLM: OnDeviceLLM {
+private struct CoordinatorRecordingLLM: ClassificationEngine {
     let modelVersion = "recording/v1"
     let recorder: CoordinatorRequestRecorder
     func classify(_ request: LLMClassificationRequest) async throws -> LLMClassificationResult {
@@ -19,7 +19,7 @@ private struct CoordinatorRecordingLLM: OnDeviceLLM {
 
 /// Declines every title: the weakest possible signal, so research decisions are
 /// exercised without any model.
-private struct DecliningLLM: OnDeviceLLM {
+private struct DecliningLLM: ClassificationEngine {
     let modelVersion = "decline/v1"
     func classify(_ request: LLMClassificationRequest) async throws -> LLMClassificationResult { .init(tags: []) }
 }
@@ -35,7 +35,7 @@ private final class BatchCallProbe: @unchecked Sendable {
 }
 
 /// A batching engine: tags a video "Games" when its title mentions games.
-private struct BatchingLLM: OnDeviceBatchLLM {
+private struct BatchingLLM: BatchClassificationEngine {
     let modelVersion = "batching/v1"
     let probe: BatchCallProbe
     private func answer(_ request: LLMClassificationRequest) -> LLMClassificationResult {
@@ -59,16 +59,16 @@ private final class ResearchSubjectRecorder: @unchecked Sendable {
     var subjects: [ResearchSubject] { lock.withLock { stored } }
 }
 
-private actor CountingEngineResolver: OnDeviceLLMEngineResolving {
+private actor CountingEngineResolver: RetiredLocalEngineResolving {
     private(set) var requestedFiles: [String] = []
-    let engine: any OnDeviceLLM
+    let engine: any ClassificationEngine
 
-    init(engine: any OnDeviceLLM) { self.engine = engine }
+    init(engine: any ClassificationEngine) { self.engine = engine }
 
     func resolveEngine(
         forModel fileName: String,
-        configuration: LocalLLMSettings
-    ) async throws -> any OnDeviceLLM {
+        configuration: TaggingSettings
+    ) async throws -> any ClassificationEngine {
         requestedFiles.append(fileName)
         return engine
     }
@@ -79,7 +79,7 @@ final class VideoClassificationCoordinatorTests: XCTestCase {
         let (coordinator, root) = try makeCoordinatorWithYouTubeType()
         defer { try? FileManager.default.removeItem(at: root) }
         let recorder = CoordinatorRequestRecorder()
-        coordinator.setOnDeviceLLMEngineResolver(CountingEngineResolver(engine: CoordinatorRecordingLLM(recorder: recorder)))
+        coordinator.setClassificationEngineEngineResolver(CountingEngineResolver(engine: CoordinatorRecordingLLM(recorder: recorder)))
         XCTAssertEqual(coordinator.enabledClassificationPlatformIDs(), ["youtube"])
         var catalog = coordinator.snapshot().workspaceCatalog
         catalog.classifierTypes[0].isPaused = true
@@ -105,10 +105,10 @@ final class VideoClassificationCoordinatorTests: XCTestCase {
         let (coordinator, root) = try makeCoordinatorWithYouTubeType()
         defer { try? FileManager.default.removeItem(at: root) }
         let recorder = CoordinatorRequestRecorder()
-        coordinator.setOnDeviceLLMEngineResolver(CountingEngineResolver(engine: CoordinatorRecordingLLM(recorder: recorder)))
+        coordinator.setClassificationEngineEngineResolver(CountingEngineResolver(engine: CoordinatorRecordingLLM(recorder: recorder)))
         var catalog = coordinator.snapshot().workspaceCatalog
         let index = try XCTUnwrap(catalog.classifierTypes.firstIndex { $0.applicablePlatformIDs.contains("youtube") })
-        catalog.classifierTypes[index].localModel = .init(strictness: .strict, minimumTagsOverride: 2, maximumTagsOverride: 2)
+        catalog.classifierTypes[index].tagging = .init(strictness: .strict, minimumTagsOverride: 2, maximumTagsOverride: 2)
         try coordinator.updateWorkspaceCatalog(catalog)
         _ = try await coordinator.classifyVideo(platformID: "youtube", entryID: "bounded", creatorID: "creator", title: "Title")
         let request = try XCTUnwrap(recorder.requests.last)
@@ -125,13 +125,13 @@ final class VideoClassificationCoordinatorTests: XCTestCase {
         let serving = "llamacpp/" + type.modelFileName
         var row = VideoClassification(classifierTypeID: type.id, platformID: "youtube", entryID: "entry",
             creatorID: "creator", treeID: type.treeID, treeRevision: 1, tags: [], source: .model,
-            modelVersion: serving, tagBounds: type.localModel.tagBounds)
+            modelVersion: serving, tagBounds: type.tagging.tagBounds)
         XCTAssertTrue(LocalClassifierCoordinator.isClassificationCurrent(row, forType: type, servingModelVersion: serving))
-        type.localModel.maximumTagsOverride = 2
+        type.tagging.maximumTagsOverride = 2
         XCTAssertFalse(LocalClassifierCoordinator.isClassificationCurrent(row, forType: type, servingModelVersion: serving))
-        row.tagBounds = type.localModel.tagBounds
+        row.tagBounds = type.tagging.tagBounds
         XCTAssertTrue(LocalClassifierCoordinator.isClassificationCurrent(row, forType: type, servingModelVersion: serving))
-        type.localModel.maximumTagsOverride = nil
+        type.tagging.maximumTagsOverride = nil
         XCTAssertFalse(LocalClassifierCoordinator.isClassificationCurrent(row, forType: type, servingModelVersion: serving))
         row.source = .humanCorrected
         XCTAssertTrue(LocalClassifierCoordinator.isClassificationCurrent(row, forType: type, servingModelVersion: serving))
@@ -141,7 +141,7 @@ final class VideoClassificationCoordinatorTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: root) }
         let selectedRecorder = CoordinatorRequestRecorder()
         let resolver = CountingEngineResolver(engine: CoordinatorRecordingLLM(recorder: selectedRecorder))
-        coordinator.setOnDeviceLLMEngineResolver(resolver)
+        coordinator.setClassificationEngineEngineResolver(resolver)
 
         _ = try await coordinator.classifyVideo(
             platformID: "youtube", entryID: "inherited", creatorID: "creator", title: "Title"
@@ -153,7 +153,7 @@ final class VideoClassificationCoordinatorTests: XCTestCase {
         let index = try XCTUnwrap(catalog.classifierTypes.firstIndex(where: { $0.applicablePlatformIDs.contains("youtube") }))
         // The type's own Speed↔Quality tier names the per-type engine; its own
         // Strict↔Broad position rides on every request.
-        catalog.classifierTypes[index].localModel = .init(speedQuality: .best, strictness: .strict)
+        catalog.classifierTypes[index].tagging = .init(speedQuality: .best, strictness: .strict)
         try coordinator.updateWorkspaceCatalog(catalog)
 
         _ = try await coordinator.classifyVideo(
@@ -285,7 +285,7 @@ final class VideoClassificationCoordinatorTests: XCTestCase {
                 id: "a", name: "A", treeID: treeA.id, treeRevision: treeA.revision,
                 datasetID: dataset.id, datasetRevision: dataset.revision,
                 applicablePlatformIDs: ["youtube"],
-                localModel: .init(strictness: .strictest, houseRules: "Type A rule."), order: 0
+                tagging: .init(strictness: .strictest, houseRules: "Type A rule."), order: 0
             ),
             // A platform belongs to at most one classifier type, so the second
             // type lives on its own platform (same shared dataset).
@@ -298,7 +298,7 @@ final class VideoClassificationCoordinatorTests: XCTestCase {
         _ = try catalog.ensurePlatformBinding("bilibili")
         try coordinator.updateWorkspaceCatalog(catalog)
         let recorder = CoordinatorRequestRecorder()
-        coordinator.setOnDeviceLLM(CoordinatorRecordingLLM(recorder: recorder))
+        coordinator.setClassificationEngine(CoordinatorRecordingLLM(recorder: recorder))
 
         _ = try await coordinator.classifyVideo(
             platformID: "youtube", entryID: "v", creatorID: "c", title: "title"
@@ -376,7 +376,7 @@ final class VideoClassificationCoordinatorTests: XCTestCase {
             $0.id == catalog.bindings.first(where: { $0.id == "youtube" })?.datasetID
         }))
         let typeIndex = try XCTUnwrap(catalog.classifierTypes.firstIndex(where: { $0.id == "type" }))
-        catalog.classifierTypes[typeIndex].localModel = .init(houseRules: "Manual type rule.")
+        catalog.classifierTypes[typeIndex].tagging = .init(houseRules: "Manual type rule.")
         let correctionCount = 5
         for index in 0..<correctionCount {
             _ = catalog.datasets[datasetIndex].upsertCollectedEntry(.init(
@@ -397,21 +397,21 @@ final class VideoClassificationCoordinatorTests: XCTestCase {
             XCTAssertEqual(projection.tags.map(\.id), ["g"])
             XCTAssertEqual(
                 coordinator.snapshot().workspaceCatalog.classifierTypes[typeIndex]
-                    .localModel.houseRules,
+                    .tagging.houseRules,
                 "Manual type rule.",
                 "corrections must not auto-write the house-rules block"
             )
         }
 
         let saved = coordinator.snapshot().workspaceCatalog
-        let rules = saved.classifierTypes[typeIndex].localModel.houseRules
+        let rules = saved.classifierTypes[typeIndex].tagging.houseRules
         XCTAssertEqual(rules, "Manual type rule.", "corrections never write into the house rules")
         XCTAssertEqual(saved.videoClassification(
             classifierTypeID: "type", platformID: "youtube", entryID: "v\(correctionCount - 1)"
         )?.source, .humanCorrected)
 
         let recorder = CoordinatorRequestRecorder()
-        coordinator.setOnDeviceLLM(CoordinatorRecordingLLM(recorder: recorder))
+        coordinator.setClassificationEngine(CoordinatorRecordingLLM(recorder: recorder))
 
         // A corrected row is authoritative: re-classifying it never hits the model.
         let correctedProjection = try await coordinator.classifyVideo(
@@ -462,7 +462,7 @@ final class VideoClassificationCoordinatorTests: XCTestCase {
             researcher: { _, _ in throw GroundedResearchError.invalidConfiguration }
         )
         coordinator.setGroundedResearchQueue(queue)
-        coordinator.setOnDeviceLLM(DecliningLLM())
+        coordinator.setClassificationEngine(DecliningLLM())
 
         _ = try coordinator.submitCorrection(
             classifierTypeID: "type", platformID: "youtube", entryID: "v", correctTagIDs: ["g"]
@@ -514,7 +514,7 @@ final class VideoClassificationCoordinatorTests: XCTestCase {
         let recorder = ResearchSubjectRecorder()
         let queue = recordingQueue(recorder)
         coordinator.setGroundedResearchQueue(queue)
-        coordinator.setOnDeviceLLM(DecliningLLM())
+        coordinator.setClassificationEngine(DecliningLLM())
 
         for index in 0..<2 {
             let projection = try await coordinator.classifyVideo(
@@ -588,7 +588,7 @@ final class VideoClassificationCoordinatorTests: XCTestCase {
         let (coordinator, root) = try makeCoordinatorWithYouTubeType()
         defer { try? FileManager.default.removeItem(at: root) }
         let probe = BatchCallProbe()
-        coordinator.setOnDeviceLLM(BatchingLLM(probe: probe))
+        coordinator.setClassificationEngine(BatchingLLM(probe: probe))
 
         let projections = try await coordinator.classifyVideos(platformID: "youtube", items: [
             .init(title: "Best games of the year", entryID: "a", creatorID: "youtube:handle:@one"),
@@ -706,7 +706,7 @@ final class VideoClassificationCoordinatorTests: XCTestCase {
         XCTAssertTrue(current(row(.humanCorrected, "stub/v1"), type, serving))
         // Each group matches its own tier, independent of another serving model.
         var typeWithModel = type
-        typeWithModel.localModel = .init(speedQuality: .fast)
+        typeWithModel.tagging = .init(speedQuality: .fast)
         XCTAssertTrue(current(row(.model, "llamacpp/Qwen2.5-3B-Instruct-Q4_K_M.gguf+p"), typeWithModel, serving))
         XCTAssertFalse(current(row(.model, "llamacpp/Qwen2.5-7B-Instruct-Q4_K_M.gguf+p"), typeWithModel, serving))
         // The dial's model not downloaded → the stub serves, and its own rows are

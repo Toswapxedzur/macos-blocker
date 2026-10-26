@@ -77,12 +77,12 @@ final class LegacyStateDecodeTests: XCTestCase {
 
         let decoded = try JSONDecoder().decode(LocalClassifierState.self, from: JSONSerialization.data(withJSONObject: state))
         XCTAssertEqual(decoded.schemaVersion, LocalClassifierState.currentSchemaVersion, "an older schema version is lifted, not rejected")
-        XCTAssertEqual(decoded.workspaceCatalog.classifierTypes[0].localModel.strictness, .broadest, "max 3 / min 1 → the Broadest position")
-        XCTAssertEqual(decoded.workspaceCatalog.classifierTypes[0].localModel.maximumTags, 3)
-        XCTAssertEqual(decoded.workspaceCatalog.classifierTypes[0].localModel.minimumTags, 1)
+        XCTAssertEqual(decoded.workspaceCatalog.classifierTypes[0].tagging.strictness, .broadest, "max 3 / min 1 → the Broadest position")
+        XCTAssertEqual(decoded.workspaceCatalog.classifierTypes[0].tagging.maximumTags, 3)
+        XCTAssertEqual(decoded.workspaceCatalog.classifierTypes[0].tagging.minimumTags, 1)
         let type = try XCTUnwrap(decoded.workspaceCatalog.classifierTypes.first)
         XCTAssertEqual(type.applicablePlatformIDs, ["youtube"])
-        XCTAssertEqual(type.localModel.strictness, .broadest)
+        XCTAssertEqual(type.tagging.strictness, .broadest)
         XCTAssertNoThrow(try decoded.workspaceCatalog.validate())
 
         let rewritten = String(decoding: try JSONEncoder().encode(decoded), as: UTF8.self)
@@ -109,24 +109,24 @@ final class LegacyStateDecodeTests: XCTestCase {
         var own = group("own")
         own["localModelOverrides"] = ["speedQuality": "balanced", "strictness": 1, "houseRules": "own rules"]
         var current = group("current")
-        current["localModel"] = ["speedQuality": "balanced", "strictness": 3, "houseRules": ""]
+        current["tagging"] = ["speedQuality": "balanced", "strictness": 3, "houseRules": ""]
         catalog["classifierTypes"] = [inherited, partial, own, current]
         let raw: [String: Any] = ["workspaceCatalog": catalog,
             "settings": ["localLLM": ["speedQuality": "best", "strictness": 5, "houseRules": "shared rules"]]]
         var decoded = try JSONDecoder().decode(LocalClassifierState.self, from: JSONSerialization.data(withJSONObject: raw))
         let groups = decoded.workspaceCatalog.classifierTypes
-        XCTAssertEqual(groups[0].localModel, .init(speedQuality: .best, strictness: .broadest, houseRules: "shared rules"))
-        XCTAssertEqual(groups[1].localModel, .init(speedQuality: .fast, strictness: .broadest, houseRules: "shared rules"))
-        XCTAssertEqual(groups[2].localModel, .init(speedQuality: .balanced, strictness: .strictest, houseRules: "own rules"))
-        XCTAssertEqual(groups[3].localModel, .init(), "already independent settings must not inherit retired defaults")
-        decoded.workspaceCatalog.classifierTypes[0].localModel = .init(speedQuality: .fast)
-        XCTAssertEqual(decoded.workspaceCatalog.classifierTypes[1].localModel, groups[1].localModel)
+        XCTAssertEqual(groups[0].tagging, .init(speedQuality: .best, strictness: .broadest, houseRules: "shared rules"))
+        XCTAssertEqual(groups[1].tagging, .init(speedQuality: .fast, strictness: .broadest, houseRules: "shared rules"))
+        XCTAssertEqual(groups[2].tagging, .init(speedQuality: .balanced, strictness: .strictest, houseRules: "own rules"))
+        XCTAssertEqual(groups[3].tagging, .init(), "already independent settings must not inherit retired defaults")
+        decoded.workspaceCatalog.classifierTypes[0].tagging = .init(speedQuality: .fast)
+        XCTAssertEqual(decoded.workspaceCatalog.classifierTypes[1].tagging, groups[1].tagging)
         let encoded = try JSONEncoder().encode(decoded)
         let json = String(decoding: encoded, as: UTF8.self)
         XCTAssertFalse(json.contains("localLLM")); XCTAssertFalse(json.contains("localModelOverrides"))
         XCTAssertEqual(try JSONDecoder().decode(LocalClassifierState.self, from: encoded), decoded)
         let new = ClassifierTypeAsset(name: "new", treeID: tree.id, treeRevision: 1, datasetID: dataset.id, datasetRevision: 1)
-        XCTAssertEqual(new.localModel, .init(), "new groups never copy another group's settings")
+        XCTAssertEqual(new.tagging, .init(), "new groups never copy another group's settings")
     }
 
     func testMalformedRetiredGlobalDialStateIsIgnoredSafely() throws {
@@ -137,12 +137,12 @@ final class LegacyStateDecodeTests: XCTestCase {
             "localModelOverrides": ["speedQuality": ["malformed": true]]]]
         let raw: [String: Any] = ["settings": ["localLLM": ["malformed"]], "workspaceCatalog": catalog]
         let decoded = try JSONDecoder().decode(LocalClassifierState.self, from: JSONSerialization.data(withJSONObject: raw))
-        XCTAssertEqual(decoded.workspaceCatalog.classifierTypes[0].localModel, .init())
+        XCTAssertEqual(decoded.workspaceCatalog.classifierTypes[0].tagging, .init())
     }
 
     func testBackupManifestFromAnOlderBuildStillLoads() throws {
         let legacy = #"{"createdAtMilliseconds":1700000000000,"packageChecksum":"abc","collectedEntryCount":3,"trainingExampleCount":9,"personalModelVersion":"v1"}"#
-        let manifest = try JSONDecoder().decode(LocalModelBackupManifest.self, from: Data(legacy.utf8))
+        let manifest = try JSONDecoder().decode(ClassifierBackupManifest.self, from: Data(legacy.utf8))
         XCTAssertEqual(manifest.collectedEntryCount, 3)
         XCTAssertEqual(manifest.videoClassificationCount, 0)
     }

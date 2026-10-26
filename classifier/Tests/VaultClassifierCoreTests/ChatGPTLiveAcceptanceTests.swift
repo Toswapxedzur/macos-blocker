@@ -85,7 +85,7 @@ final class ChatGPTLiveAcceptanceTests: XCTestCase {
                 datasetID: dataset.id, datasetRevision: dataset.revision, applicablePlatformIDs: ["youtube"],
                 classificationProvider: .chatGPT, chatGPT: .init(accountID: status.accountID, model: model.identifier)))
             try coordinator.updateWorkspaceCatalog(catalog); coordinator.setCloudEngineResolver(client)
-            let local = LiveForbiddenLocalResolver(); coordinator.setOnDeviceLLMEngineResolver(local)
+            let local = LiveForbiddenLocalResolver(); coordinator.setClassificationEngineEngineResolver(local)
             let titles = ["An introduction to quadratic equations", "Minecraft redstone door tutorial", "How to bake sourdough bread"]
             let expected = ["Mathematics", "Gaming", "Cooking"]
             let inputs = titles.enumerated().map {
@@ -128,10 +128,10 @@ final class ChatGPTLiveAcceptanceTests: XCTestCase {
     }
 }
 
-private actor LiveForbiddenLocalResolver: OnDeviceLLMEngineResolving {
+private actor LiveForbiddenLocalResolver: RetiredLocalEngineResolving {
     private(set) var calls = 0
-    func resolveEngine(forModel fileName: String, configuration: LocalLLMSettings) async throws -> any OnDeviceLLM {
-        calls += 1; throw OnDeviceLLMError.notReady("Local inference is forbidden in live cloud acceptance.")
+    func resolveEngine(forModel fileName: String, configuration: TaggingSettings) async throws -> any ClassificationEngine {
+        calls += 1; throw ClassificationEngineError.notReady("Local inference is forbidden in live cloud acceptance.")
     }
 }
 

@@ -7,7 +7,7 @@ private final class RequestRecorder: @unchecked Sendable {
     var count = 0
 }
 
-private struct ScriptedOnDeviceLLM: OnDeviceLLM {
+private struct ScriptedClassificationEngine: ClassificationEngine {
     let modelVersion: String
     let result: LLMClassificationResult
     let recorder: RequestRecorder
@@ -76,7 +76,7 @@ final class VideoClassificationPipelineTests: XCTestCase {
     // MARK: - Pipeline
 
     func testPipelineWithStubProducesTagFromTitle() async throws {
-        let pipeline = VideoClassificationPipeline(llm: StubOnDeviceLLM())
+        let pipeline = VideoClassificationPipeline(llm: StubClassificationEngine())
         let catalog = WorkspaceCatalog()
         let result = try await pipeline.classify(
             title: "A great Games montage", entryID: "v1", creatorID: "c1", platformID: "youtube",
@@ -89,7 +89,7 @@ final class VideoClassificationPipelineTests: XCTestCase {
 
     func testPipelineMapsNamesToIDsAndDropsUnknownNames() async throws {
         let recorder = RequestRecorder()
-        let llm = ScriptedOnDeviceLLM(
+        let llm = ScriptedClassificationEngine(
             modelVersion: "scripted/v9",
             result: LLMClassificationResult(
                 tags: [LLMTagScore(name: "Games", confidence: 5), LLMTagScore(name: "NotATag", confidence: 3)]
@@ -107,7 +107,7 @@ final class VideoClassificationPipelineTests: XCTestCase {
 
     func testPipelineInjectsKnowledgeAndMarksSource() async throws {
         let recorder = RequestRecorder()
-        let llm = ScriptedOnDeviceLLM(
+        let llm = ScriptedClassificationEngine(
             modelVersion: "s/1",
             result: LLMClassificationResult(tags: [LLMTagScore(name: "Games", confidence: 4)]),
             recorder: recorder
@@ -126,7 +126,7 @@ final class VideoClassificationPipelineTests: XCTestCase {
 
     func testPipelineFeedsDerivedCreatorPriorIntoPrompt() async throws {
         let recorder = RequestRecorder()
-        let llm = ScriptedOnDeviceLLM(
+        let llm = ScriptedClassificationEngine(
             modelVersion: "s/1",
             result: LLMClassificationResult(tags: []),
             recorder: recorder
@@ -149,7 +149,7 @@ final class VideoClassificationPipelineTests: XCTestCase {
 
     func testPipelineCarriesPerTypeRequestOverrides() async throws {
         let recorder = RequestRecorder()
-        let llm = ScriptedOnDeviceLLM(
+        let llm = ScriptedClassificationEngine(
             modelVersion: "s/1",
             result: .init(tags: []),
             recorder: recorder
@@ -171,7 +171,7 @@ final class VideoClassificationPipelineTests: XCTestCase {
         var catalog = WorkspaceCatalog()
         catalog.upsertKnowledgeEntry(KnowledgeEntry(kind: .creator, subject: "c1", meaning: "A Politics news channel."))
         let recorder = RequestRecorder()
-        let pipeline = VideoClassificationPipeline(llm: ScriptedOnDeviceLLM(modelVersion: "s/1", result: .init(tags: []), recorder: recorder))
+        let pipeline = VideoClassificationPipeline(llm: ScriptedClassificationEngine(modelVersion: "s/1", result: .init(tags: []), recorder: recorder))
         let result = try await pipeline.classify(
             title: "weekly roundup", entryID: "v1", creatorID: "c1", platformID: "youtube",
             classifierType: makeType(), tree: makeTree(), catalog: catalog
@@ -184,7 +184,7 @@ final class VideoClassificationPipelineTests: XCTestCase {
 
     func testNoCreatorSentenceWhenCreatorNotKeyed() async throws {
         let recorder = RequestRecorder()
-        let pipeline = VideoClassificationPipeline(llm: ScriptedOnDeviceLLM(modelVersion: "s/1", result: .init(tags: []), recorder: recorder))
+        let pipeline = VideoClassificationPipeline(llm: ScriptedClassificationEngine(modelVersion: "s/1", result: .init(tags: []), recorder: recorder))
         let result = try await pipeline.classify(
             title: "weekly roundup", entryID: "v1", creatorID: "c1", platformID: "youtube",
             classifierType: makeType(), tree: makeTree(), catalog: WorkspaceCatalog()
@@ -198,7 +198,7 @@ final class VideoClassificationPipelineTests: XCTestCase {
 
     func testGranularResearchDefaultsLeaveClassificationRequestByteIdentical() async throws {
         let recorder = RequestRecorder()
-        let pipeline = VideoClassificationPipeline(llm: ScriptedOnDeviceLLM(
+        let pipeline = VideoClassificationPipeline(llm: ScriptedClassificationEngine(
             modelVersion: "s/1",
             result: .init(tags: []),
             recorder: recorder
@@ -232,7 +232,7 @@ final class VideoClassificationPipelineTests: XCTestCase {
 extension VideoClassificationPipelineTests {
     func testOfficialCreatorDescriptionEntersEveryInitialPrompt() async throws {
         let recorder = RequestRecorder()
-        let engine = ScriptedOnDeviceLLM(modelVersion: "s/1", result: .init(tags: [LLMTagScore(name: "Games", confidence: 5)]), recorder: recorder)
+        let engine = ScriptedClassificationEngine(modelVersion: "s/1", result: .init(tags: [LLMTagScore(name: "Games", confidence: 5)]), recorder: recorder)
         let pipeline = VideoClassificationPipeline(llm: engine)
         let creator = KnowledgeEntry(kind: .creator, subject: "youtube:channel:UCfixture", meaning: "Official creator context")
         for id in ["first", "second"] {

@@ -85,7 +85,7 @@ public struct ClassificationReplyFormat: Sendable, Equatable {
 
     /// PRODUCTION (2026-09-21): bare tag names, no scaffold and no confidence digit —
     /// `Tags:` then ` Music, Sports` and a newline. Generation drops to ~10 ms per
-    /// video; weak extra tags are kept out by `LocalLLMSettings.extraTagMinimumOdds`
+    /// video; weak extra tags are kept out by `TaggingSettings.extraTagMinimumOdds`
     /// and confidence is read from the token odds (first tag: 94% right at 4–5).
     public static let names = ClassificationReplyFormat(
         id: "names",

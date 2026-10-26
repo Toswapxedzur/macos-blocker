@@ -196,117 +196,35 @@ public struct TagBounds: Codable, Equatable, Sendable {
 /// the engine needs is a constant here (owner decision 2026-09-23: replace all
 /// parameters with Speed↔Quality and Strict↔Broad). State written before that
 /// day decodes to the nearest dial positions.
-public struct LocalLLMSettings: Codable, Equatable, Sendable {
-    /// Which model tier runs (the GGUF comes from the catalog).
-    public var speedQuality: SpeedQualityDial
-    /// How many tags a video may carry and how sure the model must be to keep an extra one.
+public struct TaggingSettings: Codable, Equatable, Sendable {
     public var strictness: StrictnessDial
-    /// Free-text tagging preferences appended to the cached static prefix.
     public var houseRules: String
-    /// nil follows the group's Strict↔Broad position.
     public var minimumTagsOverride: Int?
     public var maximumTagsOverride: Int?
     public static let maximumTagCountOverride = 3
-
-    // MARK: Runtime constants (were settings until 2026-09-23)
-
-    /// llama context window; bounds the static prefix + suffix + output.
-    public static let contextTokens = 4_096
-    /// Logical batch size for prompt prefill.
-    public static let batchTokens = 512
-    /// All layers on the GPU.
-    public static let gpuOffload = true
-    /// Hard cap on generated tokens per decision (a three-tag reply needs ~12).
-    public static let maximumOutputTokens = 16
-    /// Greedy decoding (the measured contract).
-    public static let temperature: Double = 0
-    /// The grammar includes the reserved "none" decline literal (position 5 of
-    /// the strictness dial removes it through `minimumTags`).
-    public static let allowDecline = true
-    /// Ascending probability thresholds mapping the chosen token's renormalized
-    /// softmax onto confidence 2, 3, 4, 5 (below the first threshold = 1).
-    public static let confidenceThresholds: [Double] = [0.20, 0.40, 0.60, 0.85]
-    /// Distinct GGUF engines kept warm by the shared group registry.
-    public static let maxResidentModels = 2
-    public static let maximumResidentModels = 4
     public static let maximumHouseRulesLength = 4_000
 
-    public init(
-        speedQuality: SpeedQualityDial = .default,
-        strictness: StrictnessDial = .default,
-        houseRules: String = "",
-        minimumTagsOverride: Int? = nil,
-        maximumTagsOverride: Int? = nil
-    ) {
-        self.speedQuality = speedQuality
+    public init(strictness: StrictnessDial = .default, houseRules: String = "", minimumTagsOverride: Int? = nil, maximumTagsOverride: Int? = nil) {
         self.strictness = strictness
         self.houseRules = String(houseRules.prefix(Self.maximumHouseRulesLength))
         self.minimumTagsOverride = minimumTagsOverride.flatMap { (0...Self.maximumTagCountOverride).contains($0) ? $0 : nil }
         self.maximumTagsOverride = maximumTagsOverride.flatMap { (1...Self.maximumTagCountOverride).contains($0) ? $0 : nil }
-        // Invalid saved pairs safely return to the dial defaults. Live writes
-        // reject the pair rather than silently changing either field.
         if (self.minimumTagsOverride ?? strictness.minimumTags) > (self.maximumTagsOverride ?? strictness.maximumTags) {
-            self.minimumTagsOverride = nil
-            self.maximumTagsOverride = nil
+            self.minimumTagsOverride = nil; self.maximumTagsOverride = nil
         }
     }
-
-    // MARK: Derived values the engine and pipeline read
-
-    /// The GGUF file this group selects.
-    public var modelFileName: String { speedQuality.ggufFileName }
-    public var tagBounds: TagBounds {
-        TagBounds(minimum: minimumTagsOverride ?? strictness.minimumTags,
-                  maximum: maximumTagsOverride ?? strictness.maximumTags)
-    }
+    public var tagBounds: TagBounds { .init(minimum: minimumTagsOverride ?? strictness.minimumTags, maximum: maximumTagsOverride ?? strictness.maximumTags) }
     public var maximumTags: Int { tagBounds.maximum }
     public var minimumTags: Int { tagBounds.minimum }
     public var extraTagMinimumOdds: Double { strictness.extraTagMinimumOdds }
-    public var contextTokens: Int { Self.contextTokens }
-    public var batchTokens: Int { Self.batchTokens }
-    public var gpuOffload: Bool { Self.gpuOffload }
-    public var maximumOutputTokens: Int { Self.maximumOutputTokens }
-    public var temperature: Double { Self.temperature }
-    public var allowDecline: Bool { Self.allowDecline }
-    public var confidenceThresholds: [Double] { Self.confidenceThresholds }
-    public var maxResidentModels: Int { Self.maxResidentModels }
 
-    private enum CodingKeys: String, CodingKey {
-        case speedQuality, strictness, houseRules, minimumTagsOverride, maximumTagsOverride
-        // Pre-dial keys, read only to find the nearest position.
-        case modelFileName, maximumTags, minimumTags, extraTagMinimumOdds
-    }
-
+    private enum CodingKeys: String, CodingKey { case strictness, houseRules, minimumTagsOverride, maximumTagsOverride }
     public init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        let storedSpeed = try container.decodeIfPresent(String.self, forKey: .speedQuality)
-        let legacyModelFileName = try container.decodeIfPresent(String.self, forKey: .modelFileName)
-        let speedQuality = SpeedQualityDial.resolve(storedSpeed)
-            ?? SpeedQualityDial.nearest(modelFileName: legacyModelFileName)
-            ?? .default
-        let storedStrictness = try container.decodeIfPresent(Int.self, forKey: .strictness)
-        let legacyMaximumTags = try container.decodeIfPresent(Int.self, forKey: .maximumTags)
-        let legacyMinimumTags = try container.decodeIfPresent(Int.self, forKey: .minimumTags)
-        let legacyOdds = try container.decodeIfPresent(Double.self, forKey: .extraTagMinimumOdds)
-        let strictness = StrictnessDial.resolve(storedStrictness)
-            ?? StrictnessDial.nearest(maximumTags: legacyMaximumTags, minimumTags: legacyMinimumTags, extraTagMinimumOdds: legacyOdds)
-            ?? .default
-        self.init(
-            speedQuality: speedQuality,
-            strictness: strictness,
-            houseRules: try container.decodeIfPresent(String.self, forKey: .houseRules) ?? "",
-            minimumTagsOverride: try? container.decodeIfPresent(Int.self, forKey: .minimumTagsOverride),
-            maximumTagsOverride: try? container.decodeIfPresent(Int.self, forKey: .maximumTagsOverride)
-        )
-    }
-
-    public func encode(to encoder: Encoder) throws {
-        var container = encoder.container(keyedBy: CodingKeys.self)
-        try container.encode(speedQuality, forKey: .speedQuality)
-        try container.encode(strictness, forKey: .strictness)
-        try container.encode(houseRules, forKey: .houseRules)
-        try container.encodeIfPresent(minimumTagsOverride, forKey: .minimumTagsOverride)
-        try container.encodeIfPresent(maximumTagsOverride, forKey: .maximumTagsOverride)
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(strictness: StrictnessDial.resolve(try c.decodeIfPresent(Int.self, forKey: .strictness)) ?? .default,
+            houseRules: try c.decodeIfPresent(String.self, forKey: .houseRules) ?? "",
+            minimumTagsOverride: try c.decodeIfPresent(Int.self, forKey: .minimumTagsOverride),
+            maximumTagsOverride: try c.decodeIfPresent(Int.self, forKey: .maximumTagsOverride))
     }
 }
 

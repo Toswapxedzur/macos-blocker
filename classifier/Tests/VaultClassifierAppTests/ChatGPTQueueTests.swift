@@ -4,7 +4,7 @@ import VaultClassifierCore
 import VaultClassifierBridge
 @testable import VaultClassifierApp
 
-private actor CloudQueueEngine: OnDeviceBatchLLM {
+private actor CloudQueueEngine: BatchClassificationEngine {
     nonisolated let modelVersion: String
     let entered: XCTestExpectation
     private var continuation: CheckedContinuation<Void, Never>?
@@ -23,7 +23,7 @@ private actor CloudQueueEngine: OnDeviceBatchLLM {
 
 private struct CloudQueueResolver: CloudClassificationEngineResolving {
     let engine: CloudQueueEngine
-    func resolveCloudEngine(for type: ClassifierTypeAsset) async throws -> any OnDeviceLLM { engine }
+    func resolveCloudEngine(for type: ClassifierTypeAsset) async throws -> any ClassificationEngine { engine }
 }
 
 @MainActor
@@ -54,12 +54,7 @@ final class ChatGPTQueueTests: XCTestCase {
             classificationProvider: .chatGPT, chatGPT: .init(accountID: "fixture", model: "fixture"))
         catalog.classifierTypes.append(type)
         try coordinator.updateWorkspaceCatalog(catalog)
-        XCTAssertEqual(vm.classificationChunkSize(for: "youtube"), 32)
-        XCTAssertEqual(vm.classificationChunkSize(for: "reddit"), 16)
-        catalog.classifierTypes[0].classificationProvider = .local
-        try coordinator.updateWorkspaceCatalog(catalog)
-        XCTAssertEqual(vm.classificationChunkSize(for: "youtube"), 16)
-        catalog.classifierTypes[0] = type; try coordinator.updateWorkspaceCatalog(catalog)
+        XCTAssertEqual(VaultClassifierViewModel.classificationChunkSize, 32)
         let entered = expectation(description: "First inference entered")
         let idle = expectation(description: "Latest evidence delivered")
         let engine = CloudQueueEngine(version: type.cloudModelVersion, entered: entered)

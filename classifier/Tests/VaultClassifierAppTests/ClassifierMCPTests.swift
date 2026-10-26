@@ -63,7 +63,7 @@ final class ClassifierMCPTests: XCTestCase {
             let block = String(dispatcher[blockStart..<blockEnd])
             var keys = Self.keys(in: block)
             // Two actions parse their form through helpers in the Settings file.
-            for helper in ["parseClassifierTypeLocalModelWebInput", "parseClassifierTypeResearchWebInput"] where block.contains(helper) {
+            for helper in ["parseClassifierTypeTaggingWebInput", "parseClassifierTypeResearchWebInput"] where block.contains(helper) {
                 let helperBody = Self.functionBody(named: helper, in: settings)
                 keys.formUnion(Self.keys(in: helperBody))
                 let countRegex = try NSRegularExpression(pattern: #"tagCount\("([a-zA-Z]+)""#)
@@ -106,13 +106,13 @@ final class ClassifierMCPTests: XCTestCase {
         let vm = try VaultClassifierViewModel(headlessVaultDirectory: directory)
         XCTAssertNil(vm.mcpPerform(action: "createClassifierType", data: ["name": "A", "platformIDs": ["youtube"]]).issue)
         let group = try XCTUnwrap(vm.localState?.workspaceCatalog.classifierTypes.first)
-        XCTAssertNil(vm.mcpPerform(action: "saveClassifierTypeLocalModel", data: [
+        XCTAssertNil(vm.mcpPerform(action: "saveClassifierTypeTagging", data: [
             "typeID": group.id, "speedQuality": "balanced", "strictness": "4", "houseRules": "Use my group vocabulary."
         ]).issue)
         LocalStateFile.flushAllPendingWrites()
         let reopened = try VaultClassifierViewModel(headlessVaultDirectory: directory)
-        XCTAssertEqual(reopened.localState?.workspaceCatalog.classifierTypes.first?.localModel.strictness, .broad)
-        XCTAssertEqual(reopened.localState?.workspaceCatalog.classifierTypes.first?.localModel.houseRules, "Use my group vocabulary.")
+        XCTAssertEqual(reopened.localState?.workspaceCatalog.classifierTypes.first?.tagging.strictness, .broad)
+        XCTAssertEqual(reopened.localState?.workspaceCatalog.classifierTypes.first?.tagging.houseRules, "Use my group vocabulary.")
     }
 
     func testPerformRoutesThroughTheDispatcherWithItsValidation() throws {

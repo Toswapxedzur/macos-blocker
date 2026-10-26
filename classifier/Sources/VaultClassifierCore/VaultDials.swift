@@ -3,50 +3,11 @@ import Foundation
 // The two user-facing controls of the local classifier (owner decision
 // 2026-09-23): everything else that used to be a setting is a constant now.
 //
-//   Speed ↔ Quality  → which Qwen2.5 model tier runs on this Mac.
 //   Strict ↔ Broad   → how many tags a video may carry and how sure the model
 //                      must be before it keeps an extra one.
 //
 // Each group owns these controls. Optional min/max tag counts override only
 // the corresponding bound; a blank bound follows its Strict↔Broad position.
-
-/// Which model runs. Each tier is one vetted GGUF in `LocalModelCatalog`.
-public enum SpeedQualityDial: String, Codable, Sendable, CaseIterable, Identifiable {
-    /// Qwen2.5 3B: about half the time of Balanced, noticeably fewer correct tags.
-    case fast
-    /// Qwen2.5 7B: the measured default (2026-09-22: 68% correct on the 450-video library).
-    case balanced
-    /// Qwen2.5 14B: a few points better than Balanced at about twice the time.
-    case best
-
-    public static let `default`: SpeedQualityDial = .balanced
-
-    public var id: String { rawValue }
-
-    /// The catalog entry this tier runs.
-    public var catalogEntry: LocalModelCatalogEntry { LocalModelCatalog.entry(for: self) }
-
-    /// The GGUF file this tier loads from the app's models folder.
-    public var ggufFileName: String { catalogEntry.ggufFileName }
-
-    public static func resolve(_ raw: String?) -> SpeedQualityDial? {
-        guard let raw = raw?.trimmingCharacters(in: .whitespacesAndNewlines), !raw.isEmpty else { return nil }
-        return SpeedQualityDial(rawValue: raw)
-    }
-
-    /// The tier a pre-dial model file name maps to (state written before
-    /// 2026-09-23 stored a file name). An exact catalog match wins; otherwise the
-    /// parameter count in the name decides; anything else → nil (follow the default).
-    public static func nearest(modelFileName: String?) -> SpeedQualityDial? {
-        guard let name = modelFileName?.trimmingCharacters(in: .whitespacesAndNewlines), !name.isEmpty else { return nil }
-        if let exact = LocalModelCatalog.curated.first(where: { $0.ggufFileName == name }) { return exact.tier }
-        let lowered = name.lowercased()
-        if lowered.contains("14b") { return .best }
-        if lowered.contains("7b") || lowered.contains("8b") { return .balanced }
-        if lowered.contains("1b") || lowered.contains("1.5b") || lowered.contains("2b") || lowered.contains("3b") || lowered.contains("4b") { return .fast }
-        return nil
-    }
-}
 
 /// How many tags, and how sure the model must be to keep an extra one. Measured
 /// 2026-09-23 on the 450-video library, Qwen2.5 7B, research on, eval harness

@@ -5,7 +5,6 @@ import FoundationNetworking
 import VaultClassifierCore
 import VaultClassifierResearch
 import VaultClassifierBridge
-import VaultClassifierLLM
 
 // The knowledge/research lane surface: knowledge entry edits, corrections, failed-research retry and the research status payload; plus the grounded-research install and its provider configuration.
 // Split out of VaultClassifierApp.swift (CLASSIFIER-INDEPENDENCE §7, Phase 5):

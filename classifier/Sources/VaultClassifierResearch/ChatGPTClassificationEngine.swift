@@ -1,7 +1,7 @@
 import Foundation
 import VaultClassifierCore
 
-struct ChatGPTClassificationEngine: OnDeviceBatchLLM {
+struct ChatGPTClassificationEngine: BatchClassificationEngine {
     let client: ChatGPTAccountClient
     let configuration: ChatGPTClassificationSettings
     let modelVersion: String

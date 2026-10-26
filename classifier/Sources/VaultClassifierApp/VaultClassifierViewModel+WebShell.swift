@@ -2,7 +2,6 @@ import Foundation
 import VaultClassifierCore
 import VaultClassifierResearch
 import VaultClassifierBridge
-import VaultClassifierLLM
 
 // The untyped web-shell RPC: the state snapshot the WebView renders and the string-keyed action dispatcher, plus the web input coercion helpers.
 // Split out of VaultClassifierApp.swift (CLASSIFIER-INDEPENDENCE §7, Phase 5):
@@ -103,24 +102,9 @@ extension VaultClassifierViewModel {
         ]
         let catalog = state?.workspaceCatalog ?? .starter()
         let researchSettings = state?.settings.research ?? ResearchSettings()
-        let availableModelFiles = VaultLocalLLMEngine.availableModelFiles()
         let settingsPayload: [String: Any] = [
             "classificationEnabled": state?.settings.classificationEnabled ?? true,
             "dictionaries": dictionaryPayload(state?.settings.dictionaries ?? .init()),
-            "localModels": [
-                    "systemRAMGB": HardwareProfile.physicalRAMGB(),
-                    "modelLibrary": Self.modelLibraryPayload(
-                        availableModelFiles: availableModelFiles,
-                        downloadFractions: modelDownloadFractions,
-                        systemRAMGB: HardwareProfile.physicalRAMGB()
-                    ).map { entry in
-                        var payload = entry
-                        let fileName = entry["ggufFileName"] as? String ?? ""
-                        payload["engineStatus"] = availableModelFiles.contains(fileName)
-                            ? (modelEngineStatuses[fileName] ?? "downloaded") : "no-model"
-                        return payload
-                    },
-            ] as [String: Any],
             "research": [
                 "enabled": researchSettings.enabled,
                 "llmProviderProfileID": researchSettings.llmProviderProfileID ?? "",
@@ -248,12 +232,11 @@ extension VaultClassifierViewModel {
                     "isPaused": classifierType.isPaused,
                     "classificationProvider": classifierType.classificationProvider.rawValue,
                     "chatGPT": ["accountID": classifierType.chatGPT.accountID, "model": classifierType.chatGPT.model, "searchEnabled": classifierType.chatGPT.searchEnabled] as [String: Any],
-                    "localModel": [
-                        "houseRules": classifierType.localModel.houseRules,
-                        "speedQuality": classifierType.localModel.speedQuality.rawValue,
-                        "strictness": classifierType.localModel.strictness.rawValue,
-                        "minimumTagsOverride": classifierType.localModel.minimumTagsOverride.map { $0 as Any } ?? NSNull(),
-                        "maximumTagsOverride": classifierType.localModel.maximumTagsOverride.map { $0 as Any } ?? NSNull(),
+                    "tagging": [
+                        "houseRules": classifierType.tagging.houseRules,
+                        "strictness": classifierType.tagging.strictness.rawValue,
+                        "minimumTagsOverride": classifierType.tagging.minimumTagsOverride.map { $0 as Any } ?? NSNull(),
+                        "maximumTagsOverride": classifierType.tagging.maximumTagsOverride.map { $0 as Any } ?? NSNull(),
                     ] as [String: Any],
                     // nil = follow the global research switch.
                     "researchEnabled": classifierType.researchEnabled ?? NSNull(),
@@ -375,48 +358,6 @@ extension VaultClassifierViewModel {
             "backup": backupPayload,
             "assets": assets,
         ]
-    }
-
-    static func modelLibraryPayload(
-        availableModelFiles: [String],
-        downloadFractions: [String: Double],
-        systemRAMGB: Int
-    ) -> [[String: Any]] {
-        let downloaded = Set(availableModelFiles)
-        let recommendedID = LocalModelCatalog.recommended(systemRAMGB: systemRAMGB)?.id
-        return LocalModelCatalog.curated
-            .sorted { lhs, rhs in
-                lhs.downloadSizeBytes == rhs.downloadSizeBytes
-                    ? lhs.displayName < rhs.displayName
-                    : lhs.downloadSizeBytes < rhs.downloadSizeBytes
-            }
-            .map { entry in
-                let state: [String: Any]
-                if let fraction = downloadFractions[entry.id] {
-                    state = [
-                        "kind": "downloading",
-                        "fraction": min(1, max(0, fraction)),
-                    ]
-                } else if downloaded.contains(entry.ggufFileName) {
-                    state = ["kind": "downloaded"]
-                } else {
-                    state = ["kind": "available"]
-                }
-                return [
-                    "id": entry.id,
-                    "displayName": entry.displayName,
-                    "family": entry.family,
-                    "paramsB": entry.paramsB,
-                    "repo": entry.repo,
-                    "ggufFileName": entry.ggufFileName,
-                    "downloadSizeBytes": entry.downloadSizeBytes,
-                    "minimumRAMGB": entry.minimumRAMGB,
-                    "tier": entry.tier.rawValue,
-                    "downloadURL": (try? entry.downloadURL.absoluteString) ?? "",
-                    "recommended": entry.id == recommendedID,
-                    "state": state,
-                ] as [String: Any]
-            }
     }
 
     /// The web renderer is a bundled local asset, but its messages are still
@@ -541,12 +482,6 @@ extension VaultClassifierViewModel {
                     providerModel: webString(data, key: "providerModel", limit: 520), searchEnabled: webBool(data, key: "searchEnabled"))
             case "setClassifierTypePaused":
                 setClassifierTypePaused(typeID: try webString(data, key: "typeID", limit: 256), paused: try webBool(data, key: "paused"))
-            case "downloadModel":
-                downloadModel(id: try webString(data, key: "id", limit: 128))
-            case "cancelModelDownload":
-                cancelModelDownload(id: try webString(data, key: "id", limit: 128))
-            case "deleteModelFile":
-                deleteModelFile(fileName: try webString(data, key: "fileName", limit: 255))
             case "saveDictionarySettings":
                 guard let cacheSize = (data["creatorCacheSize"] as? Int) ?? (data["creatorCacheSize"] as? String).flatMap(Int.init) else { throw DictionaryError.invalidPack }
                 try saveDictionarySettings(mode: try webString(data, key: "creatorMode", limit: 16), cacheSize: cacheSize,
@@ -589,9 +524,9 @@ extension VaultClassifierViewModel {
                     llmProviderProfileID: try webOptionalString(data, key: "llmProviderProfileID", limit: 256),
                     llmModelIdentifier: try webOptionalString(data, key: "llmModelIdentifier", limit: 256)
                 ))
-            case "saveClassifierTypeLocalModel":
-                let input = try Self.parseClassifierTypeLocalModelWebInput(data)
-                saveClassifierTypeLocalModel(typeID: input.typeID, settings: input.settings)
+            case "saveClassifierTypeTagging":
+                let input = try Self.parseClassifierTypeTaggingWebInput(data)
+                saveClassifierTypeTagging(typeID: input.typeID, settings: input.settings)
             case "saveClassifierTypeResearch":
                 let input = try Self.parseClassifierTypeResearchWebInput(data)
                 saveClassifierTypeResearch(typeID: input.typeID, researchEnabled: input.researchEnabled)
@@ -606,7 +541,7 @@ extension VaultClassifierViewModel {
                 backupEnabled = try webBool(data, key: "enabled")
                 saveBackupConfiguration()
             case "backupNow":
-                backupLocalModelNow()
+                backupClassifierNow()
             default:
                 throw WebBridgeInputError.invalidChoice("action")
             }

@@ -2,7 +2,7 @@ import Foundation
 import XCTest
 @testable import VaultClassifierCore
 
-final class LocalModelBackupTests: XCTestCase {
+final class ClassifierBackupTests: XCTestCase {
     func testPrivateSnapshotsRetainCurrentAndThreePriorModels() throws {
         let root = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent(UUID().uuidString, isDirectory: true)
         defer { try? FileManager.default.removeItem(at: root) }
@@ -17,7 +17,7 @@ final class LocalModelBackupTests: XCTestCase {
             entryType: "video",
             title: "Local test title"
         )))
-        let backup = LocalModelBackup()
+        let backup = ClassifierBackup()
         for index in 1...5 {
             _ = try backup.backup(
                 state: state,
@@ -30,15 +30,15 @@ final class LocalModelBackupTests: XCTestCase {
         let folders = try FileManager.default.contentsOfDirectory(at: root, includingPropertiesForKeys: nil)
             .filter { $0.hasDirectoryPath && $0.lastPathComponent.hasPrefix("model-") }
         XCTAssertEqual(folders.count, LocalBackupConfiguration.retainedSnapshotCount)
-        let newest = try XCTUnwrap(folders.compactMap { folder -> LocalModelBackupManifest? in
-            try? JSONDecoder().decode(LocalModelBackupManifest.self, from: Data(contentsOf: folder.appendingPathComponent("manifest.json")))
+        let newest = try XCTUnwrap(folders.compactMap { folder -> ClassifierBackupManifest? in
+            try? JSONDecoder().decode(ClassifierBackupManifest.self, from: Data(contentsOf: folder.appendingPathComponent("manifest.json")))
         }.max(by: { $0.createdAtMilliseconds < $1.createdAtMilliseconds }))
         XCTAssertEqual(newest.createdAtMilliseconds, 5_000)
         XCTAssertEqual(newest.collectedEntryCount, 1)
         XCTAssertEqual(newest.videoClassificationCount, 0)
         XCTAssertEqual(newest.packageChecksum, seed.checksum)
         let payload = try JSONDecoder().decode(
-            LocalModelBackupPayload.self,
+            ClassifierBackupPayload.self,
             from: Data(contentsOf: try XCTUnwrap(folders.first).appendingPathComponent("model-state.json"))
         )
         XCTAssertEqual(payload.workspaceCatalog.datasets[0].collectedEntries.count, 1)
@@ -70,10 +70,10 @@ final class LocalModelBackupTests: XCTestCase {
     func testFutureBackupManifestAndPayloadAreRefusedWithoutCleanup() throws {
         let metadata = #""storageMetadata":{"format":"classifier.backup-manifest","schemaVersion":99,"product":"mac","writtenByAppVersion":"9.0.0"}"#
         let raw = Data(("{" + metadata + ",\"createdAtMilliseconds\":1,\"packageChecksum\":\"keep\"}").utf8)
-        XCTAssertThrowsError(try JSONDecoder().decode(LocalModelBackupManifest.self, from: raw))
-        XCTAssertThrowsError(try JSONDecoder().decode(LocalModelBackupPayload.self, from: Data(#"{"schemaVersion":99}"#.utf8)))
+        XCTAssertThrowsError(try JSONDecoder().decode(ClassifierBackupManifest.self, from: raw))
+        XCTAssertThrowsError(try JSONDecoder().decode(ClassifierBackupPayload.self, from: Data(#"{"schemaVersion":99}"#.utf8)))
         let state = LocalClassifierState()
-        let decoded = try JSONDecoder().decode(LocalModelBackupPayload.self, from: JSONEncoder().encode(LocalModelBackupPayload(state: state)))
+        let decoded = try JSONDecoder().decode(ClassifierBackupPayload.self, from: JSONEncoder().encode(ClassifierBackupPayload(state: state)))
         XCTAssertEqual(decoded.storageMetadata, state.storageMetadata)
 
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
@@ -84,7 +84,7 @@ final class LocalModelBackupTests: XCTestCase {
         try raw.write(to: manifestURL)
         let payloadFolder = root.appendingPathComponent("model-future-payload", isDirectory: true)
         try FileManager.default.createDirectory(at: payloadFolder, withIntermediateDirectories: true)
-        let currentManifest = LocalModelBackupManifest(createdAtMilliseconds: 0, activeModelIdentity: nil,
+        let currentManifest = ClassifierBackupManifest(createdAtMilliseconds: 0, activeModelIdentity: nil,
             packageChecksum: "keep", collectedEntryCount: 0, videoClassificationCount: 0)
         try JSONEncoder().encode(currentManifest).write(to: payloadFolder.appendingPathComponent("manifest.json"))
         let payloadURL = payloadFolder.appendingPathComponent("model-state.json")
@@ -92,7 +92,7 @@ final class LocalModelBackupTests: XCTestCase {
         try futurePayload.write(to: payloadURL)
         let seed = try SeedPackageLoader.bundled()
         for index in 1...5 {
-            _ = try LocalModelBackup().backup(state: state, package: seed, in: root,
+            _ = try ClassifierBackup().backup(state: state, package: seed, in: root,
                 at: Date(timeIntervalSince1970: TimeInterval(index)))
         }
         XCTAssertEqual(try Data(contentsOf: manifestURL), raw)

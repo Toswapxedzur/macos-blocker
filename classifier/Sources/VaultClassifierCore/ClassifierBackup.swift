@@ -37,7 +37,7 @@ public struct LocalBackupConfiguration: Codable, Equatable, Sendable {
     }
 }
 
-public struct LocalModelBackupManifest: Codable, Equatable, Sendable {
+public struct ClassifierBackupManifest: Codable, Equatable, Sendable {
     public var storageMetadata: StorageMetadata?
     public var createdAtMilliseconds: Int64
     public var activeModelIdentity: ActiveModelIdentity?
@@ -79,7 +79,7 @@ public struct LocalModelBackupManifest: Codable, Equatable, Sendable {
 }
 
 /// The local backup payload contains current authored and collected state only.
-public struct LocalModelBackupPayload: Codable, Equatable, Sendable {
+public struct ClassifierBackupPayload: Codable, Equatable, Sendable {
     public var storageMetadata: StorageMetadata?
     public var schemaVersion: Int
     public var settings: ClassifierSettings
@@ -126,7 +126,7 @@ public enum LocalBackupError: Error, Equatable, LocalizedError, Sendable {
 /// Private snapshots of the active package and current local workspace. The
 /// output is an ordinary directory intended for a user-controlled disk or Mac
 /// mini share; this type never opens a network connection or uploads anything.
-public struct LocalModelBackup: Sendable {
+public struct ClassifierBackup: Sendable {
     public init() {}
 
     @discardableResult
@@ -155,9 +155,9 @@ public struct LocalModelBackup: Sendable {
         do {
             let encoder = JSONEncoder()
             encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-            try encoder.encode(LocalModelBackupPayload(state: state)).write(to: staging.appendingPathComponent("model-state.json"), options: .atomic)
+            try encoder.encode(ClassifierBackupPayload(state: state)).write(to: staging.appendingPathComponent("model-state.json"), options: .atomic)
             try package.rawData.write(to: staging.appendingPathComponent("seed-package.json"), options: .atomic)
-            let manifest = LocalModelBackupManifest(
+            let manifest = ClassifierBackupManifest(
                 createdAtMilliseconds: milliseconds,
                 activeModelIdentity: state.activeModelIdentity,
                 packageChecksum: package.checksum,
@@ -179,7 +179,7 @@ public struct LocalModelBackup: Sendable {
             includingPropertiesForKeys: [.contentModificationDateKey],
             options: [.skipsHiddenFiles]
         )
-        .compactMap { folder -> (url: URL, manifest: LocalModelBackupManifest)? in
+        .compactMap { folder -> (url: URL, manifest: ClassifierBackupManifest)? in
             guard folder.hasDirectoryPath, folder.lastPathComponent.hasPrefix("model-"),
                   let manifest = try? supportedManifest(at: folder) else { return nil }
             return (folder, manifest)
@@ -198,11 +198,11 @@ public struct LocalModelBackup: Sendable {
         return destination
     }
 
-    private func supportedManifest(at folder: URL) throws -> LocalModelBackupManifest {
+    private func supportedManifest(at folder: URL) throws -> ClassifierBackupManifest {
         let decoder = JSONDecoder()
-        let manifest = try decoder.decode(LocalModelBackupManifest.self,
+        let manifest = try decoder.decode(ClassifierBackupManifest.self,
             from: Data(contentsOf: folder.appendingPathComponent("manifest.json")))
-        _ = try decoder.decode(LocalModelBackupPayload.self,
+        _ = try decoder.decode(ClassifierBackupPayload.self,
             from: Data(contentsOf: folder.appendingPathComponent("model-state.json")))
         return manifest
     }

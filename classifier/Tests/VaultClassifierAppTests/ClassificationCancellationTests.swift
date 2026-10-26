@@ -6,7 +6,7 @@ import VaultClassifierBridge
 
 /// Existing API controls also run on the unmodified lifetime baseline. No GPU,
 /// hub, network or native resource fixture is involved.
-private actor CancellationFixtureLLM: OnDeviceBatchLLM {
+private actor CancellationFixtureLLM: BatchClassificationEngine {
     nonisolated let modelVersion = "cancel-fixture/v1"
     var batches = 0
     var singles = 0
@@ -44,7 +44,7 @@ final class ClassificationCancellationTests: XCTestCase {
     }
     func testCancelledBatchIsNotRetriedOrConvertedToTerminalTags() async throws {
         let model = try fixture(), llm = CancellationFixtureLLM()
-        model.coordinator?.setOnDeviceLLM(llm)
+        model.coordinator?.setClassificationEngine(llm)
         let result = await model.resolveClassificationChunk(platformID: "youtube", [
             .init(entryID: "youtube:video:cancel00001", creatorID: "youtube:handle:@fixture", title: "Games"),
             .init(entryID: "youtube:video:cancel00003", creatorID: "youtube:handle:@fixture", title: "Games two")])
@@ -55,13 +55,13 @@ final class ClassificationCancellationTests: XCTestCase {
         XCTAssertTrue(model.coordinator?.snapshot().workspaceCatalog.videoClassifications.isEmpty == true)
     }
     func testCancelledResolverDoesNotSubstituteStubOrPersistIt() async throws {
-        struct Resolver: OnDeviceLLMEngineResolving {
-            func resolveEngine(forModel fileName: String, configuration: LocalLLMSettings) async throws -> any OnDeviceLLM {
+        struct Resolver: RetiredLocalEngineResolving {
+            func resolveEngine(forModel fileName: String, configuration: TaggingSettings) async throws -> any ClassificationEngine {
                 throw CancellationError()
             }
         }
         let model = try fixture(), coordinator = try XCTUnwrap(model.coordinator)
-        coordinator.setOnDeviceLLMEngineResolver(Resolver())
+        coordinator.setClassificationEngineEngineResolver(Resolver())
         do {
             _ = try await coordinator.classifyVideo(platformID: "youtube", entryID: "youtube:video:cancel00002", creatorID: "creator", title: "Games")
             XCTFail("cancelled model resolution must throw")

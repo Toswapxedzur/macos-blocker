@@ -83,14 +83,14 @@ public struct LLMClassificationRequest: Sendable, Equatable {
     }
 }
 
-public enum OnDeviceLLMError: Error, Sendable, Equatable {
+public enum ClassificationEngineError: Error, Sendable, Equatable {
     case notReady(String)
     case inference(String)
 }
 
 /// The inference boundary. Implementations must be safe to call concurrently or
 /// serialize internally; the pipeline awaits results.
-public protocol OnDeviceLLM: Sendable {
+public protocol ClassificationEngine: Sendable {
     /// Model id + build/prompt-schema version, recorded on each classification so
     /// stale results can be recomputed after a model or prompt change.
     var modelVersion: String { get }
@@ -101,15 +101,15 @@ public protocol OnDeviceLLM: Sendable {
 /// pass (LATENCY-REFINEMENT Phase 1). Generation is memory-bandwidth-bound — each
 /// step re-reads all the weights — so advancing N videos per step costs about the
 /// same as one. Results are positional: `result[i]` answers `requests[i]`.
-public protocol OnDeviceBatchLLM: OnDeviceLLM {
+public protocol BatchClassificationEngine: ClassificationEngine {
     func classifyBatch(_ requests: [LLMClassificationRequest]) async throws -> [LLMClassificationResult]
 }
 
-public extension OnDeviceLLM {
+public extension ClassificationEngine {
     /// Batched when the engine supports it, otherwise the same requests serially —
     /// so callers have one code path regardless of engine.
     func classifyAll(_ requests: [LLMClassificationRequest]) async throws -> [LLMClassificationResult] {
-        if requests.count > 1, let batching = self as? any OnDeviceBatchLLM {
+        if requests.count > 1, let batching = self as? any BatchClassificationEngine {
             return try await batching.classifyBatch(requests)
         }
         var results: [LLMClassificationResult] = []
@@ -117,16 +117,6 @@ public extension OnDeviceLLM {
         for request in requests { results.append(try await classify(request)) }
         return results
     }
-}
-
-/// Runtime-neutral bridge to the native resident-engine registry. Core keeps
-/// the default engine as its zero-overhead path and consults this resolver only
-/// for classifier types with an explicit model selection.
-public protocol OnDeviceLLMEngineResolving: Sendable {
-    func resolveEngine(
-        forModel fileName: String,
-        configuration: LocalLLMSettings
-    ) async throws -> any OnDeviceLLM
 }
 
 /// Derives research urgency from the reliable signal: the video's own tag
@@ -143,25 +133,11 @@ public enum ResearchUrgency {
     }
 }
 
-/// A deterministic stand-in used before a real MLX model is wired, and in tests.
-/// It "classifies" by selecting allowed tag names that appear (case-insensitive)
-/// in the dynamic suffix — enough to exercise the whole pipeline end-to-end and
-/// keep the build green, with no intelligence claimed.
-public struct StubOnDeviceLLM: OnDeviceLLM {
-    public let modelVersion: String
-    public let defaultConfidence: Int
-
-    public init(modelVersion: String = "stub/v1", defaultConfidence: Int = 4) {
-        self.modelVersion = modelVersion
-        self.defaultConfidence = defaultConfidence
-    }
-
+/// Production never fabricates decisions while a cloud account/model is unconfigured.
+public struct UnconfiguredClassificationEngine: ClassificationEngine {
+    public let modelVersion = "unconfigured"
+    public init() {}
     public func classify(_ request: LLMClassificationRequest) async throws -> LLMClassificationResult {
-        let haystack = request.dynamicSuffix.lowercased()
-        let chosen = request.allowedTagNames
-            .filter { !$0.isEmpty && haystack.contains($0.lowercased()) }
-            .prefix(request.maximumTags)
-            .map { LLMTagScore(name: $0, confidence: defaultConfidence) }
-        return LLMClassificationResult(tags: Array(chosen))
+        throw CloudClassificationError.notConfigured
     }
 }

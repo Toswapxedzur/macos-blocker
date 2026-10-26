@@ -1,4 +1,5 @@
 window.VaultClassifierStrings = Object.freeze({
+  "cloud.chooseModel": "Choose a ChatGPT model",
   "cloud.title": "ChatGPT",
   "cloud.welcomeTitle": "You’re using your ChatGPT plan",
   "cloud.welcomeCopy": "Eligible classification requests in Vault use your ChatGPT plan. You can manage usage and limits in ChatGPT settings.",

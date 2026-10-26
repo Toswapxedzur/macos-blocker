@@ -8,7 +8,7 @@ extension LocalClassifierCoordinator {
         lock.lock()
         defer { lock.unlock() }
         let catalog = state.workspaceCatalog
-        let servingModelVersion = onDeviceLLM.modelVersion
+        let servingModelVersion = classificationEngine.modelVersion
         let types = Self.orderedTypes(for: platformID, in: catalog)
         guard !types.isEmpty else { return nil }
         // Only serve a cached projection when every stored classification for this
@@ -22,7 +22,7 @@ extension LocalClassifierCoordinator {
                 classifierTypeID: type.id, platformID: platformID, entryID: entryID
             ) else { continue }
             sawClassification = true
-            guard Self.isClassificationCurrent(classification, forType: type, servingModelVersion: onDeviceLLMEngineResolver == nil ? servingModelVersion : "llamacpp/" + type.modelFileName) else {
+            guard Self.isClassificationCurrent(classification, forType: type, servingModelVersion: servingModelVersion) else {
                 return nil
             }
             // Browser tagging may arrive before collection updates the title.
@@ -57,19 +57,9 @@ extension LocalClassifierCoordinator {
         servingModelVersion: String
     ) -> Bool {
         if classification.source == .humanCorrected { return true }
-        if type.classificationProvider == .chatGPT {
-            return classification.modelVersion == type.cloudModelVersion + "+p4"
-                && classification.tagBounds == type.localModel.tagBounds
-                && classification.treeID == type.treeID
-        }
-        if let bounds = classification.tagBounds {
-            guard bounds == type.localModel.tagBounds else { return false }
-        } else if type.localModel.minimumTagsOverride != nil || type.localModel.maximumTagsOverride != nil {
-            return false
-        }
-        let expected = servingModelVersion == "stub/v1" ? servingModelVersion : "llamacpp/" + type.modelFileName
-        return classification.modelVersion == expected
-            || classification.modelVersion.hasPrefix(expected + "+")
+        return classification.modelVersion == type.cloudModelVersion + "+p4"
+            && classification.tagBounds == type.tagging.tagBounds
+            && classification.treeID == type.treeID
     }
 
     /// Single-video convenience: a batch of one (one code path).
@@ -98,8 +88,7 @@ extension LocalClassifierCoordinator {
         let snapshot = lock.withLock {
             (
                 state.workspaceCatalog,
-                onDeviceLLM,
-                onDeviceLLMEngineResolver,
+                classificationEngine,
                 state.settings.research,
                 groundedResearchQueue,
                 state.settings.classificationEnabled,
@@ -108,7 +97,7 @@ extension LocalClassifierCoordinator {
             )
         }
         let (
-            catalog, defaultLLM, engineResolver, globalResearchSettings, researchQueue, classificationEnabled, dictionaryProvider, cloudResolver
+            catalog, defaultLLM, globalResearchSettings, researchQueue, classificationEnabled, dictionaryProvider, cloudResolver
         ) = snapshot
 
         guard let binding = catalog.bindings.first(where: { $0.id == platformID }), binding.collectionEnabled else {
@@ -143,7 +132,7 @@ extension LocalClassifierCoordinator {
             guard enabledClassificationPlatformIDs().contains(platformID) else { break }
             guard let tree = catalog.trees.first(where: { $0.id == type.treeID }),
                   type.treeRevision == tree.revision else { continue }
-            let settings = type.localModel
+            let settings = type.tagging
             var pending: [VideoClassificationPipeline.Input] = []
             for item in items {
                 // A correction is authoritative for this taxonomy revision. Live
@@ -165,13 +154,12 @@ extension LocalClassifierCoordinator {
             }
             guard !pending.isEmpty else { continue }
 
-            let llm: any OnDeviceLLM
-            if type.classificationProvider == .chatGPT {
+            let llm: any ClassificationEngine
+            if let cloudResolver {
                 try type.chatGPT.validate()
-                guard let cloudResolver else { throw CloudClassificationError.signInRequired }
                 llm = try await cloudResolver.resolveCloudEngine(for: type)
             } else {
-                llm = try await Self.resolvedLLM(for: type, defaultLLM: defaultLLM, resolver: engineResolver, configuration: settings)
+                llm = defaultLLM // Explicit injection only; production default throws notConfigured.
             }
             try shutdownSignal.checkCancellation()
             // Every group owns its Strict↔Broad position.
@@ -197,13 +185,6 @@ extension LocalClassifierCoordinator {
             )
             try shutdownSignal.checkCancellation()
             classifications.append(contentsOf: results)
-            guard type.classificationProvider == .local, let effectiveResearch = Self.effectiveResearchSettings(
-                global: globalResearchSettings,
-                for: type
-            ) else { continue }
-            for (input, classification) in zip(pending, results) {
-                researchCandidates.append((type, classification, effectiveResearch, input))
-            }
         }
 
         let tPersist = DispatchTime.now()
@@ -222,7 +203,7 @@ extension LocalClassifierCoordinator {
                 if let original = catalog.classifierTypes.first(where: { $0.id == classification.classifierTypeID }),
                    let current = state.workspaceCatalog.classifierTypes.first(where: { $0.id == classification.classifierTypeID }),
                    (original.classificationProvider != current.classificationProvider
-                    || original.chatGPT != current.chatGPT || original.localModel != current.localModel
+                    || original.chatGPT != current.chatGPT || original.tagging != current.tagging
                     || original.treeRevision != current.treeRevision) { throw CancellationError() }
                 if state.workspaceCatalog.videoClassification(classifierTypeID: classification.classifierTypeID, platformID: classification.platformID, entryID: classification.entryID)?.source == .humanCorrected,
                    classification.source != .humanCorrected { continue }
@@ -271,31 +252,6 @@ extension LocalClassifierCoordinator {
             for task in authorTasks { _ = await researchQueue.enqueue(task) }
         }
         return projections
-    }
-
-    static func resolvedLLM(
-        for classifierType: ClassifierTypeAsset,
-        defaultLLM: any OnDeviceLLM,
-        resolver: (any OnDeviceLLMEngineResolving)?,
-        configuration: LocalLLMSettings
-    ) async throws -> any OnDeviceLLM {
-        // Each group requests its exact selected model.
-        let fileName = classifierType.modelFileName
-        guard let resolver else { return defaultLLM }
-        do {
-            return try await resolver.resolveEngine(
-                forModel: fileName,
-                configuration: configuration
-            )
-        } catch {
-            if error is CancellationError || Task.isCancelled { throw CancellationError() }
-            VaultDevLog.shared.log("llm", "group-model-unavailable", [
-                "type": classifierType.id,
-                "requested": fileName,
-                "error": String(describing: error),
-            ])
-            return StubOnDeviceLLM()
-        }
     }
 
     /// The research settings a type runs with, or nil when it must not research.

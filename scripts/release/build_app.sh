@@ -23,13 +23,6 @@ WORKSPACE="$(cd "$ROOT/.." && pwd)"
 BUILD_DIR="${BUILD_DIR:-$ROOT/release/build}"
 APP_PATH="${APP_PATH:-$BUILD_DIR/$APP_NAME.app}"
 case "$VAULT_BUILD_ARCH" in arm64|x86_64) ;; *) echo "Unsupported architecture: $VAULT_BUILD_ARCH" >&2; exit 1 ;; esac
-runtime_work="${VAULT_RUNTIME_WORK:-$ROOT/release/runtime-$VAULT_BUILD_ARCH}"
-if [[ -z "${VAULT_LLAMA_PREFIX:-}" ]]; then
-  python3 "$SCRIPT_DIR/build-macos-runtime.py" --architecture "$VAULT_BUILD_ARCH" --work "$runtime_work"
-  export VAULT_LLAMA_PREFIX="$runtime_work/install"
-fi
-python3 "$SCRIPT_DIR/verify-macos-runtime.py" --prefix "$VAULT_LLAMA_PREFIX" --architecture "$VAULT_BUILD_ARCH"
-export PKG_CONFIG_PATH="$VAULT_LLAMA_PREFIX/lib/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
 export MACOSX_DEPLOYMENT_TARGET="$MACOS_MIN_VERSION"
 BUILD_FLAGS=(-c release --arch "$VAULT_BUILD_ARCH")
 binary_dir="$(swift build "${BUILD_FLAGS[@]}" --show-bin-path --package-path "$ROOT")"
@@ -52,10 +45,6 @@ chmod 755 "$APP_PATH/Contents/MacOS/$APP_NAME"
 for bundle in "$binary_dir"/*.bundle; do
   cp -R "$bundle" "$APP_PATH/Contents/Resources/"
 done
-
-# The classifier's on-device engine links llama.cpp: carry its runtime inside
-# the app so nothing is loaded from Homebrew on a user's Mac.
-"$ROOT/classifier/scripts/bundle-llama-runtime.sh" "$APP_PATH" "$APP_NAME"
 
 # The production Native Messaging host — the helper that hands the browser
 # extension the local-hub secret. The app registers it with each installed

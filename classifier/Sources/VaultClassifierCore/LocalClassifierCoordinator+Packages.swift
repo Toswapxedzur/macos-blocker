@@ -5,13 +5,13 @@ import Foundation
 // same type, same behaviour.
 extension LocalClassifierCoordinator {
     @discardableResult
-    public func backupLocalModelNow(at date: Date = .now) throws -> URL {
+    public func backupClassifierNow(at date: Date = .now) throws -> URL {
         lock.lock()
         defer { lock.unlock() }
         guard let configuration = state.backupConfiguration, configuration.isEnabled else {
             throw LocalBackupError.backupDisabled
         }
-        return try LocalModelBackup().backup(
+        return try ClassifierBackup().backup(
             state: state,
             package: activeVerifiedPackage,
             in: configuration.directoryURL(),

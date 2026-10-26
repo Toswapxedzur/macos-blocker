@@ -31,16 +31,16 @@ final class WebShellLiveWorkspaceTests: XCTestCase {
     func testShellPerTypeFormHoldsDialsHouseRulesAndOptionalTagCounts() throws {
         let appURL = try XCTUnwrap(VaultClassifierBundledAssets.url(named: "app", extension: "js"))
         let script = try String(contentsOf: appURL, encoding: .utf8)
-        XCTAssertTrue(script.contains("saveClassifierTypeLocalModel"))
+        XCTAssertTrue(script.contains("saveClassifierTypeTagging"))
         XCTAssertTrue(script.contains("classifier-local-model-form-"))
         XCTAssertTrue(script.contains("localModelResidentNote"))
-        let sectionStart = try XCTUnwrap(script.range(of: "const localModel = classifierType.localModel"))
+        let sectionStart = try XCTUnwrap(script.range(of: "const tagging = classifierType.tagging"))
         let sectionEnd = try XCTUnwrap(script.range(of: "const researchFormID", range: sectionStart.upperBound..<script.endIndex))
         let section = String(script[sectionStart.lowerBound..<sectionEnd.lowerBound])
-        for field in ["localModel.speedQuality", "localModel.strictness", "\"houseRules\"", "speedQualityCards(", "strictnessOptions("] {
+        for field in ["tagging.speedQuality", "tagging.strictness", "\"houseRules\"", "speedQualityCards(", "strictnessOptions("] {
             XCTAssertTrue(section.contains(field), "per-type field missing: \(field)")
         }
-        for retired in ["saveLocalLLMSettings", "followGlobal", "allowDecline", "confidenceBand", "modelFileName", "thumbnailOcrEvidence", "toggleLocalModelAdvanced"] {
+        for retired in ["saveTaggingSettings", "followGlobal", "allowDecline", "confidenceBand", "modelFileName", "thumbnailOcrEvidence", "toggleLocalModelAdvanced"] {
             XCTAssertFalse(script.contains(retired), "retired control still in the shell: \(retired)")
         }
     }
@@ -207,12 +207,12 @@ final class WebShellLiveWorkspaceTests: XCTestCase {
         XCTAssertTrue(script.contains("deleteModelFile"))
         XCTAssertTrue(script.contains("role=\"progressbar\""))
         for tier in ["fast", "balanced", "best"] {
-            XCTAssertTrue(strings.contains("\"localModel.tier.\(tier).name\""))
-            XCTAssertTrue(strings.contains("\"localModel.tier.\(tier).desc\""))
+            XCTAssertTrue(strings.contains("\"tagging.tier.\(tier).name\""))
+            XCTAssertTrue(strings.contains("\"tagging.tier.\(tier).desc\""))
         }
         for position in 1...5 {
-            XCTAssertTrue(strings.contains("\"localModel.strictness.\(position).name\""))
-            XCTAssertTrue(strings.contains("\"localModel.strictness.\(position).desc\""))
+            XCTAssertTrue(strings.contains("\"tagging.strictness.\(position).name\""))
+            XCTAssertTrue(strings.contains("\"tagging.strictness.\(position).desc\""))
         }
         XCTAssertTrue(strings.contains("Model files download from Hugging Face when you choose Download."))
         XCTAssertFalse(strings.contains("LATENCY NOT MEASURED"))

@@ -81,7 +81,7 @@ extension LocalClassifierCoordinator {
             // NOT shown to the model: every way of teaching from corrections
             // (per-video retrieval, a verbatim prefix block, a counts line, an LLM
             // rule summary) measured as noise or worse on 2026-09-22/23. Manual
-            // house rules stay untouched in localModel.
+            // house rules stay untouched in tagging.
 
             let previous = state.workspaceCatalog.videoClassification(
                 classifierTypeID: classifierTypeID,

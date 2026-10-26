@@ -1,7 +1,6 @@
 import Foundation
 import VaultClassifierCore
 import VaultClassifierBridge
-import VaultClassifierLLM
 
 // Local encrypted backups: owner code, unlock, configuration and on-demand snapshots.
 // Split out of VaultClassifierApp.swift (CLASSIFIER-INDEPENDENCE §7, Phase 5):
@@ -54,10 +53,10 @@ extension VaultClassifierViewModel {
         }
     }
 
-    func backupLocalModelNow() {
+    func backupClassifierNow() {
         do {
             guard backupUnlocked else { throw AppInputError.backupLocked }
-            let destination = try coordinator?.backupLocalModelNow()
+            let destination = try coordinator?.backupClassifierNow()
             backupNotice = destination.map { "Local model snapshot created in \($0.lastPathComponent)." }
             issue = nil
         } catch {

@@ -3,11 +3,11 @@ import VaultClassifierCore
 @testable import VaultClassifierApp
 
 @MainActor
-final class ClassifierTypeLocalModelWebInputTests: XCTestCase {
+final class ClassifierTypeTaggingWebInputTests: XCTestCase {
     func testTagBoundInputsRejectInvalidPairsAndAllowIndependentBlankDefaults() throws {
         let base: [String: Any] = ["typeID": "type", "speedQuality": "balanced", "strictness": "5"]
-        func parse(_ values: [String: Any]) throws -> LocalLLMSettings {
-            try VaultClassifierViewModel.parseClassifierTypeLocalModelWebInput(base.merging(values) { _, new in new }).settings
+        func parse(_ values: [String: Any]) throws -> TaggingSettings {
+            try VaultClassifierViewModel.parseClassifierTypeTaggingWebInput(base.merging(values) { _, new in new }).settings
         }
         XCTAssertEqual(try parse(["minimumTagsOverride": "", "maximumTagsOverride": NSNull()]).tagBounds,
                        TagBounds(minimum: 1, maximum: 3))
@@ -48,29 +48,29 @@ final class ClassifierTypeLocalModelWebInputTests: XCTestCase {
     // MARK: - Per-type local model form
 
     func testBothDialPositionsAreRequiredAndEmptyRulesAreIndependent() throws {
-        XCTAssertThrowsError(try VaultClassifierViewModel.parseClassifierTypeLocalModelWebInput([
+        XCTAssertThrowsError(try VaultClassifierViewModel.parseClassifierTypeTaggingWebInput([
             "typeID": "type", "speedQuality": "", "strictness": ""
         ]))
-        XCTAssertThrowsError(try VaultClassifierViewModel.parseClassifierTypeLocalModelWebInput([
+        XCTAssertThrowsError(try VaultClassifierViewModel.parseClassifierTypeTaggingWebInput([
             "typeID": "type", "speedQuality": "fast"
         ]))
-        let input = try VaultClassifierViewModel.parseClassifierTypeLocalModelWebInput([
+        let input = try VaultClassifierViewModel.parseClassifierTypeTaggingWebInput([
             "typeID": "type", "speedQuality": "best", "strictness": "2", "houseRules": ""
         ])
-        XCTAssertEqual(input.settings, LocalLLMSettings(speedQuality: .best, strictness: .strict))
+        XCTAssertEqual(input.settings, TaggingSettings(speedQuality: .best, strictness: .strict))
     }
 
     func testUnknownPositionsAreRefused() {
-        XCTAssertThrowsError(try VaultClassifierViewModel.parseClassifierTypeLocalModelWebInput([
+        XCTAssertThrowsError(try VaultClassifierViewModel.parseClassifierTypeTaggingWebInput([
             "typeID": "type", "speedQuality": "turbo",
         ]))
-        XCTAssertThrowsError(try VaultClassifierViewModel.parseClassifierTypeLocalModelWebInput([
+        XCTAssertThrowsError(try VaultClassifierViewModel.parseClassifierTypeTaggingWebInput([
             "typeID": "type", "strictness": "9",
         ]))
-        XCTAssertThrowsError(try VaultClassifierViewModel.parseClassifierTypeLocalModelWebInput([
+        XCTAssertThrowsError(try VaultClassifierViewModel.parseClassifierTypeTaggingWebInput([
             "typeID": "type", "strictness": "not-a-number",
         ]))
-        XCTAssertThrowsError(try VaultClassifierViewModel.parseClassifierTypeLocalModelWebInput([
+        XCTAssertThrowsError(try VaultClassifierViewModel.parseClassifierTypeTaggingWebInput([
             "typeID": "", "strictness": "3",
         ]))
     }

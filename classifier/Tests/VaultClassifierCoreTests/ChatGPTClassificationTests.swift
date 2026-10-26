@@ -13,10 +13,10 @@ private final class CloudCalls: @unchecked Sendable {
     var count: Int { lock.withLock { requests.count } }
 }
 
-private actor ForbiddenLocalResolver: OnDeviceLLMEngineResolving {
+private actor ForbiddenLocalResolver: RetiredLocalEngineResolving {
     private(set) var calls = 0
-    func resolveEngine(forModel fileName: String, configuration: LocalLLMSettings) async throws -> any OnDeviceLLM {
-        calls += 1; throw OnDeviceLLMError.notReady("Local inference must not run in this test")
+    func resolveEngine(forModel fileName: String, configuration: TaggingSettings) async throws -> any ClassificationEngine {
+        calls += 1; throw ClassificationEngineError.notReady("Local inference must not run in this test")
     }
 }
 
@@ -110,9 +110,9 @@ final class ChatGPTClassificationTests: XCTestCase {
         for _ in 0..<100 { XCTAssertEqual(type.cloudModelVersion, original) }
         type.chatGPT.searchEnabled = true; XCTAssertNotEqual(type.cloudModelVersion, original)
         type.chatGPT.searchEnabled = false; type.chatGPT.accountID = "b"; XCTAssertNotEqual(type.cloudModelVersion, original)
-        type.chatGPT.accountID = "a"; type.localModel.houseRules = "Chess is Games"; XCTAssertNotEqual(type.cloudModelVersion, original)
+        type.chatGPT.accountID = "a"; type.tagging.houseRules = "Chess is Games"; XCTAssertNotEqual(type.cloudModelVersion, original)
         let row = VideoClassification(classifierTypeID: type.id, platformID: "youtube", entryID: "v", creatorID: "c", treeID: "tree", treeRevision: 1,
-            tags: [], source: .model, modelVersion: type.cloudModelVersion + "+p4", tagBounds: type.localModel.tagBounds)
+            tags: [], source: .model, modelVersion: type.cloudModelVersion + "+p4", tagBounds: type.tagging.tagBounds)
         XCTAssertTrue(LocalClassifierCoordinator.isClassificationCurrent(row, forType: type, servingModelVersion: "stub/v1"))
         type.chatGPT.model = "different"; XCTAssertFalse(LocalClassifierCoordinator.isClassificationCurrent(row, forType: type, servingModelVersion: "stub/v1"))
     }
@@ -157,7 +157,7 @@ final class ChatGPTClassificationTests: XCTestCase {
             classificationProvider: .chatGPT, chatGPT: .init(accountID: status.accountID, model: "fixture")))
         try coordinator.updateWorkspaceCatalog(catalog)
         let local = ForbiddenLocalResolver()
-        coordinator.setOnDeviceLLMEngineResolver(local); coordinator.setCloudEngineResolver(client)
+        coordinator.setClassificationEngineEngineResolver(local); coordinator.setCloudEngineResolver(client)
         for _ in 0..<3 {
             do { _ = try await coordinator.classifyVideo(platformID: "youtube", entryID: "v", creatorID: "c", title: "Chess"); XCTFail("Cloud failure must remain unresolved") }
             catch {}
@@ -230,7 +230,7 @@ final class ChatGPTClassificationTests: XCTestCase {
         let dataset = state.workspaceCatalog.datasets[0]
         state.workspaceCatalog.classifierTypes.append(.init(name: "Group", treeID: tree.id, treeRevision: tree.revision,
             datasetID: dataset.id, datasetRevision: dataset.revision, applicablePlatformIDs: ["youtube"],
-            localModel: .init(speedQuality: .best, strictness: .strict, houseRules: "My rules")))
+            tagging: .init(speedQuality: .best, strictness: .strict, houseRules: "My rules")))
         var object = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(state)) as? [String: Any])
         object["schemaVersion"] = 3
         var metadata = try XCTUnwrap(object["storageMetadata"] as? [String: Any]); metadata["schemaVersion"] = 3; object["storageMetadata"] = metadata
@@ -241,7 +241,7 @@ final class ChatGPTClassificationTests: XCTestCase {
         let decoded = try JSONDecoder().decode(LocalClassifierState.self, from: JSONSerialization.data(withJSONObject: object))
         XCTAssertEqual(decoded.schemaVersion, 4)
         XCTAssertEqual(decoded.workspaceCatalog.classifierTypes[0].classificationProvider, .local)
-        XCTAssertEqual(decoded.workspaceCatalog.classifierTypes[0].localModel, state.workspaceCatalog.classifierTypes[0].localModel)
+        XCTAssertEqual(decoded.workspaceCatalog.classifierTypes[0].tagging, state.workspaceCatalog.classifierTypes[0].tagging)
     }
 
     func testWelcomeAcknowledgementPersistsAcrossRestartAndCancellingReauthorization() async throws {

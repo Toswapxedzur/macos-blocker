@@ -298,7 +298,7 @@ public actor ChatGPTAccountClient: CloudClassificationEngineResolving {
         } catch { issue = error.localizedDescription; onChange(); throw error }
     }
 
-    public func resolveCloudEngine(for type: ClassifierTypeAsset) async throws -> any OnDeviceLLM {
+    public func resolveCloudEngine(for type: ClassifierTypeAsset) async throws -> any ClassificationEngine {
         try type.chatGPT.validate()
         guard credential?.accountID == type.chatGPT.accountID else { throw CloudClassificationError.signInRequired }
         return ChatGPTClassificationEngine(client: self, configuration: type.chatGPT, modelVersion: type.cloudModelVersion)

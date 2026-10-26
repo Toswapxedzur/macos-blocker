@@ -13,7 +13,7 @@ private final class RecordingHubConnection: SharedHubConnection {
     func broadcast(operation: String, body: Any) { broadcasts.append((operation, body)) }
 }
 
-private actor UnexpectedRenameLLM: OnDeviceLLM {
+private actor UnexpectedRenameLLM: ClassificationEngine {
     nonisolated let modelVersion = "unexpected-rename/v1"
     private(set) var requests = 0
     func classify(_ request: LLMClassificationRequest) async throws -> LLMClassificationResult {
@@ -111,7 +111,7 @@ final class ViewModelCharacterizationTests: XCTestCase {
         let hub = RecordingHubConnection()
         vm.sharedHubClient = hub
         let engine = UnexpectedRenameLLM()
-        coordinator.setOnDeviceLLM(engine)
+        coordinator.setClassificationEngine(engine)
         var renders = 0
         vm.onWebStateChange = { renders += 1 }
 
@@ -283,14 +283,14 @@ final class ViewModelCharacterizationTests: XCTestCase {
         _ = vm.performWebAction("createClassifierType", data: ["name": "B", "platformIDs": ["reddit"]])
         let groups = try XCTUnwrap(vm.localState?.workspaceCatalog.classifierTypes)
         XCTAssertEqual(groups.count, 2)
-        _ = vm.performWebAction("saveClassifierTypeLocalModel", data: [
+        _ = vm.performWebAction("saveClassifierTypeTagging", data: [
             "typeID": groups[0].id, "speedQuality": "fast", "strictness": "5", "houseRules": "prefer specific tags"
         ])
         XCTAssertNil(vm.issue)
-        XCTAssertEqual(vm.localState?.workspaceCatalog.classifierTypes[0].localModel.speedQuality, .fast)
-        XCTAssertEqual(vm.localState?.workspaceCatalog.classifierTypes[1].localModel, .init())
+        XCTAssertEqual(vm.localState?.workspaceCatalog.classifierTypes[0].tagging.speedQuality, .fast)
+        XCTAssertEqual(vm.localState?.workspaceCatalog.classifierTypes[1].tagging, .init())
         let before = vm.localState
-        _ = vm.performWebAction("saveLocalLLMSettings", data: ["speedQuality": "best", "strictness": "1"])
+        _ = vm.performWebAction("saveTaggingSettings", data: ["speedQuality": "best", "strictness": "1"])
         XCTAssertNotNil(vm.issue)
         XCTAssertEqual(vm.localState, before)
     }
@@ -308,7 +308,7 @@ final class ViewModelCharacterizationTests: XCTestCase {
             "probeProviderModelCatalog", "confirmDeleteProviderProfile", "rearrangeTree",
             "addTag", "moveTag", "renameTag", "updateTag", "connectTag", "disconnectTag", "deleteTag",
             "downloadModel", "cancelModelDownload", "deleteModelFile",
-            "deleteKnowledgeEntry", "addKnowledgeCreator", "editKnowledgeEntry", "retryFailedResearch", "saveResearchSettings", "saveClassifierTypeLocalModel", "saveClassifierTypeResearch", "setBackupOwnerCode", "unlockBackup",
+            "deleteKnowledgeEntry", "addKnowledgeCreator", "editKnowledgeEntry", "retryFailedResearch", "saveResearchSettings", "saveClassifierTypeTagging", "saveClassifierTypeResearch", "setBackupOwnerCode", "unlockBackup",
             "saveBackup", "backupNow",
         ]
         XCTAssertEqual(actions.count, 36)
@@ -343,10 +343,10 @@ final class ViewModelCharacterizationTests: XCTestCase {
         }
     }
 
-    func testSaveLocalLLMSettingsRejectsMalformedInputWithoutMutation() throws {
+    func testSaveTaggingSettingsRejectsMalformedInputWithoutMutation() throws {
         let vm = try makeViewModel()
         let before = vm.localState?.workspaceCatalog
-        XCTAssertTrue(vm.performWebAction("saveLocalLLMSettings", data: ["maximumTags": "3"]), "the error path re-sends the snapshot")
+        XCTAssertTrue(vm.performWebAction("saveTaggingSettings", data: ["maximumTags": "3"]), "the error path re-sends the snapshot")
         XCTAssertNotNil(vm.issue)
         XCTAssertEqual(vm.localState?.workspaceCatalog, before)
     }

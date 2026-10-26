@@ -2,7 +2,6 @@ import Foundation
 import VaultClassifierCore
 import VaultClassifierResearch
 import VaultClassifierBridge
-import VaultClassifierLLM
 #if canImport(AppKit)
 import AppKit
 #elseif os(Windows)
@@ -78,9 +77,7 @@ extension VaultClassifierViewModel {
         guard let coordinator else { throw CloudClassificationError.notConfigured }
         var catalog = coordinator.snapshot().workspaceCatalog
         guard let index = catalog.classifierTypes.firstIndex(where: { $0.id == typeID }) else { throw CloudClassificationError.notConfigured }
-        if providerModel == "local" {
-            catalog.classifierTypes[index].classificationProvider = .local
-        } else if providerModel.hasPrefix("chatgpt:") {
+        if providerModel.hasPrefix("chatgpt:") {
             let model = String(providerModel.dropFirst(8))
             guard chatGPTStatus.planUsageEnabled, chatGPTStatus.models.contains(where: { $0.identifier == model }) else { throw CloudClassificationError.notConfigured }
             catalog.classifierTypes[index].classificationProvider = .chatGPT
@@ -89,7 +86,7 @@ extension VaultClassifierViewModel {
         catalog.classifierTypes[index].chatGPT.searchEnabled = searchEnabled
         catalog.classifierTypes[index].updatedAtMilliseconds = WorkspaceCatalog.now()
         try coordinator.updateWorkspaceCatalog(catalog)
-        refreshLocalState(); reconcileLocalRuntime(); issue = nil
+        refreshLocalState(); issue = nil
     }
 
     func saveChatGPTUsageLimit(_ value: Int?) throws {
@@ -116,24 +113,4 @@ extension VaultClassifierViewModel {
         }
     }
 
-    func reconcileLocalRuntime() {
-        guard liveEngineRuntime, !isShuttingDown else { return }
-        let needsLocal = coordinator?.snapshot().workspaceCatalog.classifierTypes.contains { $0.classificationProvider == .local && !$0.isPaused } == true
-        if needsLocal {
-            if localLLMRegistry == nil, let coordinator { installLocalLLMEngine(coordinator: coordinator) }
-        } else {
-            let warmup = modelWarmupTask
-            warmup?.cancel(); modelWarmupTask = nil
-            let registry = localLLMRegistry
-            activeLocalRuntimeID = nil
-            localLLMRegistry = nil; coordinator?.setOnDeviceLLMEngineResolver(nil)
-            if registry != nil || warmup != nil {
-                let id = Foundation.UUID()
-                retiringLocalModels[id] = Task { [weak self] in
-                    await registry?.shutdown(); await warmup?.value
-                    self?.retiringLocalModels[id] = nil
-                }
-            }
-        }
-    }
 }

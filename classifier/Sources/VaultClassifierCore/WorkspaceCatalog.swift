@@ -250,6 +250,27 @@ public struct WorkspaceCatalog: Codable, Equatable, Sendable {
         }
     }
 
+    /// Only the bounded import guard understands the retired local provider.
+    /// Runtime configuration cannot represent or select it.
+    private struct ImportedClassifierGroup: Decodable {
+        let value: ClassifierTypeAsset?
+        let retiredID: String?
+        let retiredTreeID: String?
+        enum Keys: String, CodingKey { case classificationProvider, id, treeID }
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: Keys.self)
+            let provider = try c.decodeIfPresent(String.self, forKey: .classificationProvider)
+            if provider == nil || provider == "local" {
+                value = nil
+                retiredID = try c.decodeIfPresent(String.self, forKey: .id)
+                retiredTreeID = try c.decodeIfPresent(String.self, forKey: .treeID)
+            } else {
+                value = try ClassifierTypeAsset(from: decoder)
+                retiredID = nil; retiredTreeID = nil
+            }
+        }
+    }
+
     private enum CodingKeys: String, CodingKey {
         case trees, datasets, bindings, classifierTypes, tokenUsage, providerRequestRecords, providerProfiles,
              videoClassifications, knowledgeEntries, creatorKnowledge, researchAttempts, correctionExamples, creatorHistograms,
@@ -262,7 +283,10 @@ public struct WorkspaceCatalog: Codable, Equatable, Sendable {
         trees = try container.decodeIfPresent([TagTreeAsset].self, forKey: .trees) ?? []
         datasets = try container.decodeIfPresent([ClassificationDataset].self, forKey: .datasets) ?? []
         bindings = try container.decodeIfPresent([PlatformBinding].self, forKey: .bindings) ?? []
-        classifierTypes = try container.decodeIfPresent([ClassifierTypeAsset].self, forKey: .classifierTypes) ?? []
+        let imported = try container.decodeIfPresent([ImportedClassifierGroup].self, forKey: .classifierTypes) ?? []
+        classifierTypes = imported.compactMap(\.value)
+        let retiredIDs = Set(imported.compactMap(\.retiredID))
+        let retiredTrees = Set(imported.compactMap(\.retiredTreeID))
         tokenUsage = try container.decodeIfPresent([TokenUsageRecord].self, forKey: .tokenUsage) ?? []
         providerRequestRecords = try container.decodeIfPresent([ProviderRequestRecord].self, forKey: .providerRequestRecords) ?? []
         providerProfiles = try container.decodeIfPresent([APIKeyProviderProfile].self, forKey: .providerProfiles) ?? []
@@ -286,6 +310,19 @@ public struct WorkspaceCatalog: Codable, Equatable, Sendable {
         creatorResearchAccumulators = (try container.decodeIfPresent([CreatorResearchAccumulator].self, forKey: .creatorResearchAccumulators) ?? [])
             .filter { $0.score > 0 }
         collectionKeepDays = max(0, try container.decodeIfPresent(Int.self, forKey: .collectionKeepDays) ?? 365)
+        // One-way retirement: never convert a local group into a cloud group
+        // or start sending its data to a provider without a new selection.
+        videoClassifications.removeAll { retiredIDs.contains($0.classifierTypeID) }
+        correctionExamples.removeAll { retiredIDs.contains($0.classifierTypeID) }
+        creatorHistograms.removeAll { retiredIDs.contains($0.classifierTypeID) }
+        creatorResearchAccumulators.removeAll { retiredIDs.contains($0.id.components(separatedBy: "\u{1F}").first ?? "") }
+        researchAttempts.removeAll { retiredIDs.contains($0.classifierTypeID ?? "") }
+        let retainedTrees = Set(bindings.map(\.treeID) + classifierTypes.map(\.treeID))
+        trees.removeAll { retiredTrees.contains($0.id) && !retainedTrees.contains($0.id) }
+        for i in bindings.indices where retiredIDs.contains(bindings[i].activeClassifierTypeID ?? "") {
+            bindings[i].activeClassifierTypeID = nil
+        }
+
     }
 
     private func unique(_ identifiers: [String]) throws {

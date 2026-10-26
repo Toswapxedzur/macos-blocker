@@ -5,25 +5,25 @@ import XCTest
 final class LocalModelSettingsTests: XCTestCase {
     func testOptionalTagBoundsFollowEachDialDefaultIndependently() throws {
         for dial in StrictnessDial.allCases {
-            let defaults = LocalLLMSettings(strictness: dial)
+            let defaults = TaggingSettings(strictness: dial)
             XCTAssertEqual(defaults.tagBounds, dial.tagBounds)
-            let maximumOnly = LocalLLMSettings(strictness: dial, maximumTagsOverride: 2)
+            let maximumOnly = TaggingSettings(strictness: dial, maximumTagsOverride: 2)
             XCTAssertEqual(maximumOnly.minimumTags, dial.minimumTags)
             XCTAssertEqual(maximumOnly.maximumTags, 2)
-            let minimumOnly = LocalLLMSettings(strictness: dial, minimumTagsOverride: 0)
+            let minimumOnly = TaggingSettings(strictness: dial, minimumTagsOverride: 0)
             XCTAssertEqual(minimumOnly.minimumTags, 0)
             XCTAssertEqual(minimumOnly.maximumTags, dial.maximumTags)
         }
-        let custom = LocalLLMSettings(strictness: .strict, minimumTagsOverride: 2, maximumTagsOverride: 2)
+        let custom = TaggingSettings(strictness: .strict, minimumTagsOverride: 2, maximumTagsOverride: 2)
         XCTAssertEqual(custom.tagBounds, TagBounds(minimum: 2, maximum: 2))
         XCTAssertEqual(custom.extraTagMinimumOdds, StrictnessDial.strict.extraTagMinimumOdds)
-        XCTAssertEqual(try JSONDecoder().decode(LocalLLMSettings.self, from: JSONEncoder().encode(custom)), custom)
-        let blank = try JSONDecoder().decode(LocalLLMSettings.self, from: Data(#"{"strictness":5,"minimumTagsOverride":null,"maximumTagsOverride":null}"#.utf8))
+        XCTAssertEqual(try JSONDecoder().decode(TaggingSettings.self, from: JSONEncoder().encode(custom)), custom)
+        let blank = try JSONDecoder().decode(TaggingSettings.self, from: Data(#"{"strictness":5,"minimumTagsOverride":null,"maximumTagsOverride":null}"#.utf8))
         XCTAssertEqual(blank.tagBounds, StrictnessDial.broadest.tagBounds)
         for json in [#"{"strictness":3,"minimumTagsOverride":-1,"maximumTagsOverride":0}"#,
                      #"{"strictness":3,"minimumTagsOverride":3,"maximumTagsOverride":1}"#,
                      #"{"strictness":3,"minimumTagsOverride":"bad","maximumTagsOverride":99}"#] {
-            let guarded = try JSONDecoder().decode(LocalLLMSettings.self, from: Data(json.utf8))
+            let guarded = try JSONDecoder().decode(TaggingSettings.self, from: Data(json.utf8))
             XCTAssertEqual(guarded.tagBounds, StrictnessDial.balanced.tagBounds)
         }
     }
@@ -64,10 +64,10 @@ final class LocalModelSettingsTests: XCTestCase {
         XCTAssertNil(SpeedQualityDial.nearest(modelFileName: "mystery.gguf"))
     }
 
-    // MARK: - LocalLLMSettings
+    // MARK: - TaggingSettings
 
     func testSettingsDeriveEverythingFromTheDials() {
-        let settings = LocalLLMSettings(speedQuality: .best, strictness: .strict, houseRules: String(repeating: "x", count: 4_100))
+        let settings = TaggingSettings(speedQuality: .best, strictness: .strict, houseRules: String(repeating: "x", count: 4_100))
         XCTAssertEqual(settings.modelFileName, "Qwen2.5-14B-Instruct-Q4_K_M.gguf")
         XCTAssertEqual(settings.maximumTags, 3); XCTAssertEqual(settings.minimumTags, 0)
         XCTAssertEqual(settings.extraTagMinimumOdds, 0.97)
@@ -78,22 +78,22 @@ final class LocalModelSettingsTests: XCTestCase {
         XCTAssertEqual(settings.temperature, 0); XCTAssertTrue(settings.allowDecline)
         XCTAssertEqual(settings.confidenceThresholds, [0.20, 0.40, 0.60, 0.85])
         XCTAssertEqual(settings.maxResidentModels, 2)
-        XCTAssertEqual(LocalLLMSettings(), LocalLLMSettings(speedQuality: .balanced, strictness: .balanced, houseRules: ""))
+        XCTAssertEqual(TaggingSettings(), TaggingSettings(speedQuality: .balanced, strictness: .balanced, houseRules: ""))
     }
 
     func testPreDialSettingsDecodeToTheNearestPositionsAndNeverReencodeOldKeys() throws {
         let legacy = Data(#"{"modelFileName":"Qwen2.5-7B-Instruct-Q4_K_M.gguf","engineEnabled":true,"contextTokens":4096,"maximumTags":3,"minimumTags":0,"extraTagMinimumOdds":0.97,"allowDecline":true,"confidenceThresholds":[0.2,0.4,0.6,0.85],"houseRules":"rule","maxResidentModels":2}"#.utf8)
-        let decoded = try JSONDecoder().decode(LocalLLMSettings.self, from: legacy)
-        XCTAssertEqual(decoded, LocalLLMSettings(speedQuality: .balanced, strictness: .strict, houseRules: "rule"))
+        let decoded = try JSONDecoder().decode(TaggingSettings.self, from: legacy)
+        XCTAssertEqual(decoded, TaggingSettings(speedQuality: .balanced, strictness: .strict, houseRules: "rule"))
         let reencoded = String(decoding: try JSONEncoder().encode(decoded), as: UTF8.self)
         for retired in ["modelFileName", "engineEnabled", "contextTokens", "maximumTags", "minimumTags", "extraTagMinimumOdds", "allowDecline", "confidenceThresholds", "maxResidentModels"] {
             XCTAssertFalse(reencoded.contains(retired), "retired key written back: \(retired)")
         }
-        XCTAssertEqual(try JSONDecoder().decode(LocalLLMSettings.self, from: Data(reencoded.utf8)), decoded)
+        XCTAssertEqual(try JSONDecoder().decode(TaggingSettings.self, from: Data(reencoded.utf8)), decoded)
         // An empty pre-dial state lands on the defaults.
-        XCTAssertEqual(try JSONDecoder().decode(LocalLLMSettings.self, from: Data("{}".utf8)), LocalLLMSettings())
+        XCTAssertEqual(try JSONDecoder().decode(TaggingSettings.self, from: Data("{}".utf8)), TaggingSettings())
         // A stored dial wins over leftover pre-dial keys.
-        let mixed = try JSONDecoder().decode(LocalLLMSettings.self, from: Data(#"{"strictness":4,"maximumTags":1}"#.utf8))
+        let mixed = try JSONDecoder().decode(TaggingSettings.self, from: Data(#"{"strictness":4,"maximumTags":1}"#.utf8))
         XCTAssertEqual(mixed.strictness, .broad)
     }
 

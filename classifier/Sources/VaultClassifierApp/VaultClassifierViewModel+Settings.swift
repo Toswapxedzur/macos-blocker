@@ -2,7 +2,6 @@ import Foundation
 import VaultClassifierCore
 import VaultClassifierResearch
 import VaultClassifierBridge
-import VaultClassifierLLM
 
 // Package/research settings, independent group dials and house rules, and web-input validation.
 // Split out of VaultClassifierApp.swift (CLASSIFIER-INDEPENDENCE §7, Phase 5):
@@ -96,7 +95,7 @@ extension VaultClassifierViewModel {
     }
 
     /// Persists a group's independent dial positions and house rules.
-    func saveClassifierTypeLocalModel(typeID: String, settings: LocalLLMSettings) {
+    func saveClassifierTypeTagging(typeID: String, settings: TaggingSettings) {
         do {
             guard var catalog = localState?.workspaceCatalog,
                   let index = catalog.classifierTypes.firstIndex(where: { $0.id == typeID }),
@@ -105,7 +104,7 @@ extension VaultClassifierViewModel {
                   }) else {
                 throw WebBridgeInputError.invalidChoice("Classifier group local model")
             }
-            catalog.classifierTypes[index].localModel = settings
+            catalog.classifierTypes[index].tagging = settings
             catalog.classifierTypes[index].updatedAtMilliseconds = WorkspaceCatalog.now()
             try coordinator?.updateWorkspaceCatalog(catalog)
             refreshLocalState()
@@ -116,21 +115,18 @@ extension VaultClassifierViewModel {
     }
 
     /// Both dial positions are required; blank house rules means no rules.
-    static func parseClassifierTypeLocalModelWebInput(
+    static func parseClassifierTypeTaggingWebInput(
         _ data: [String: Any]
-    ) throws -> ClassifierTypeLocalModelWebInput {
+    ) throws -> ClassifierTypeTaggingWebInput {
         guard let typeID = data["typeID"] as? String, !typeID.isEmpty, typeID.count <= 256 else {
             throw WebBridgeInputError.missingValue("typeID")
-        }
-        guard let speedQuality = SpeedQualityDial.resolve(data["speedQuality"] as? String) else {
-            throw WebBridgeInputError.invalidChoice("speedQuality")
         }
         guard let strictness = StrictnessDial.resolve(optionalWebInteger(data["strictness"])) else {
             throw WebBridgeInputError.invalidChoice("strictness")
         }
         let houseRules = data["houseRules"] as? String ?? ""
-        guard houseRules.count <= LocalLLMSettings.maximumHouseRulesLength else {
-            throw WebBridgeInputError.exceedsLimit("houseRules", LocalLLMSettings.maximumHouseRulesLength)
+        guard houseRules.count <= TaggingSettings.maximumHouseRulesLength else {
+            throw WebBridgeInputError.exceedsLimit("houseRules", TaggingSettings.maximumHouseRulesLength)
         }
         func tagCount(_ key: String, range: ClosedRange<Int>) throws -> Int? {
             guard let value = data[key], !(value is NSNull) else { return nil }
@@ -142,12 +138,12 @@ extension VaultClassifierViewModel {
             guard let count = Int(raw), range.contains(count) else { throw WebBridgeInputError.invalidChoice(key) }
             return count
         }
-        let minimum = try tagCount("minimumTagsOverride", range: 0...LocalLLMSettings.maximumTagCountOverride)
-        let maximum = try tagCount("maximumTagsOverride", range: 1...LocalLLMSettings.maximumTagCountOverride)
+        let minimum = try tagCount("minimumTagsOverride", range: 0...TaggingSettings.maximumTagCountOverride)
+        let maximum = try tagCount("maximumTagsOverride", range: 1...TaggingSettings.maximumTagCountOverride)
         guard (minimum ?? strictness.minimumTags) <= (maximum ?? strictness.maximumTags) else {
             throw WebBridgeInputError.invalidChoice("minimum tags greater than maximum tags")
         }
-        return .init(typeID: typeID, settings: .init(speedQuality: speedQuality, strictness: strictness,
+        return .init(typeID: typeID, settings: .init(strictness: strictness,
             houseRules: houseRules, minimumTagsOverride: minimum, maximumTagsOverride: maximum))
     }
 

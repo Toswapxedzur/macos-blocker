@@ -4,7 +4,6 @@ import AppKit
 import Foundation
 import VaultClassifierCore
 import VaultClassifierBridge
-import VaultClassifierLLM
 
 // The local-hub request path: decoding browser operations, the per-video classification queue and in-flight de-duplication, resolved-tag broadcasts and source-icon caching.
 // Split out of VaultClassifierApp.swift (CLASSIFIER-INDEPENDENCE §7, Phase 5):
@@ -126,20 +125,6 @@ extension VaultClassifierViewModel {
             }
         }
         guard !isShuttingDown, !Task.isCancelled else { return [:] }
-        if projections.isEmpty && !cloud {
-            // The batch failed as a whole — fall back to one video at a time
-            // so a single bad item cannot sink the rest of the screen.
-            for input in inputs {
-                guard !isShuttingDown, !Task.isCancelled else { return [:] }
-                do {
-                    projections[input.entryID] = try await coordinator.classifyVideo(
-                        platformID: platformID, entryID: input.entryID, creatorID: input.creatorID,
-                        title: input.title, summary: input.summary, text: input.text)
-                } catch {
-                    if error is CancellationError || isShuttingDown || Task.isCancelled { return [:] }
-                }
-            }
-        }
         guard !isShuttingDown, !Task.isCancelled, coordinator.enabledClassificationPlatformIDs().contains(platformID) else { return [:] }
         // A terminal failure must clear the browser's pending state as Untagged.
         // This is only a delivery result: do not save a fabricated model decision,

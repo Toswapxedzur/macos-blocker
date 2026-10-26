@@ -4,7 +4,6 @@ import AppKit
 import Foundation
 import VaultClassifierCore
 import VaultClassifierBridge
-import VaultClassifierLLM
 
 // Collection platforms, classifier types (create/reorder/configure/activate/delete), collection diagnostics and the native confirmation sheet they share.
 // Split out of VaultClassifierApp.swift (CLASSIFIER-INDEPENDENCE §7, Phase 5):
