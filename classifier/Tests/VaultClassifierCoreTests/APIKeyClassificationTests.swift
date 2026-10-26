@@ -83,7 +83,8 @@ private actor APIBatchTransport: ProviderHTTPClient {
     var peak = 0
     var calls = 0
     let suspend: Bool
-    init(suspend: Bool = false) { self.suspend = suspend }
+    let delay: UInt64?
+    init(suspend: Bool = false, delay: UInt64? = nil) { self.suspend = suspend; self.delay = delay }
     func send(plan: ProviderRequestPlan, body: Data?, credential: ProviderCredentialRecord, timeout: TimeInterval) async throws -> (data: Data, response: HTTPURLResponse) {
         active += 1; calls += 1; peak = max(peak, active)
         defer { active -= 1 }
@@ -91,7 +92,7 @@ private actor APIBatchTransport: ProviderHTTPClient {
         let inputs = object["input"] as! [[String: Any]]
         let text = inputs[0]["content"] as! String
         let items = try JSONSerialization.jsonObject(with: Data(text.utf8)) as! [[String: Any]]
-        try await Task.sleep(nanoseconds: suspend ? 30_000_000_000 : (text.contains("Mathematics") ? 60_000_000 : 5_000_000))
+        try await Task.sleep(nanoseconds: suspend ? 30_000_000_000 : (delay ?? (text.contains("Mathematics") ? 60_000_000 : 5_000_000)))
         let values: [[String: Any]] = items.map { item in
             ["index": item["index"]!, "tags": [["name": (item["evidence"] as! String).contains("Mathematics") ? "Mathematics" : "Games", "confidence": 5]]]
         }
@@ -136,6 +137,28 @@ extension APIKeyClassificationTests {
         do { _ = try await task.value; XCTFail("shutdown must cancel") } catch { XCTAssertTrue(error is CancellationError) }
         let status = await client.status(); XCTAssertTrue(status.failedProfileIDs.isEmpty)
         let counts = await transport.counts(); XCTAssertEqual(counts.2, 0)
+    }
+    func testChangingAPIModelDiscardsAnInflightReply() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { LocalStateFile.flushAllPendingWrites(); try? FileManager.default.removeItem(at: directory) }
+        let coordinator = try LocalClassifierCoordinator(verifiedPackage: SeedPackageLoader.bundled(), stateFile: .init(url: directory.appendingPathComponent("state.json")))
+        let transport = APIBatchTransport(delay: 300_000_000)
+        let profile = APIKeyProviderProfile(id: "p", type: .openAI, credential: "fixture-not-real")
+        let client = APIKeyClassificationClient(profiles: { _ in profile }, http: transport)
+        var catalog = coordinator.snapshot().workspaceCatalog
+        let tree = TagTreeAsset(id: "t", name: "Topics", nodes: [.init(id: "math", name: "Mathematics")])
+        catalog.trees.append(tree); let dataset = catalog.datasets[0]
+        catalog.classifierTypes = [.init(id: "g", name: "Fixture", treeID: tree.id, treeRevision: tree.revision,
+            datasetID: dataset.id, datasetRevision: dataset.revision, applicablePlatformIDs: ["youtube"],
+            classificationProvider: .apiKey, apiKey: .init(profileID: profile.id, model: "model-a"))]
+        try coordinator.updateWorkspaceCatalog(catalog); coordinator.setCloudEngineResolver(client)
+        let pending = Task { try await coordinator.classifyVideo(platformID: "youtube", entryID: "v", creatorID: "c", title: "Mathematics") }
+        while await transport.counts().0 == 0 { await Task.yield() }
+        catalog.classifierTypes[0].apiKey.model = "model-b"; try coordinator.updateWorkspaceCatalog(catalog)
+        do { _ = try await pending.value; XCTFail("Old-model replies must be discarded") }
+        catch { XCTAssertTrue(error is CancellationError) }
+        XCTAssertTrue(coordinator.snapshot().workspaceCatalog.videoClassifications.isEmpty)
+        await client.shutdown()
     }
     func testAPIKeyClientNeverActsAsFallbackForSubscriptionSelection() async throws {
         let profile = APIKeyProviderProfile(id: "p", type: .openAI, credential: "fixture-not-real")

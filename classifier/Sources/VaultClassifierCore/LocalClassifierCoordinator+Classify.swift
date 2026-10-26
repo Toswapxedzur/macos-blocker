@@ -191,7 +191,7 @@ extension LocalClassifierCoordinator {
                 if let original = catalog.classifierTypes.first(where: { $0.id == classification.classifierTypeID }),
                    let current = state.workspaceCatalog.classifierTypes.first(where: { $0.id == classification.classifierTypeID }),
                    (original.classificationProvider != current.classificationProvider
-                    || original.chatGPT != current.chatGPT || original.tagging != current.tagging
+                    || original.chatGPT != current.chatGPT || original.apiKey != current.apiKey || original.tagging != current.tagging
                     || original.treeRevision != current.treeRevision) { throw CancellationError() }
                 if state.workspaceCatalog.videoClassification(classifierTypeID: classification.classifierTypeID, platformID: classification.platformID, entryID: classification.entryID)?.source == .humanCorrected,
                    classification.source != .humanCorrected { continue }
