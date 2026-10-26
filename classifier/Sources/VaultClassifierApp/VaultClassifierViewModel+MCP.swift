@@ -55,7 +55,7 @@ public enum ClassifierWebActionCatalog {
         .init(name: "refreshChatGPTModels", keys: [], summary: "Fetch the connected account's currently available models."),
         .init(name: "retryChatGPTClassifications", keys: [], summary: "Retry failed cloud items without enabling local fallback."),
         .init(name: "saveChatGPTUsageLimit", keys: ["dailyRequestLimit"], summary: "Optional daily ChatGPT request cap on this device, UTC day; blank has no app cap. Failed dispatched requests count."),
-        .init(name: "saveClassificationProvider", keys: ["typeID", "providerModel", "searchEnabled"], summary: "Choose chatgpt:<account model slug> for a group. Search is an explicit user choice; model list and plan consent are required."),
+        .init(name: "saveClassificationProvider", keys: ["typeID", "providerModel", "searchEnabled"], summary: "Choose one group connection/model: chatgpt:<model> for subscription or api:<profileID>:<model> for a saved OpenAI, Gemini or Grok key. Fetch its model list first. Search is explicit; no fallback."),
         .init(name: "setClassifierTypePaused", keys: ["typeID", "paused"], summary: "Pause or resume automatic tagging for a classifier group."),
         .init(name: "saveDictionarySettings", keys: ["creatorMode", "creatorCacheSize", "contributionEnabled", "choiceMade"], summary: "Creator dictionary mode cache/full; cache capacity 1–100000; creator-only contribution preference."),
         .init(name: "completeDictionaryOnboarding", keys: ["enabled"], summary: "Save the first-launch creator contribution choice."),
