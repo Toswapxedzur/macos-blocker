@@ -137,6 +137,16 @@ extension APIKeyClassificationTests {
         let status = await client.status(); XCTAssertTrue(status.failedProfileIDs.isEmpty)
         let counts = await transport.counts(); XCTAssertEqual(counts.2, 0)
     }
+    func testAPIKeyClientNeverActsAsFallbackForSubscriptionSelection() async throws {
+        let profile = APIKeyProviderProfile(id: "p", type: .openAI, credential: "fixture-not-real")
+        let client = APIKeyClassificationClient(profiles: { _ in profile }, http: APIBatchTransport())
+        let group = ClassifierTypeAsset(name: "Fixture", treeID: "t", treeRevision: 1, datasetID: "d", datasetRevision: 1,
+            classificationProvider: .chatGPT, apiKey: .init(profileID: "p", model: "previous-api-model"))
+        do { _ = try await client.resolveCloudEngine(for: group); XCTFail("No fallback is permitted") }
+        catch { XCTAssertEqual(error as? CloudClassificationError, .notConfigured) }
+        let status = await client.status(); XCTAssertEqual(status.requestsToday, 0)
+        await client.shutdown()
+    }
     func testSchemaFivePreservesSubscriptionAndDiscardsRetiredLocalProvider() throws {
         var state = LocalClassifierState()
         let tree = state.workspaceCatalog.trees[0], dataset = state.workspaceCatalog.datasets[0]

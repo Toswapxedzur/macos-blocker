@@ -153,7 +153,7 @@ window.runAutosaveTests=async()=>{
   q('[data-connection-type="openAI"]').click();await new Promise(r=>requestAnimationFrame(r));
   input('[data-provider-id="provider-1"] [data-field="customEndpoint"]','https://example.test/api');
   await poll(()=>testState.assets.providerProfiles[0].customEndpoint==='https://example.test/api');
-  expect(!!q('[data-action="testProviderProfile"]'),'provider edits autosave and Probe stays explicit');
+  expect(!!q('[data-action="probeProviderModelCatalog"]'),'provider edits autosave and model fetching stays explicit');
   testState.assets.providerProfiles[0].credential='synthetic-old-key';pushSnapshot();
   ackDelay=450;
   input('[data-provider-id="provider-1"] [data-field="credential"]','synthetic-new-key');

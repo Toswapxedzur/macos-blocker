@@ -39,6 +39,7 @@ public actor APIKeyClassificationClient: CloudClassificationEngineResolving {
     public func retryFailedRequests() { failed.removeAll() }
     public func shutdown() async { stopped = true; let jobs = Array(active.values); jobs.forEach { $0.cancel() }; for job in jobs { _ = try? await job.value } }
     public func resolveCloudEngine(for type: ClassifierTypeAsset) async throws -> any ClassificationEngine {
+        guard type.classificationProvider == .apiKey else { throw CloudClassificationError.notConfigured }
         try type.apiKey.validate()
         guard !stopped else { throw CancellationError() }
         guard let profile = profiles(type.apiKey.profileID), Self.supports(profile.type), profile.credential?.isEmpty == false else {

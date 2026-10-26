@@ -11,16 +11,17 @@ import WinSDK
 @MainActor
 extension VaultClassifierViewModel {
     func installChatGPT(directory: URL, coordinator: LocalClassifierCoordinator) {
+        let apiKeys = APIKeyClassificationClient(profiles: { [weak coordinator] id in
+            coordinator?.snapshot().workspaceCatalog.providerProfiles.first { $0.id == id }
+        })
+        apiKeyClassificationClient = apiKeys
+        coordinator.setCloudEngineResolver(apiKeys)
         do {
             let client = try ChatGPTAccountClient(directory: directory.appendingPathComponent("ChatGPT", isDirectory: true),
                 dailyRequestLimit: coordinator.snapshot().settings.chatGPTDailyRequestLimit) { [weak self] in
                 Task { @MainActor [weak self] in await self?.refreshChatGPTStatus() }
             }
             chatGPTClient = client
-            let apiKeys = APIKeyClassificationClient(profiles: { [weak coordinator] id in
-                coordinator?.snapshot().workspaceCatalog.providerProfiles.first { $0.id == id }
-            })
-            apiKeyClassificationClient = apiKeys
             coordinator.setCloudEngineResolver(ClassificationConnectionResolver(subscription: client, apiKeys: apiKeys))
             Task { [weak self] in
                 await self?.refreshChatGPTStatus()
@@ -30,8 +31,8 @@ extension VaultClassifierViewModel {
     }
 
     func refreshChatGPTStatus() async {
-        guard let client = chatGPTClient, !isShuttingDown else { return }
-        chatGPTStatus = await client.status()
+        guard !isShuttingDown else { return }
+        if let client = chatGPTClient { chatGPTStatus = await client.status() }
         apiKeyClassificationStatus = await apiKeyClassificationClient?.status()
         onWebStateChange?()
     }
@@ -111,9 +112,8 @@ extension VaultClassifierViewModel {
     }
 
     func retryChatGPTClassifications() {
-        guard let client = chatGPTClient else { return }
         Task { [weak self] in
-            await client.retryFailedRequests()
+            await self?.chatGPTClient?.retryFailedRequests()
             await self?.apiKeyClassificationClient?.retryFailedRequests()
             guard let self, !self.isShuttingDown else { return }
             let failed = self.failedCloudClassifications

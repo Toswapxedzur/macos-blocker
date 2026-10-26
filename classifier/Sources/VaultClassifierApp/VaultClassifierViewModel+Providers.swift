@@ -6,7 +6,7 @@ import VaultClassifierCore
 import VaultClassifierResearch
 import VaultClassifierBridge
 
-// The cloud-provider sub-app: profile CRUD, live connection tests, model-catalog probing and the persisted test/usage records. Research-grounding only — tagging never touches a provider.
+// The cloud-provider sub-app: profile CRUD, live connection tests, model-catalog probing and the persisted test/usage records. Saved API connections serve explicit tagging selections and web research.
 // Split out of VaultClassifierApp.swift (CLASSIFIER-INDEPENDENCE §7, Phase 5):
 // same type, same behaviour — pinned by ViewModelCharacterizationTests.
 @MainActor

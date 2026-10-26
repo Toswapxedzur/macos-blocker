@@ -4,7 +4,7 @@ import FoundationNetworking
 #endif
 import VaultClassifierCore
 
-/// The narrow HTTP seam used by background research. Request construction and
+/// The narrow HTTP seam used by research and API-key tagging. Request construction and
 /// response parsing remain in the provider protocol types, while tests can
 /// inject a transport that never reaches the network.
 public protocol ProviderHTTPClient: Sendable {

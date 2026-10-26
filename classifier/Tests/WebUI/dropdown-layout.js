@@ -38,8 +38,7 @@ window.runDropdownLayoutTests = async () => {
   check(!q('.research-model-picker').open && q('.utility-popover'), 'outside click closes model menu without closing Settings');
   const card = q('[data-provider-panel]'), fields = card.querySelector('.provider-connection-fields');
   const footer = card.querySelector('footer.provider-request-summary'), body = card.querySelector('.provider-panel-body');
-  check(footer && footer.getBoundingClientRect().top >= body.getBoundingClientRect().bottom - 1,
-    'API usage and diagnostics sit below the connection fields');
+  check(!footer, 'tagging connections omit incomplete research-only usage counters');
   check(fields.getBoundingClientRect().width >= body.getBoundingClientRect().width - 1,
     'API connection fields use the full card width');
   q('[data-action="closeUtilityPanel"]').click(); await wait();
