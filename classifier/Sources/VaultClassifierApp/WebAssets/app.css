@@ -1221,3 +1221,4 @@ textarea[data-personal-import], textarea[data-personal-export] { direction:ltr; 
 [data-tagging-connections] > .utility-settings-section { margin-block:0; }
 [data-expand="classifier-services"] { margin-top:18px; }
 [data-expand="classifier-services"] > summary { cursor:pointer; font-size:12px; font-weight:600; padding-block:8px; }
+.provider-connection-fields > .field:only-child { grid-column:1 / -1; }

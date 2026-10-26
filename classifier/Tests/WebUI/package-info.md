@@ -88,3 +88,5 @@ cancellation, plan-use welcome, and drafts across snapshots. Run through
 `autosave.mjs` with `UI_TEST_SCRIPT=classifier/Tests/WebUI/chatgpt.js` and
 `UI_TEST_EXPRESSION='runChatGPTTests()'` at wide and narrow widths. The fixture
 simulates account/model snapshots and makes no provider requests.
+
+`api-connections.js` checks exactly four connection choices, masked key drafts/autosave, provider-specific model catalogs, API versus subscription billing, explicit group selection/search-off and navigation to the selected connection. It uses synthetic keys and model lists; no provider request is dispatched. Run with UI_TEST_EXPRESSION=runAPIConnectionTests() at wide and narrow widths.

@@ -29,6 +29,8 @@ window.runAPIConnectionTests = async () => {
   const saved=commands.filter(c=>c.action==='saveClassificationProvider').at(-1);
   expect(saved.data.providerModel==='api:provider-1:fixture-model'&&saved.data.searchEnabled===false,'API selection remains explicit and search starts off');
   expect(q('[data-form-id="cloud-provider-group-1"]').textContent.includes('API billing'),'API billing is distinct from subscription plan use');
+  q('[data-action="openConnections"]').click();await tick();
+  expect(q('[data-connection-type="openAI"]').getAttribute('aria-pressed')==='true','group link opens the selected connection');
   expect(uiErrors.length===0,'no browser errors');
   return results;
 };

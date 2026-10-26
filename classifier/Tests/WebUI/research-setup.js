@@ -15,7 +15,7 @@ window.runResearchSetupTests=async()=>{
   [...document.querySelectorAll('.vui-menu-item')].find(item=>item.textContent==='Set up web research…').click();await wait();
   expect(groupSaves()===0 && q(choice).value==='inherit','setup preserves group choice without autosaving On');
   expect(focused('llmProviderProfileID'),'setup focuses the provider selector');
-  expect(q('.utility-api-keys').nextElementSibling.matches('.utility-research-section'),'API keys are immediately above grounded research in Settings');
+  expect(q('[data-tagging-connections]') && q('[data-expand="classifier-services"] .utility-research-section'),'connections and research have separate organized sections');
   expect(!testState.settings.research.enabled,'setup does not enable global consent');
   change(research+' [data-field="llmProviderProfileID"]','provider-1');await poll(()=>testState.settings.research.llmProviderProfileID==='provider-1');
   close();change(choice,'on');await wait();
@@ -41,7 +41,7 @@ window.runResearchSetupTests=async()=>{
   expect(q('[data-action="openResearchSetup"]').textContent==='Enable web research…','Knowledge reports disabled consent');
   q('[data-action="openResearchSetup"]').click();await wait();expect(focused('enabled'),'Knowledge link opens the same Settings consent');close();
   testState.assets.providerProfiles=[];pushSnapshot();await wait();
-  q('[data-action="openResearchSetup"]').click();await wait();expect(focused('type'),'deleted provider opens API key creation safely');
+  q('[data-action="openResearchSetup"]').click();await wait();expect(scope.activeElement?.matches('[data-action="createProviderProfile"]'),'deleted provider opens API key creation safely');
   change('[data-form-id="new-provider-profile-form"] [data-field="type"]','openAI');q('[data-action="createProviderProfile"]').click();await poll(()=>q('[data-provider-id="provider-created"]'));
   expect(!!q('[data-provider-id="provider-created"]'),'provider creation remains available in Settings');
   close();testState.workspace='llmAssist';pushSnapshot();await wait();

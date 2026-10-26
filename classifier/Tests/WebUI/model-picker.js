@@ -4,7 +4,7 @@ window.runModelPickerTests=async()=>{
   const poll=async(predicate)=>{const end=performance.now()+5000;while(!predicate()){if(performance.now()>end)throw Error('Timed out');await new Promise(r=>setTimeout(r,20))}await wait()};
   const change=(selector,value)=>{const c=q(selector);c.value=value;c.dispatchEvent(new Event('change',{bubbles:true}))};
   const form='[data-form-id="utility-research-form"]',count=action=>commands.filter(c=>c.action===action).length;
-  await poll(()=>q('[data-action="openUtilityPanel"]'));q('[data-action="openUtilityPanel"]').click();await wait();
+  await poll(()=>q('[data-action="openUtilityPanel"]'));q('[data-action="openUtilityPanel"]').click();await wait();q('[data-connection-type="openAI"]').click();await wait();q('[data-expand="classifier-services"] summary').click();await wait();
   expect(q(form+' [data-field="llmModelIdentifier"]').type==='hidden','model identifier has no free-text entry');
   expect(q('[data-model-fetch]').disabled && q('.research-model-field').textContent.includes('Choose a provider first'),'fetch guides missing provider');
   change(form+' [data-field="llmProviderProfileID"]','provider-1');await wait();

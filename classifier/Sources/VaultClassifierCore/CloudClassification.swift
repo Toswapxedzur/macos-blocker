@@ -9,8 +9,8 @@ public enum ClassificationProvider: String, Codable, CaseIterable, Sendable {
     case chatGPT, apiKey
 }
 
-/// Public configuration only. Account credentials never enter classifier state,
-/// backups, web snapshots or hub messages.
+/// Group selection stores public IDs and model choices. Subscription credentials
+/// remain separate from workspace state, backups, snapshots and hub messages.
 public struct ChatGPTClassificationSettings: Codable, Equatable, Sendable {
     public var accountID: String
     public var model: String

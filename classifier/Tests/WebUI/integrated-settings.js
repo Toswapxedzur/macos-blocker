@@ -68,6 +68,9 @@ async function runIntegratedSettingsTests() {
     settings.querySelector('[data-field="classificationEnabled"]').click();
     await until(() => snapshot.settings.classificationEnabled === false);
     check(commands.some(message => message.action === 'saveClassificationSettings'), 'shared Settings autosaves native tagging');
+    check(settings.querySelectorAll('[data-action="selectConnection"]').length === 4, 'shared Settings exposes four tagging connections');
+    settings.querySelector('[data-connection-type="openAI"]').click();
+    await until(() => !!settings.querySelector('[data-field="credential"]'));
     const credential = settings.querySelector('[data-field="credential"]');
     credential.focus(); check(credential.isConnected, 'credential stays connected after focus'); credential.value = 'draft-key'; credential.setSelectionRange(2, 6);
     credential.dispatchEvent(new InputEvent('input', {bubbles: true}));
@@ -79,6 +82,8 @@ async function runIntegratedSettingsTests() {
     check(snapshot.settings.dictionaries.contributionEnabled === false && snapshot.settings.dictionaries.creatorCacheSize === 10000, 'other settings edits preserve dictionary choices');
     VaultSettings.open();
     await until(() => !!settings.querySelector('[data-model-selector]'));
+    const disclosure = settings.querySelector('[data-expand="classifier-services"]');
+    if (!disclosure.open) { disclosure.querySelector('summary').click(); await new Promise(resolve => requestAnimationFrame(resolve)); }
     const selector = settings.querySelector('[data-model-selector]'); selector.click();
     await until(() => settings.querySelector('.research-model-picker').open);
     const settingsBody = modal.querySelector('.settings-body');

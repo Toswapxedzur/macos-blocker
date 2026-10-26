@@ -136,6 +136,7 @@ window.runAutosaveTests=async()=>{
   q(more+' summary').click();await new Promise(r=>setTimeout(r,0));
   q('[data-action="openUtilityPanel"]').click();
   expect(!q('[data-form-id="utility-llm-form"]') && !q('.utility-settings-modal [data-field="strictness"]'), 'Settings contains no global dial controls');
+  q('[data-expand="classifier-services"] summary').click();await new Promise(r=>requestAnimationFrame(r));
   change('[data-form-id="utility-research-form"] [data-field="llmProviderProfileID"]','provider-1');
   testState.assets.providerModelCatalogs['provider-1']=['test-model'];pushSnapshot();
   await poll(()=>q('[data-model-selector]'));q('[data-model-selector]').click();q('[data-model-pick="test-model"]').click();
@@ -149,6 +150,7 @@ window.runAutosaveTests=async()=>{
   await poll(()=>testState.assets.knowledge.terms[0].meaning==='Updated meaning');
   expect(!q('[data-action="editKnowledgeEntry"]') && !!q('[data-action="addKnowledgeTerm"]'),'knowledge edits autosave and creation stays explicit');
   q('[data-action="openUtilityPanel"]').click();
+  q('[data-connection-type="openAI"]').click();await new Promise(r=>requestAnimationFrame(r));
   input('[data-provider-id="provider-1"] [data-field="customEndpoint"]','https://example.test/api');
   await poll(()=>testState.assets.providerProfiles[0].customEndpoint==='https://example.test/api');
   expect(!!q('[data-action="testProviderProfile"]'),'provider edits autosave and Probe stays explicit');

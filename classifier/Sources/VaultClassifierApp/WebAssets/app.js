@@ -550,6 +550,9 @@
   }
 
   function openResearchSetup() {
+    openExpands.add("classifier-services");
+    const profile = researchAvailability().profile;
+    connectionTab = KEY_CONNECTIONS.includes(profile?.type) ? profile.type : "openAI";
     utilityPanel = "settings";
     window.VaultSettings.open();
     dictionarySetupFocusPending = false;
@@ -560,6 +563,7 @@
   }
 
   function openDictionarySetup() {
+    openExpands.add("classifier-services");
     utilityPanel = "settings";
     window.VaultSettings.open();
     researchSetupRequested = false;
@@ -587,14 +591,14 @@
       missing.push(uiQuery((state.assets?.providerProfiles || []).some((profile) => {
         const protocol = state.assets?.providerProtocols?.[profile.type];
         return protocol?.supportsGenerateText && protocol?.supportsNativeWebSearch;
-      }) ? '[data-form-id="utility-research-form"] [data-field="llmProviderProfileID"]' : '[data-form-id="new-provider-profile-form"] [data-field="type"]'));
+      }) ? '[data-form-id="utility-research-form"] [data-field="llmProviderProfileID"]' : '[data-tagging-connections] [data-action="createProviderProfile"]'));
     } else if (!availability.keyReady) {
       missing.push(uiQuery(`[data-form-id="${CSS.escape(`provider-profile-${availability.profile.id}`)}"] [data-field="credential"]`));
     }
     if (!availability.modelReady) missing.push(uiQuery("[data-model-selector], [data-model-fetch]"));
     if (availability.configured && !availability.ready) missing.push(uiQuery('[data-form-id="utility-research-form"] [data-field="enabled"]'));
     uiQueryAll(".research-setup-needed").forEach((field) => field.classList.remove("research-setup-needed"));
-    missing.filter(Boolean).forEach((control) => control.closest(".field, label")?.classList.add("research-setup-needed"));
+    missing.filter(Boolean).forEach((control) => (control.closest(".field, label") || control).classList.add("research-setup-needed"));
     if (!researchSetupFocusPending) return;
     researchSetupFocusPending = false;
     const target = missing.find(Boolean) || uiQuery(".utility-research-section h3");
@@ -744,7 +748,7 @@
       }${
         researchModelPicker()
       }</div><p class="small-copy" data-info="research.constantsNote" data-info-target=".utility-research-section h3">${tx("research.constantsNote")}</p><p class="small-copy">${tx("research.usageToday", { used: research.tokensUsedToday ?? 0, limit: research.dailyTokenLimit ?? 10000 })}</p>${researchStatusBlock(research.status)}</section>`;
-      content = `${notice(state.issue, "red")}${classificationSection}${connectionsSection()}<details data-expand="classifier-services"><summary>${tx("connections.advanced")}</summary>${apiKeySettings()}${researchSection}${dictionaryControls()}</details>`;
+      content = `${notice(state.issue, "red")}${classificationSection}${connectionsSection()}<details data-expand="classifier-services"${openExpands.has("classifier-services") ? " open" : ""}><summary>${tx("connections.advanced")}</summary>${apiKeySettings()}${researchSection}${dictionaryControls()}</details>`;
     }
     return content;
   }

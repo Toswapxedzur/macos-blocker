@@ -77,3 +77,81 @@ final class APIKeyClassificationTests: XCTestCase {
         group.classificationProvider = .chatGPT; XCTAssertEqual(subscription, group.cloudModelVersion)
     }
 }
+
+private actor APIBatchTransport: ProviderHTTPClient {
+    var active = 0
+    var peak = 0
+    var calls = 0
+    let suspend: Bool
+    init(suspend: Bool = false) { self.suspend = suspend }
+    func send(plan: ProviderRequestPlan, body: Data?, credential: ProviderCredentialRecord, timeout: TimeInterval) async throws -> (data: Data, response: HTTPURLResponse) {
+        active += 1; calls += 1; peak = max(peak, active)
+        defer { active -= 1 }
+        let object = try JSONSerialization.jsonObject(with: body!) as! [String: Any]
+        let inputs = object["input"] as! [[String: Any]]
+        let text = inputs[0]["content"] as! String
+        let items = try JSONSerialization.jsonObject(with: Data(text.utf8)) as! [[String: Any]]
+        try await Task.sleep(nanoseconds: suspend ? 30_000_000_000 : (text.contains("Mathematics") ? 60_000_000 : 5_000_000))
+        let values: [[String: Any]] = items.map { item in
+            ["index": item["index"]!, "tags": [["name": (item["evidence"] as! String).contains("Mathematics") ? "Mathematics" : "Games", "confidence": 5]]]
+        }
+        let output = String(decoding: try JSONSerialization.data(withJSONObject: ["items": values]), as: UTF8.self)
+        let data = try JSONSerialization.data(withJSONObject: ["status": "completed", "output": [["type": "message", "content": [["type": "output_text", "text": output]]]]])
+        return (data, HTTPURLResponse(url: plan.url, statusCode: 200, httpVersion: nil, headerFields: nil)!)
+    }
+    func counts() -> (Int, Int, Int) { (calls, peak, active) }
+}
+
+extension APIKeyClassificationTests {
+    func testParallelAPIBatchesKeepOrderAndGlobalConcurrencyAcrossCallers() async throws {
+        let transport = APIBatchTransport()
+        let profile = APIKeyProviderProfile(id: "p", type: .openAI, credential: "fixture-not-real")
+        let client = APIKeyClassificationClient(profiles: { _ in profile }, http: transport)
+        let type = ClassifierTypeAsset(name: "Fixture", treeID: "t", treeRevision: 1, datasetID: "d", datasetRevision: 1,
+            classificationProvider: .apiKey, apiKey: .init(profileID: "p", model: "fixture"))
+        let engine = try await client.resolveCloudEngine(for: type)
+        let requests = (0..<32).map { index in LLMClassificationRequest(staticPrefix: item.staticPrefix,
+            dynamicSuffix: index < 16 ? "Mathematics" : "Games", allowedTagNames: item.allowedTagNames, maximumTags: 3) }
+        try await withThrowingTaskGroup(of: [LLMClassificationResult].self) { group in
+            for _ in 0..<3 { group.addTask { try await engine.classifyAll(requests) } }
+            for try await values in group {
+                XCTAssertEqual(values.map { $0.tags.first?.name }, Array(repeating: "Mathematics", count: 16) + Array(repeating: "Games", count: 16))
+            }
+        }
+        let counts = await transport.counts(); XCTAssertEqual(counts.0, 6); XCTAssertEqual(counts.1, 2); XCTAssertEqual(counts.2, 0)
+        await client.shutdown()
+    }
+    func testShutdownCancelsAPIInferenceWithoutSettingRetryFailure() async throws {
+        let transport = APIBatchTransport(suspend: true)
+        let profile = APIKeyProviderProfile(id: "p", type: .gemini, credential: "fixture-not-real")
+        // Use OpenAI's fixture transport grammar so the held task reaches its await.
+        let openAI = APIKeyProviderProfile(id: profile.id, type: .openAI, credential: profile.credential)
+        let client = APIKeyClassificationClient(profiles: { _ in openAI }, http: transport)
+        let type = ClassifierTypeAsset(name: "Fixture", treeID: "t", treeRevision: 1, datasetID: "d", datasetRevision: 1,
+            classificationProvider: .apiKey, apiKey: .init(profileID: profile.id, model: "fixture"))
+        let engine = try await client.resolveCloudEngine(for: type), request = item
+        let task = Task { try await engine.classify(request) }
+        while await transport.counts().0 == 0 { await Task.yield() }
+        await client.shutdown()
+        do { _ = try await task.value; XCTFail("shutdown must cancel") } catch { XCTAssertTrue(error is CancellationError) }
+        let status = await client.status(); XCTAssertTrue(status.failedProfileIDs.isEmpty)
+        let counts = await transport.counts(); XCTAssertEqual(counts.2, 0)
+    }
+    func testSchemaFivePreservesSubscriptionAndDiscardsRetiredLocalProvider() throws {
+        var state = LocalClassifierState()
+        let tree = state.workspaceCatalog.trees[0], dataset = state.workspaceCatalog.datasets[0]
+        state.workspaceCatalog.classifierTypes = [.init(name: "Existing", treeID: tree.id, treeRevision: tree.revision,
+            datasetID: dataset.id, datasetRevision: dataset.revision, chatGPT: .init(accountID: "saved", model: "selected", searchEnabled: true))]
+        var root = try JSONSerialization.jsonObject(with: JSONEncoder().encode(state)) as! [String: Any]
+        root["schemaVersion"] = 5
+        var metadata = root["storageMetadata"] as! [String: Any]; metadata["schemaVersion"] = 5; root["storageMetadata"] = metadata
+        var catalog = root["workspaceCatalog"] as! [String: Any]
+        catalog["providerProfiles"] = [["id": "retired", "type": "ollama", "credential": ["malformed": true]]]
+        root["workspaceCatalog"] = catalog
+        let loaded = try JSONDecoder().decode(LocalClassifierState.self, from: JSONSerialization.data(withJSONObject: root))
+        XCTAssertEqual(loaded.schemaVersion, 6)
+        XCTAssertEqual(loaded.workspaceCatalog.classifierTypes, state.workspaceCatalog.classifierTypes)
+        XCTAssertTrue(loaded.workspaceCatalog.providerProfiles.isEmpty)
+        XCTAssertEqual(loaded.workspaceCatalog.classifierTypes[0].cloudModelVersion, state.workspaceCatalog.classifierTypes[0].cloudModelVersion)
+    }
+}
