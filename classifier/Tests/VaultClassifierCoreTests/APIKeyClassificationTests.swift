@@ -160,6 +160,28 @@ extension APIKeyClassificationTests {
         XCTAssertTrue(coordinator.snapshot().workspaceCatalog.videoClassifications.isEmpty)
         await client.shutdown()
     }
+    func testChangingReasoningDiscardsAnInflightReply() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { LocalStateFile.flushAllPendingWrites(); try? FileManager.default.removeItem(at: directory) }
+        let coordinator = try LocalClassifierCoordinator(verifiedPackage: SeedPackageLoader.bundled(), stateFile: .init(url: directory.appendingPathComponent("state.json")))
+        let transport = APIBatchTransport(delay: 300_000_000)
+        let profile = APIKeyProviderProfile(id: "p", type: .openAI, credential: "fixture-not-real")
+        let client = APIKeyClassificationClient(profiles: { _ in profile }, http: transport)
+        var catalog = coordinator.snapshot().workspaceCatalog
+        let tree = TagTreeAsset(id: "t", name: "Topics", nodes: [.init(id: "math", name: "Mathematics")])
+        catalog.trees.append(tree); let dataset = catalog.datasets[0]
+        catalog.classifierTypes = [.init(id: "g", name: "Fixture", treeID: tree.id, treeRevision: tree.revision,
+            datasetID: dataset.id, datasetRevision: dataset.revision, applicablePlatformIDs: ["youtube"],
+            classificationProvider: .apiKey, apiKey: .init(profileID: profile.id, model: "model-a"))]
+        try coordinator.updateWorkspaceCatalog(catalog); coordinator.setCloudEngineResolver(client)
+        let pending = Task { try await coordinator.classifyVideo(platformID: "youtube", entryID: "v", creatorID: "c", title: "Mathematics") }
+        while await transport.counts().0 == 0 { await Task.yield() }
+        catalog.classifierTypes[0].apiKey.reasoningEffort = .high; try coordinator.updateWorkspaceCatalog(catalog)
+        do { _ = try await pending.value; XCTFail("Old-effort replies must be discarded") }
+        catch { XCTAssertTrue(error is CancellationError) }
+        XCTAssertTrue(coordinator.snapshot().workspaceCatalog.videoClassifications.isEmpty)
+        await client.shutdown()
+    }
     func testAPIKeyClientNeverActsAsFallbackForSubscriptionSelection() async throws {
         let profile = APIKeyProviderProfile(id: "p", type: .openAI, credential: "fixture-not-real")
         let client = APIKeyClassificationClient(profiles: { _ in profile }, http: APIBatchTransport())

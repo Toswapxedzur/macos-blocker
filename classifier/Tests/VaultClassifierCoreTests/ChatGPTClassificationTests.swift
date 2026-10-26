@@ -71,6 +71,7 @@ final class ChatGPTClassificationTests: XCTestCase {
         let searched = try ChatGPTClassificationEngine.prepare([item()], configuration: configuration)
         let searchedBody = try XCTUnwrap(JSONSerialization.jsonObject(with: XCTUnwrap(searched.body)) as? [String: Any])
         XCTAssertEqual((searchedBody["tools"] as? [[String: String]])?.map { $0["type"] }, ["web_search"])
+        XCTAssertEqual(searchedBody["reasoning"] as? [String: String], ["effort": "high"])
         XCTAssertNil(searchedBody["max_tool_calls"])
         XCTAssertNil(searchedBody["top_logprobs"])
     }

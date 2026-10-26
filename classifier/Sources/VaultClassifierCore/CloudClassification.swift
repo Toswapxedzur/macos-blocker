@@ -65,7 +65,7 @@ public enum ClassificationModelPolicy {
         let m = model.lowercased(), common: [ClassificationReasoningEffort] = [.providerDefault, .low, .medium, .high]
         if provider == .gemini {
             if m.hasPrefix("gemini-3-pro") { return [.providerDefault, .low, .high] }
-            return searchCompatible(provider: provider, model: m) ? common : [.providerDefault]
+            return ["gemini-3.1-pro", "gemini-3.1-flash-lite", "gemini-3-flash", "gemini-3.5-flash-lite", "gemini-3.6-flash", "gemini-3.8-flash", "gemini-4-argon"].contains(where: m.hasPrefix) && searchCompatible(provider: provider, model: m) ? common : [.providerDefault]
         }
         if provider == .xAI { return ["grok-4.5", "grok-4.6", "grok-4.7"].contains(where: m.hasPrefix) ? common : [.providerDefault] }
         if m.contains("-pro") { return [.providerDefault, .high] }

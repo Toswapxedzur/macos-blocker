@@ -75,13 +75,13 @@ Create tags, describe their meanings, and set or remove their parents in the tag
 - **Minimum tags / Maximum tags** in More replace those default counts. Strict ↔ Broad still controls confidence for additional tags. Leave either field empty to use its default.
 - **Tagging instructions** adds optional instructions for this group.
 
-Routine Classifier edits save automatically. Each group uses one explicitly selected connection and model.
+Routine Classifier edits save automatically. Each group uses one explicitly selected connection, model and reasoning effort.
 
 ### Connections
 
 Settings has four choices: **ChatGPT subscription**, **OpenAI API**, **Gemini API**, and **Grok API**. ChatGPT subscription uses Vault’s own sign-in and your eligible plan. API keys use the selected provider’s API billing and limits. Add the key in its connection, choose **Fetch model list**, and select the model in your classifier group. Fetching models does not choose one for you.
 
-**Allow web search when needed** is off by default and requires a compatible model. Failed or unavailable requests keep valid cached results; new items remain unresolved until you choose **Retry cloud classification**. Vault does not switch providers automatically.
+**Reasoning effort** controls how much the selected model thinks: Model default, Low, Medium or High where supported. Higher effort can add time and token usage. Web search is always enabled for tagging; the model decides when it needs to search. Choose a model that supports search and structured tagging. Failed or unavailable requests keep valid cached results; new items remain unresolved until you choose **Retry cloud classification**. Vault does not switch providers automatically.
 
 Optional web research, dictionaries and platform-data services are under **Research & data services**.
 
