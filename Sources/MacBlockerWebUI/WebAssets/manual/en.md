@@ -7,7 +7,7 @@ Mac Vault has three pages: **Vault** blocks native apps, **Classifier** tags sup
 1. In **Vault**, add a blocking group and an Apps target, then select apps with the + picker.
 2. Choose the group's blocking behavior and enable it.
 3. In **Classifier**, create a group, choose its platforms, and add tags with descriptions.
-4. Choose a local model tier and download it if needed. Enable tagging in Settings and resume the group.
+4. Open Settings → Connections and choose ChatGPT subscription, OpenAI API, Gemini API or Grok API. Connect the account or add a key and fetch its models, then select a connection/model in the group. Enable tagging and resume the group.
 5. Open supported content in the connected browser. Configure a tag filter in a browser blocking group if you want the tags to control blocking.
 
 ## Blocking groups
@@ -71,24 +71,31 @@ Enable tagging in Settings. Use each group's **Pause tagging / Resume tagging** 
 
 Create tags, describe their meanings, and set or remove their parents in the tag tree. Drag a tag to move its branch. Clear descriptions help the model distinguish similar tags. Each group's settings are independent.
 
-- **Speed ↔ Quality** selects a local model tier. Larger models use more memory; speed and results depend on the Mac and workload. Downloads are shared across groups.
 - **Strict ↔ Broad** sets confidence requirements and default tag counts.
 - **Minimum tags / Maximum tags** in More replace those default counts. Strict ↔ Broad still controls confidence for additional tags. Leave either field empty to use its default.
 - **Tagging instructions** adds optional instructions for this group.
 
-Routine Classifier edits save automatically. A selected tier must be downloaded before it can tag content. Groups using the same tier share a loaded model; up to two tiers remain loaded at once.
+Routine Classifier edits save automatically. Each group uses one explicitly selected connection and model.
+
+### Connections
+
+Settings has four choices: **ChatGPT subscription**, **OpenAI API**, **Gemini API**, and **Grok API**. ChatGPT subscription uses Vault’s own sign-in and your eligible plan. API keys use the selected provider’s API billing and limits. Add the key in its connection, choose **Fetch model list**, and select the model in your classifier group. Fetching models does not choose one for you.
+
+**Allow web search when needed** is off by default and requires a compatible model. Failed or unavailable requests keep valid cached results; new items remain unresolved until you choose **Retry cloud classification**. Vault does not switch providers automatically.
+
+Optional web research, dictionaries and platform-data services are under **Research & data services**.
 
 Correct a content item's tags in the browser extension. Click **+ tag**, search the Classifier's existing tags, and choose one to add it. Use a tag's remove control, or select it and press Delete once, to remove it. **Untagged** means tagging finished with no tags; **Tagging** means a result is pending. Corrections inform future tagging.
 
 ## Knowledge and web research
 
-Knowledge stores short descriptions on this Mac for the local tagging model. **Content sources** include creators, accounts, channels, and communities. Source descriptions accompany their content. **Known terms** apply when a term appears in a title.
+Knowledge stores short descriptions on this Mac and includes relevant descriptions in requests to your selected tagging provider. **Content sources** include creators, accounts, channels, and communities. Source descriptions accompany their content. **Known terms** apply when a term appears in a title.
 
 Add a source or term and its description, or leave the description empty to request research when enabled. Creator suggestions help find a source the Classifier has collected. Lists with six or more entries have search directly above them: Terms and each platform’s Content sources have separate searches for name, identifier, or description. Editing a description affects future tagging; deleting source knowledge does not prevent later research from recreating it.
 
 ### Official and personal dictionaries
 
-Open **Settings → Classifier → Dictionaries** to configure official dictionaries. Knowledge shows their installed versions and a shortcut to these controls. Vault checks for updates at startup; use **Check for updates** and the download buttons to install them. Dictionary downloads do not require your own AI API key.
+Open **Settings → Research & data services → Dictionaries** to configure official dictionaries. Knowledge shows their installed versions and a shortcut to these controls. Vault checks for updates at startup; use **Check for updates** and the download buttons to install them. Dictionary downloads do not require your own AI API key.
 
 - **Terms** are downloaded for local lookup.
 - **Creator cache** keeps up to 10,000 entries by default; you can change the limit. A cache miss sends the public, platform-scoped creator ID to the dictionary service.
@@ -134,6 +141,6 @@ Choose the interface language in Settings. Field explanations are available thro
 
 ## Saving and troubleshooting
 
-Routine Vault and Classifier edits save automatically. Activity group editing uses **Save**. Adding, deleting, downloading a model, testing a connection, and fetching a model list remain explicit actions.
+Routine Vault and Classifier edits save automatically. Activity group editing uses **Save**. Adding, deleting, dictionary downloads, connection tests and model-list fetching remain explicit actions.
 
-If tags are missing, check the browser connection, global tagging switch, group pause state, platform recording, and model download. If research does not run, check consent, group choice, provider credentials, research model, and the research status. If a linked group cannot be edited, reconnect its programs or unfreeze it as indicated.
+If tags are missing, check the browser connection, global tagging switch, group pause state, platform recording, selected connection/model and its credentials. If research does not run, check consent, group choice, provider credentials, research model, and the research status. If a linked group cannot be edited, reconnect its programs or unfreeze it as indicated.
