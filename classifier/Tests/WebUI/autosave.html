@@ -89,6 +89,15 @@ window.webkit={messageHandlers:{vaultClassifier:{postMessage(message){
 <script src="/classifier/Sources/VaultClassifierApp/WebAssets/notice-language.js"></script>
 <script src="/classifier/Sources/VaultClassifierApp/WebAssets/app.js"></script>
 <script>
+window.chooseConnection=async value=>{
+  const select=scope.querySelector('[data-field="connectionType"]');
+  const label=[...select.options].find(option=>option.value===value)?.textContent;
+  select.nextElementSibling.querySelector('.vui-select-button').click();
+  await new Promise(r=>requestAnimationFrame(r));
+  const item=[...scope.querySelectorAll('.vui-menu-item'),...document.querySelectorAll('.vui-menu-item')].find(node=>node.textContent===label);
+  if(!item)throw Error('Missing connection option '+value);
+  item.click();await new Promise(r=>requestAnimationFrame(r));
+};
 window.runAutosaveTests=async()=>{
   const results=[],q=s=>scope.querySelector(s);
   const expect=(condition,label)=>{if(!condition)throw Error(label);results.push('PASS '+label)};
@@ -138,7 +147,7 @@ window.runAutosaveTests=async()=>{
   expect(!q('[data-action^="save"]'),'settings have no Save buttons');
   q('[data-action="closeUtilityPanel"]').click();
   q('[data-action="openUtilityPanel"]').click();
-  q('[data-connection-type="openAI"]').click();await new Promise(r=>requestAnimationFrame(r));
+  await chooseConnection('openAI');
   input('[data-provider-id="provider-1"] [data-field="customEndpoint"]','https://example.test/api');
   await poll(()=>testState.assets.providerProfiles[0].customEndpoint==='https://example.test/api');
   expect(!!q('[data-action="probeProviderModelCatalog"]'),'provider edits autosave and model fetching stays explicit');

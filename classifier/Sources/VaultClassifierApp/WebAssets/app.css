@@ -1131,8 +1131,6 @@ input[data-field="creator"], input[data-model-search] {
 :host(.native-settings-host) { display: block; height: auto; overflow: visible; }
 #native-settings { font: 12px/1.4 var(--font-ui); }
 
-.connection-tabs { display:flex; flex-wrap:wrap; gap:6px; margin:10px 0 14px; }
-.connection-tabs button { flex:1 1 auto; padding:8px 10px; font-size:12px; }
 [data-tagging-connections] > .utility-settings-section { margin-block:0; }
 [data-expand="classifier-services"] { margin-top:18px; }
 [data-expand="classifier-services"] > summary { cursor:pointer; font-size:12px; font-weight:600; padding-block:8px; }

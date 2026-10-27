@@ -19,7 +19,7 @@ window.runDropdownLayoutTests = async () => {
   check(effort.value==='high','reasoning choice updates through its visible picker');
   check(!!form.querySelector('[data-search-always]') && !form.querySelector('[data-field="searchEnabled"]'),'search remains always available');
   q('[data-action="openUtilityPanel"]').click();await wait();
-  check(q('[data-tagging-connections]').querySelectorAll('[data-action="selectConnection"]').length===4,'Settings retains four connection choices');
+  check(q('[data-tagging-connections]').querySelector('[data-field="connectionType"]').options.length===4,'Settings retains four connection choices');
   check(!q('[data-workspace="knowledge"], .utility-research-section, .utility-dictionary-section, [data-contribution-first]'),'dormant features expose no controls');
   check(uiErrors.length===0,'provider controls produce no renderer errors');
   return results;

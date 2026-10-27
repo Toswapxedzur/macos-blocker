@@ -549,7 +549,7 @@
 
   function connectionsSection() {
     const options = [["chatGPT","connections.subscription"],["openAI","connections.openAI"],["gemini","connections.gemini"],["xAI","connections.grok"]];
-    return `<div data-tagging-connections><h3 class="utility-settings-section-title">${tx("connections.title")}</h3><div class="connection-tabs" role="group" aria-label="${tx("connections.title")}">${options.map(([id,key])=>`<button type="button" class="${connectionTab===id ? "primary" : "secondary"}" aria-pressed="${connectionTab===id}" data-action="selectConnection" data-connection-type="${id}">${tx(key)}</button>`).join("")}</div>${connectionTab === "chatGPT" ? chatGPTAccountSection() : apiKeySettings(connectionTab)}</div>`;
+    return `<div data-tagging-connections>${selectField("connections.title", "", "connectionType", connectionTab, options)}${connectionTab === "chatGPT" ? chatGPTAccountSection() : apiKeySettings(connectionTab)}</div>`;
   }
 
   function nativeSettingsContent() {
@@ -1292,10 +1292,6 @@
       send(action, { typeID: button.dataset.typeId, paused: button.dataset.paused === "true" });
       return;
     }
-    if (action === "selectConnection") {
-      if (["chatGPT", ...KEY_CONNECTIONS].includes(button.dataset.connectionType)) connectionTab = button.dataset.connectionType;
-      render(); return;
-    }
     if (action === "openConnections") {
       connectionTab = "chatGPT";
       if (selectedTypeID) {
@@ -1482,6 +1478,15 @@
   }, true);
 
   listen("change", (event) => {
+    if (event.target.matches('[data-field="connectionType"]')) {
+      const next = event.target.value;
+      if (!["chatGPT", ...KEY_CONNECTIONS].includes(next)) return;
+      flushLiveEdits();
+      connectionTab = next;
+      render();
+      uiQuery('[data-field="connectionType"] + .vui-select .vui-select-button')?.focus({ preventScroll: true });
+      return;
+    }
 
     if (queueLiveEdit(event.target, true)) return;
 

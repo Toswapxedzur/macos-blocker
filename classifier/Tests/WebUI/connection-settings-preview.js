@@ -11,9 +11,14 @@ window.runConnectionSettingsPreview = async () => {
   document.querySelector('[data-scene="classifier"]').click();
   scene.querySelector('[data-action="openUtilityPanel"]').click();
   await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));
-  settings.querySelector('[data-connection-type="openAI"]').click();
+  const connection=settings.querySelector('[data-field="connectionType"]');
+  connection.nextElementSibling.querySelector('.vui-select-button').click();
+  await new Promise(r=>requestAnimationFrame(r));
+  const option=[...document.querySelectorAll('.vui-menu-item')].find(node=>node.textContent==='OpenAI API');
+  if(!option)throw Error('Missing shared connection menu');
+  option.click();
   await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));
-  if(settings.querySelectorAll('[data-action="selectConnection"]').length!==4)throw Error('Expected four choices');
+  if(settings.querySelector('[data-field="connectionType"]').options.length!==4)throw Error('Expected four choices');
   const modal=document.getElementById('settingsModal'),body=modal.querySelector('.settings-body');
   settings.querySelector('[data-tagging-connections]').scrollIntoView({block:'start'});
   await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));

@@ -6,11 +6,12 @@ window.runAPIConnectionTests = async () => {
   testState.assets.classificationModelCapabilities={'api:provider-1:fixture-model':{searchCompatible:true,reasoningEfforts:['default']},'api:provider-1:gpt-6.1-sol':{searchCompatible:true,reasoningEfforts:['default','low','medium','high']}};
   pushSnapshot();await tick();
   q('[data-action="openUtilityPanel"]').click();await tick();
-  const buttons=[...scope.querySelectorAll('[data-action="selectConnection"]')];
-  expect(buttons.length===4,'exactly four tagging connection choices');
-  expect(buttons.map(b=>b.dataset.connectionType).join(',')==='chatGPT,openAI,gemini,xAI','subscription and three API-key choices are distinct');
+  const selectConnection=q('[data-field="connectionType"]'),options=[...selectConnection.options];
+  expect(selectConnection.nextElementSibling.matches('.vui-select'),'connection picker uses the shared selector');
+  expect(options.length===4,'exactly four tagging connection choices');
+  expect(options.map(option=>option.value).join(',')==='chatGPT,openAI,gemini,xAI','subscription and three API-key choices are distinct');
   expect(!q('option[value="ollama"]')&&!q('[data-field="speedQuality"]')&&!q('[data-action="downloadModel"]'),'retired Local controls are absent');
-  q('[data-connection-type="openAI"]').click();await tick();
+  await chooseConnection('openAI');await tick();
   expect(q('[data-field="credential"]').type==='password' && q('[data-field="credential"]').value==='fixture-key-not-real','stored API key is masked and retained for connection edits');
   expect(q('[data-provider-panel][data-provider-id="provider-1"]'),'OpenAI key appears in its own connection');
   expect(q('[data-action="probeProviderModelCatalog"]'),'key connection exposes model-list fetch');
@@ -21,9 +22,9 @@ window.runAPIConnectionTests = async () => {
   pushSnapshot();await tick();expect(q('[data-field="credential"]').value==='updated-fixture-key','snapshots preserve unsaved key draft');
   await new Promise(r=>setTimeout(r,350));
   expect(commands.some(c=>c.action==='updateProviderConnection'&&c.data.credential==='updated-fixture-key'),'key changes use the existing native save path');
-  q('[data-connection-type="gemini"]').click();await tick();
+  await chooseConnection('gemini');await tick();
   expect(q('[data-form-id="new-provider-profile-form"] [data-field="type"]').value==='gemini','Gemini add-key action has explicit provider identity');
-  q('[data-connection-type="xAI"]').click();await tick();
+  await chooseConnection('xAI');await tick();
   expect(q('[data-form-id="new-provider-profile-form"] [data-field="type"]').value==='xAI','Grok uses xAI identity rather than X platform data');
   q('[data-action="closeUtilityPanel"]').click();await tick();
   q('[data-action="selectType"][data-type-id="group-1"]').click();await tick();
@@ -44,7 +45,7 @@ window.runAPIConnectionTests = async () => {
   expect(testState.assets.classifierTypes[0].apiKey.reasoningEffort==='default','changing to a non-reasoning model selects its visible default atomically');
   expect(!q('[data-field="searchEnabled"]')&&q('[data-search-always]'),'search always-on state has no off control');
   q('[data-action="openConnections"]').click();await tick();
-  expect(q('[data-connection-type="openAI"]').getAttribute('aria-pressed')==='true','group link opens the selected connection');
+  expect(q('[data-field="connectionType"]').value==='openAI','group link opens the selected connection');
   expect(uiErrors.length===0,'no browser errors');
   return results;
 };

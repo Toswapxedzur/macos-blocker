@@ -24,7 +24,7 @@ async function runIntegratedSettingsTests() {
       const opener=name==='vault'?document.getElementById('settingsButton'):name==='classifier'?scene.querySelector('[data-action="openUtilityPanel"]'):VaultScenes.scope('activity').getElementById('activitySettingsButton');
       opener.focus();opener.click();await until(()=>!!settings.querySelector('[data-field="classificationEnabled"]'));
       check(!modal.classList.contains('hidden')&&document.body.dataset.scene===name,name+': opens shared Settings without switching scenes');
-      check(settings.querySelectorAll('[data-action="selectConnection"]').length===4,name+': four connection choices');
+      check(settings.querySelector('[data-field="connectionType"]').options.length===4,name+': four connection choices');
       check(!settings.querySelector('.utility-dictionary-section, .utility-research-section')&&!!document.getElementById('settingsQuitRetryMinutes'),name+': current classifier and app preferences coexist');
       const body=modal.querySelector('.settings-body');check(body.scrollWidth<=body.clientWidth+1,name+': Settings fits viewport');
       VaultSettings.close();await until(()=>!settings.querySelector('[data-field="classificationEnabled"]'));
