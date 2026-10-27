@@ -635,7 +635,11 @@
         control.dataset.action === previousControl.action && control.dataset.field === previousControl.field
         && control.hasAttribute("data-create-type-name") === previousControl.createName
         && (!previousControl.platform || control.value === previousControl.platform)) : null;
-
+    releaseDialogFocus = window.VaultUI.focusDialog(card, {
+      initialFocus: initial || card.querySelector(kind === "welcome" ? '[data-action="acknowledgeChatGPTPlan"]' : kind === "create" ? "[data-create-type-name]" : '[data-action="closeUtilityPanel"]'),
+      returnFocus: () => uiQuery(kind === "create" ? '[data-action="newType"]' : '[data-action="openUtilityPanel"]'),
+      onEscape: kind === "welcome" ? () => send("acknowledgeChatGPTPlan") : dismissClassifierDialog
+    });
     if (previousControl?.start != null && initial?.setSelectionRange) {
       initial.setSelectionRange(previousControl.start, previousControl.end);
     }
@@ -851,6 +855,23 @@
       protocolFamily: "llm.protocol.protocolFamily",
     };
     return keys[fieldName] || "llm.protocol.protocolFamily";
+  }
+
+  let pendingLists = [];
+  function listPlaceholder(key, items, render, text, pageSize = 12) {
+    pendingLists.push({ key, items, render, text, pageSize });
+    return "";
+  }
+  function mountLists() {
+    for (const options of pendingLists) {
+      const list = [...uiQueryAll("[data-vui-search]")].find(list => list.dataset.vuiSearch === options.key);
+      if (!list) continue;
+      let focused = null;
+      window.VaultUI.renderList(list, { ...options, scope, beforePaint() { focused = captureLiveEditFocus(); }, afterPaint() {
+        restoreLiveEdits(focused);
+        window.VaultUI.enhance(list);
+      } });
+    }
   }
 
   function apiKeySettings(connectionType = null) {
@@ -1106,6 +1127,14 @@
     render();
   }
 
+  listen("input", (event) => {
+    if (!event.isComposing) queueLiveEdit(event.target);
+    const input = event.target.closest("input[data-live-tag-name]");
+    if (!input) return;
+    const { treeId: treeID, nodeId: nodeID } = input.dataset;
+    if (treeID && nodeID) updateRenderedTagName(treeID, nodeID, input.value);
+  });
+
   function rememberTreeViewportPositions() {
     uiQueryAll("[data-tree-map]").forEach((map) => {
       treeViewportPositions.set(map.dataset.treeId, { x: map.scrollLeft, y: map.scrollTop });
@@ -1163,14 +1192,14 @@
     if (activeTagPanel?.kind === "create" && tagForm?.dataset.treeId === activeTagPanel.treeID) {
       activeTagPanel.draft = collect("tag-popover-form");
     }
-    deferredChoices = new Map();
+    pendingLists = []; deferredChoices = new Map();
     const markup = shell(workspace()) + createTypeModal() + chatGPTWelcome();
     const settingsMarkup = nativeSettingsContent();
     // Nothing changed on the page: keep the DOM (and its scroll) as it is.
     if (markup === lastRenderedMarkup && settingsMarkup === settingsRoot.__markup && root.firstChild) {
       const searchFocus = captureSearch(), focused = captureLiveEditFocus();
       replacingControls = true;
-      mountChoices(); mountLargeGraphs();
+      mountChoices(); mountLists(); mountLargeGraphs();
       restoreLiveEdits(focused);
       replacingControls = false;
       restoreSearch(searchFocus);
@@ -1202,7 +1231,7 @@
     root.innerHTML = markup;
     settingsRoot.innerHTML = settingsMarkup;
     settingsRoot.__markup = settingsMarkup;
-    mountChoices();
+    mountChoices(); mountLists();
     restoreLiveEdits(focused);
     if (pendingTagFocus) {
       const control = uiQuery(`[data-tree-popover] [data-field="${CSS.escape(pendingTagFocus.field)}"]`);

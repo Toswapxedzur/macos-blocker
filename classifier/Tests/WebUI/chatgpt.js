@@ -23,7 +23,7 @@ window.runChatGPTTests = async () => {
   const current=q('[data-tagging-section] [data-field="houseRules"]');
   expect(current.value==='Keep my terminology' && current.selectionStart===4 && current.selectionEnd===7,'usage snapshots preserve rule drafts and text selection');
   await new Promise(resolve=>setTimeout(resolve,350));
-  expect(testState.assets.classifierTypes[0].tagging.houseRules==='Keep my terminology','editing cloud rules preserves the stored local tier');
+  expect(testState.assets.classifierTypes[0].tagging.houseRules==='Keep my terminology','editing cloud rules saves the group house rules');
   expect(!q(provider+'option[value="local"]'),'Local provider is retired');
   q('[data-action="openUtilityPanel"]').click();await tick();
   expect(q('[data-chatgpt-account]').textContent.includes('fixture@example.invalid'),'Settings identifies the connected account');
