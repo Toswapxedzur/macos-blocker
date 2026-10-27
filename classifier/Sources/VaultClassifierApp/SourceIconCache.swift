@@ -151,17 +151,14 @@ final class SourceIconCache {
 #if canImport(WebKit)
 final class SourceIconSchemeHandler: NSObject, WKURLSchemeHandler {
     private let cache: SourceIconCache?
-    private let pictures: CreatorPictureStore?
 
-    init(cache: SourceIconCache?, pictures: CreatorPictureStore?) {
+    init(cache: SourceIconCache?) {
         self.cache = cache
-        self.pictures = pictures
     }
 
     func webView(_ webView: WKWebView, start urlSchemeTask: WKURLSchemeTask) {
         guard let url = urlSchemeTask.request.url,
-              let response = pictures?.response(for: url).map({ (data: $0, contentType: "image/jpeg") })
-                ?? cache?.response(for: url) else {
+              let response = cache?.response(for: url) else {
             urlSchemeTask.didFailWithError(URLError(.fileDoesNotExist))
             return
         }

@@ -52,14 +52,6 @@ private struct BatchingLLM: BatchClassificationEngine {
     }
 }
 
-private final class ResearchSubjectRecorder: @unchecked Sendable {
-    private let lock = NSLock()
-    private var stored: [ResearchSubject] = []
-    func append(_ subject: ResearchSubject) { lock.withLock { stored.append(subject) } }
-    var subjects: [ResearchSubject] { lock.withLock { stored } }
-}
-
-
 final class VideoClassificationCoordinatorTests: XCTestCase {
     func testNativePauseAndGlobalDisableNeverRunTheModel() async throws {
         let (coordinator, root) = try makeCoordinatorWithYouTubeType()
@@ -108,7 +100,7 @@ final class VideoClassificationCoordinatorTests: XCTestCase {
     func testChangingBoundsInvalidatesAutomaticCacheButKeepsHumanCorrections() {
         var type = ClassifierTypeAsset(id: "type", name: "Group", treeID: "tree", treeRevision: 1,
             datasetID: "dataset", datasetRevision: 1)
-        let serving = type.cloudModelVersion + "+p4"
+        let serving = type.cloudModelVersion + "+p5"
         var row = VideoClassification(classifierTypeID: type.id, platformID: "youtube", entryID: "entry",
             creatorID: "creator", treeID: type.treeID, treeRevision: 1, tags: [], source: .model,
             modelVersion: serving, tagBounds: type.tagging.tagBounds)
@@ -116,7 +108,7 @@ final class VideoClassificationCoordinatorTests: XCTestCase {
         type.tagging.maximumTagsOverride = 2
         XCTAssertFalse(LocalClassifierCoordinator.isClassificationCurrent(row, forType: type, servingModelVersion: serving))
         row.tagBounds = type.tagging.tagBounds
-        row.modelVersion = type.cloudModelVersion + "+p4"
+        row.modelVersion = type.cloudModelVersion + "+p5"
         XCTAssertTrue(LocalClassifierCoordinator.isClassificationCurrent(row, forType: type, servingModelVersion: serving))
         type.tagging.maximumTagsOverride = nil
         XCTAssertFalse(LocalClassifierCoordinator.isClassificationCurrent(row, forType: type, servingModelVersion: serving))
@@ -277,57 +269,7 @@ final class VideoClassificationCoordinatorTests: XCTestCase {
         XCTAssertEqual(recorder.requests.map(\.extraTagMinimumOdds), [0.90, 0.90])
     }
 
-    func testEffectiveResearchSettingsInheritOverrideAndRespectMasterGate() {
-        let global = ResearchSettings(enabled: true, llmProviderProfileID: "global-llm", llmModelIdentifier: "global-model")
-        func type(_ id: String, researchEnabled: Bool?) -> ClassifierTypeAsset {
-            ClassifierTypeAsset(id: id, name: id, treeID: "tree", treeRevision: 1, datasetID: "dataset", datasetRevision: 1, researchEnabled: researchEnabled)
-        }
-        // Follow / explicitly on → the global settings (provider and model are global).
-        XCTAssertEqual(LocalClassifierCoordinator.effectiveResearchSettings(global: global, for: type("inherit", researchEnabled: nil)), global)
-        XCTAssertEqual(LocalClassifierCoordinator.effectiveResearchSettings(global: global, for: type("on", researchEnabled: true)), global)
-        // A type may switch itself off.
-        XCTAssertNil(LocalClassifierCoordinator.effectiveResearchSettings(global: global, for: type("off", researchEnabled: false)))
-        // But never on while the master gate is off.
-        var masterOff = global
-        masterOff.enabled = false
-        XCTAssertNil(LocalClassifierCoordinator.effectiveResearchSettings(global: masterOff, for: type("on", researchEnabled: true)))
-        XCTAssertNil(LocalClassifierCoordinator.effectiveResearchSettings(global: masterOff, for: type("inherit", researchEnabled: nil)))
-    }
 
-    func testRecordResearchKnowledgeReclassifiesOutsideLockAndCallsBack() async throws {
-        let (coordinator, root) = try makeCoordinatorWithYouTubeType()
-        defer { LocalStateFile.flushAllPendingWrites(); try? FileManager.default.removeItem(at: root) }
-        var catalog = coordinator.snapshot().workspaceCatalog
-        let datasetIndex = try XCTUnwrap(catalog.datasets.firstIndex(where: { $0.id == catalog.bindings.first(where: { $0.id == "youtube" })?.datasetID }))
-        _ = catalog.datasets[datasetIndex].upsertCollectedEntry(.init(
-            id: "row", platformID: "youtube", entryID: "v", creatorID: "c",
-            creatorName: "Creator", entryType: "video", title: "HermitCraft Games"
-        ))
-        try coordinator.updateWorkspaceCatalog(catalog)
-        _ = try await coordinator.classifyVideo(
-            platformID: "youtube", entryID: "v", creatorID: "c", title: "HermitCraft Games"
-        )
-        let callback = expectation(description: "reclassified callback")
-        coordinator.setOnVideoReclassified { platformID, entryID, _ in
-            if platformID == "youtube", entryID == "v" { callback.fulfill() }
-        }
-
-        try await coordinator.recordResearchKnowledge(
-            .init(kind: .term, subject: "HermitCraft", meaning: "A Minecraft Games series."),
-            usage: .init(provider: "llm", model: "model", tokenCount: 25, status: GroundedResearchQueue.researchUsageStatus),
-            triggeringTask: .init(
-                classifierTypeID: "type",
-                platformID: "youtube", entryID: "v", creatorID: "c",
-                subjects: [ResearchSubject(kind: .term, subject: "HermitCraft")!]
-            )
-        )
-        await fulfillment(of: [callback], timeout: 1)
-        let saved = coordinator.snapshot().workspaceCatalog
-        XCTAssertEqual(saved.videoClassification(
-            classifierTypeID: "type", platformID: "youtube", entryID: "v"
-        )?.source, .modelKnowledge)
-        XCTAssertEqual(saved.tokenUsage.first?.tokenCount, 25)
-    }
 
     func testCorrectionsAreAuthoritativeAndNeverShownToTheModel() async throws {
         let (coordinator, root) = try makeCoordinatorWithYouTubeType()
@@ -403,144 +345,17 @@ final class VideoClassificationCoordinatorTests: XCTestCase {
     /// authoritative, so it must never start a second decode or enqueue research
     /// (the former `correctionsOnly`/`all` trigger modes are gone) — even with the
     /// most permissive urgency floor.
-    func testCorrectionNeverSchedulesResearch() async throws {
-        let (coordinator, root) = try makeCoordinatorWithYouTubeType()
-        defer { LocalStateFile.flushAllPendingWrites(); try? FileManager.default.removeItem(at: root) }
-        var catalog = coordinator.snapshot().workspaceCatalog
-        let datasetIndex = try XCTUnwrap(catalog.datasets.firstIndex(where: {
-            $0.id == catalog.bindings.first(where: { $0.id == "youtube" })?.datasetID
-        }))
-        _ = catalog.datasets[datasetIndex].upsertCollectedEntry(.init(
-            id: "row", platformID: "youtube", entryID: "v", creatorID: "youtube:handle:@creator",
-            creatorName: "Creator", entryType: "video", title: "HermitCraft episode"
-        ))
-        try coordinator.updateWorkspaceCatalog(catalog)
-        try coordinator.updateSettings(.init(research: .init(enabled: true)))
-        let queue = GroundedResearchQueue(
-            configurationProvider: { _ in nil },
-            snapshotProvider: { _ in .init() },
-            mutationWriter: { _ in },
-            researcher: { _, _ in throw GroundedResearchError.invalidConfiguration }
-        )
-        coordinator.setGroundedResearchQueue(queue)
-        coordinator.setFixtureEngine(DecliningLLM())
 
-        _ = try coordinator.submitCorrection(
-            classifierTypeID: "type", platformID: "youtube", entryID: "v", correctTagIDs: ["g"]
-        )
-        for _ in 0..<50 { await Task.yield() }
-        try? await Task<Never, Never>.sleep(nanoseconds: 20_000_000)
-        let pending = await queue.pendingCount
-        XCTAssertEqual(pending, 0)
-    }
-
-    private func recordingQueue(
-        _ recorder: ResearchSubjectRecorder,
-        writer: @escaping GroundedResearchQueue.MutationWriter = { _ in }
-    ) -> GroundedResearchQueue {
-        GroundedResearchQueue(
-            configurationProvider: { _ in
-                .init(
-                    providers: .init(
-                        llmProfile: .init(id: "llm", type: .gemini, credential: "k"),
-                        llmCredential: .init(values: [.apiKey: "k"]),
-                        llmModelIdentifier: "gemini-2.0-flash"
-                    ),
-                    requestsPerMinute: 6_000,
-                    dailyTokenLimit: 1_000_000
-                )
-            },
-            snapshotProvider: { _ in .init() },
-            mutationWriter: writer,
-            researcher: { subject, _ in
-                recorder.append(subject)
-                return .init(
-                    knowledge: .init(kind: subject.kind, subject: subject.subject, meaning: "meaning"),
-                    chargedTokenCount: 1
-                )
-            },
-            sleeper: { _ in }
-        )
-    }
 
     /// The only AUTOMATIC research is the creator accumulator. A declined video
     /// sends nothing on its own — no term is ever picked from a title — and once the
     /// creator has been hard to classify often enough, only the sanitized @handle
     /// leaves: never title text, never the raw `youtube:handle:` id.
-    func testDeclinedVideosSendNothingUntilTheCreatorThresholdThenOnlyTheHandle() async throws {
-        let (coordinator, root) = try makeCoordinatorWithYouTubeType()
-        defer { LocalStateFile.flushAllPendingWrites(); try? FileManager.default.removeItem(at: root) }
-        // The creator trigger is the constant score 3 / half-life 14 days.
-        try coordinator.updateSettings(.init(research: .init(enabled: true)))
-        let recorder = ResearchSubjectRecorder()
-        let queue = recordingQueue(recorder)
-        coordinator.setGroundedResearchQueue(queue)
-        coordinator.setFixtureEngine(DecliningLLM())
-
-        for index in 0..<2 {
-            let projection = try await coordinator.classifyVideo(
-                platformID: "youtube", entryID: "youtube:video:fake\(index)",
-                creatorID: "youtube:handle:@creator", title: "HermitCraft nonsense zzzqqq \(index)"
-            )
-            XCTAssertTrue(projection.tags.isEmpty)
-        }
-        for _ in 0..<50 { await Task.yield() }
-        await queue.waitUntilIdle()
-        XCTAssertTrue(recorder.subjects.isEmpty, "below the creator threshold nothing may leave the device")
-
-        _ = try await coordinator.classifyVideo(
-            platformID: "youtube", entryID: "youtube:video:fake2",
-            creatorID: "youtube:handle:@creator", title: "HermitCraft nonsense zzzqqq 2"
-        )
-        for _ in 0..<200 where recorder.subjects.isEmpty {
-            try? await Task<Never, Never>.sleep(nanoseconds: 2_000_000)
-        }
-        await queue.waitUntilIdle()
-        XCTAssertTrue(recorder.subjects.isEmpty, "Cloud search must remain explicit")
-        XCTAssertTrue(recorder.subjects.isEmpty)
-    }
 
     /// Terms reach research only when the USER names one: it is looked up, stored,
     /// and then matches titles. Junk subjects and a research-off state are refused.
-    func testOnlyAUserAddedTermIsLookedUp() async throws {
-        let (coordinator, root) = try makeCoordinatorWithYouTubeType()
-        defer { LocalStateFile.flushAllPendingWrites(); try? FileManager.default.removeItem(at: root) }
-        let recorder = ResearchSubjectRecorder()
-        let queue = recordingQueue(recorder) { [coordinator] mutation in
-            await coordinator.recordResearchMutation(mutation)
-        }
-        coordinator.setGroundedResearchQueue(queue)
-
-        let whileOff = await coordinator.researchTerm("HermitCraft")
-        XCTAssertFalse(whileOff, "research off: nothing may be queued")
-        try coordinator.updateSettings(.init(research: .init(enabled: true)))
-        let tooGeneric = await coordinator.researchTerm("ab")
-        XCTAssertFalse(tooGeneric)
-
-        let queued = await coordinator.researchTerm("  HermitCraft ")
-        XCTAssertTrue(queued)
-        for _ in 0..<200 where coordinator.snapshot().workspaceCatalog.knowledgeEntries.isEmpty {
-            try? await Task<Never, Never>.sleep(nanoseconds: 2_000_000)
-        }
-        await queue.waitUntilIdle()
-        XCTAssertEqual(recorder.subjects.map(\.subject), ["HermitCraft"])
-        let stored = coordinator.snapshot().workspaceCatalog.knowledgeEntries
-        XCTAssertEqual(stored.map(\.subject), ["HermitCraft"])
-        XCTAssertTrue(stored[0].matches(title: "HermitCraft season finale"))
-    }
 
     /// A term the user described themselves is stored as written, with no lookup.
-    func testAUserWrittenTermIsStoredWithoutResearch() throws {
-        let (coordinator, root) = try makeCoordinatorWithYouTubeType()
-        defer { LocalStateFile.flushAllPendingWrites(); try? FileManager.default.removeItem(at: root) }
-        XCTAssertTrue(try coordinator.addKnowledgeTerm(subject: " Lifesteal SMP ", meaning: " A Minecraft server. "))
-        XCTAssertFalse(try coordinator.addKnowledgeTerm(subject: "ab", meaning: "too generic to match safely"))
-        XCTAssertFalse(try coordinator.addKnowledgeTerm(subject: "JudeLow", meaning: "   "))
-        let stored = coordinator.snapshot().workspaceCatalog.knowledgeEntries
-        XCTAssertEqual(stored.map(\.subject), ["Lifesteal SMP"])
-        XCTAssertEqual(stored.first?.meaning, "A Minecraft server.")
-        XCTAssertEqual(stored.first?.kind, .term)
-    }
 
     /// LATENCY-REFINEMENT Phase 1: a screenful reaches the engine as ONE batch (not
     /// N serial decodes), results come back keyed per video, a human-corrected
@@ -572,90 +387,10 @@ final class VideoClassificationCoordinatorTests: XCTestCase {
 
     /// The contrast case: a title the model classifies confidently is not a
     /// decline, so under the default declineOnly policy it triggers no research.
-    func testConfidentlyTaggedTitleDoesNotTriggerResearch() async throws {
-        let (coordinator, root) = try makeCoordinatorWithYouTubeType()
-        defer { LocalStateFile.flushAllPendingWrites(); try? FileManager.default.removeItem(at: root) }
-        try coordinator.updateSettings(.init(research: .init(enabled: true)))
-        let recorder = ResearchSubjectRecorder()
-        let queue = GroundedResearchQueue(
-            configurationProvider: { _ in
-                .init(
-                    providers: .init(
-                        llmProfile: .init(id: "llm", type: .gemini, credential: "k"),
-                        llmCredential: .init(values: [.apiKey: "k"]),
-                        llmModelIdentifier: "gemini-2.0-flash"
-                    ),
-                    requestsPerMinute: 600,
-                    dailyTokenLimit: 1_000_000
-                )
-            },
-            snapshotProvider: { _ in .init() },
-            mutationWriter: { _ in },
-            researcher: { subject, _ in
-                recorder.append(subject)
-                return .init(
-                    knowledge: .init(kind: subject.kind, subject: subject.subject, meaning: "m"),
-                    chargedTokenCount: 1
-                )
-            }
-        )
-        coordinator.setGroundedResearchQueue(queue)
-        // Default stub selects allowed tag names present in the title ("Games").
 
-        let projection = try await coordinator.classifyVideo(
-            platformID: "youtube", entryID: "youtube:video:games",
-            creatorID: "c1", title: "A great Games montage"
-        )
-        XCTAssertEqual(projection.tags.map(\.id), ["g"], "a clear title should classify, not decline")
-
-        for _ in 0..<50 { await Task.yield() }
-        await queue.waitUntilIdle()
-        XCTAssertTrue(recorder.subjects.isEmpty, "a confident classification must not trigger research")
-    }
-
-    func testEditAndDeleteKnowledgeEntryMutateTheCorrectMap() throws {
-        let (coordinator, root) = try makeCoordinatorWithYouTubeType()
-        defer { LocalStateFile.flushAllPendingWrites(); try? FileManager.default.removeItem(at: root) }
-        var catalog = coordinator.snapshot().workspaceCatalog
-        catalog.upsertKnowledgeEntry(KnowledgeEntry(kind: .creator, subject: "c1", meaning: "old creator desc"))
-        catalog.upsertKnowledgeEntry(KnowledgeEntry(kind: .term, subject: "HermitCraft", meaning: "smp"))
-        try coordinator.updateWorkspaceCatalog(catalog)
-
-        // Editing a creator description keeps the id/kind and updates the text.
-        XCTAssertTrue(try coordinator.updateKnowledgeEntryMeaning(id: "creator:c1", meaning: "new creator desc"))
-        XCTAssertEqual(
-            coordinator.snapshot().workspaceCatalog.creatorKnowledgeEntry(for: "c1")?.meaning,
-            "new creator desc"
-        )
-        // Editing an unknown id is a no-op.
-        XCTAssertFalse(try coordinator.updateKnowledgeEntryMeaning(id: "term:missing", meaning: "x"))
-
-        // Deleting the term forgets it; the creator is untouched.
-        try coordinator.deleteKnowledgeEntry(id: "term:hermitcraft")
-        let afterTerm = coordinator.snapshot().workspaceCatalog
-        XCTAssertTrue(afterTerm.knowledgeEntries.isEmpty)
-        XCTAssertEqual(afterTerm.creatorKnowledge.count, 1)
-
-        // Deleting the creator forgets it (allowing a fresh re-research).
-        try coordinator.deleteKnowledgeEntry(id: "creator:c1")
-        XCTAssertTrue(coordinator.snapshot().workspaceCatalog.creatorKnowledge.isEmpty)
-    }
 
 
 }
 
 extension VideoClassificationCoordinatorTests {
-    func testPersonalImportRefusesCapacityOverflowWithoutDroppingOldDefinitions() throws {
-        let (coordinator, root) = try makeCoordinatorWithYouTubeType()
-        defer { LocalStateFile.flushAllPendingWrites(); try? FileManager.default.removeItem(at: root) }
-        var catalog = coordinator.snapshot().workspaceCatalog
-        catalog.knowledgeEntries = (0..<WorkspaceCatalog.maximumKnowledgeEntries).map { .init(kind:.term,subject:"Fixture Term \($0)",meaning:"Existing personal knowledge",writtenByUser:true) }
-        try coordinator.updateWorkspaceCatalog(catalog)
-        let data = Data(#"{"schemaVersion":1,"entries":[{"kind":"term","subject":"New Fixture Term","meaning":"New personal knowledge"}]}"#.utf8)
-        XCTAssertThrowsError(try coordinator.importPersonalDictionary(data))
-        let after = coordinator.snapshot().workspaceCatalog.knowledgeEntries
-        XCTAssertEqual(after.count, WorkspaceCatalog.maximumKnowledgeEntries)
-        XCTAssertTrue(after.contains { $0.subject == "Fixture Term 0" })
-        XCTAssertFalse(after.contains { $0.subject == "New Fixture Term" })
-    }
 }

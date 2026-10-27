@@ -97,7 +97,6 @@ extension LocalClassifierCoordinator {
                 treeID: tree.id,
                 treeRevision: tree.revision,
                 tags: uniqueTagIDs.map { .init(tagID: $0, confidence: ScoredTag.maxConfidence) },
-                knowledgeRefs: previous?.knowledgeRefs ?? [],
                 source: .humanCorrected,
                 modelVersion: previous?.modelVersion ?? "human-correction-v1",
                 createdAtMilliseconds: previous?.createdAtMilliseconds ?? WorkspaceCatalog.now()
@@ -135,44 +134,6 @@ extension LocalClassifierCoordinator {
         }
     }
 
-    static func affectedEntries(
-        for knowledge: KnowledgeEntry,
-        triggeringTask: ResearchTask,
-        catalog: WorkspaceCatalog,
-        limit: Int
-    ) -> [CollectedPlatformEntry] {
-        let allEntries = catalog.datasets.flatMap(\.collectedEntries)
-        let creatorMembers: Set<String>
-        if knowledge.kind == .creator {
-            creatorMembers = CreatorIdentityIndex(entries: allEntries).members(of: triggeringTask.creatorID)
-        } else {
-            creatorMembers = []
-        }
-        let candidates = allEntries.filter { entry in
-            guard entry.platformID == triggeringTask.platformID else { return false }
-            if entry.entryID == triggeringTask.entryID { return true }
-            switch knowledge.kind {
-            case .term: return knowledge.matches(title: entry.title)
-            case .creator: return creatorMembers.contains(entry.creatorID)
-            }
-        }.filter { entry in
-            if entry.entryID == triggeringTask.entryID { return true }
-            let rows = catalog.videoClassifications.filter {
-                $0.platformID == entry.platformID && $0.entryID == entry.entryID
-            }
-            return rows.contains {
-                $0.tags.isEmpty || ($0.tags.map(\.confidence).max() ?? 0) <= 2
-            }
-        }.sorted { lhs, rhs in
-            if lhs.entryID == triggeringTask.entryID { return true }
-            if rhs.entryID == triggeringTask.entryID { return false }
-            return lhs.lastObservedAtMilliseconds > rhs.lastObservedAtMilliseconds
-        }
-        var seen = Set<String>()
-        return Array(candidates.filter {
-            seen.insert("\($0.platformID)\u{1F}\($0.entryID)").inserted
-        }.prefix(max(1, limit)))
-    }
 
     @discardableResult
     public func collectPlatformEntry(

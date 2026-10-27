@@ -39,61 +39,6 @@ extension VaultClassifierViewModel {
         } catch { issue = error.localizedDescription }
     }
 
-    func saveResearchSettings(_ updated: ResearchSettings) {
-        guard let coordinator else { return }
-        do {
-            guard let catalog = localState?.workspaceCatalog else { return }
-            try Self.validateResearchSettingsForEnable(updated, catalog: catalog)
-            var current = coordinator.snapshot().settings
-            current.research = updated
-            try coordinator.updateSettings(current)
-            refreshLocalState()
-            issue = nil
-        } catch {
-            issue = error.localizedDescription
-        }
-    }
-
-    nonisolated private static func validateResearchSettingsForEnable(
-        _ settings: ResearchSettings,
-        catalog: WorkspaceCatalog
-    ) throws {
-        guard settings.enabled else { return }
-        guard let llmProfileID = settings.llmProviderProfileID,
-              let modelIdentifier = settings.llmModelIdentifier,
-              !modelIdentifier.isEmpty,
-              let llmProfile = catalog.providerProfiles.first(where: { $0.id == llmProfileID }),
-              ProviderGenerationProtocol.supportsGeneration(profile: llmProfile) else {
-            throw WebBridgeInputError.invalidChoice("research providers and model")
-        }
-        _ = try researchCredential(for: llmProfile)
-
-        guard GroundedGenerationProtocol.supportsProviderGrounding(profile: llmProfile) else {
-            throw WebBridgeInputError.invalidChoice("grounding-capable provider")
-        }
-    }
-
-    /// Sets a type's own research switch (nil = follow the global switch). The
-    /// global consent stays the master gate.
-    func saveClassifierTypeResearch(typeID: String, researchEnabled: Bool?) {
-        do {
-            guard var catalog = localState?.workspaceCatalog,
-                  let index = catalog.classifierTypes.firstIndex(where: { $0.id == typeID }),
-                  catalog.classifierTypes[index].applicablePlatformIDs.allSatisfy({
-                      CollectionPlatformRegistry.definition(for: $0)?.supportsLocalModel == true
-                  }) else {
-                throw WebBridgeInputError.invalidChoice("Classifier group research")
-            }
-            catalog.classifierTypes[index].researchEnabled = researchEnabled
-            catalog.classifierTypes[index].updatedAtMilliseconds = WorkspaceCatalog.now()
-            try coordinator?.updateWorkspaceCatalog(catalog)
-            refreshLocalState()
-            issue = nil
-        } catch {
-            issue = error.localizedDescription
-        }
-    }
-
     /// Persists a group's independent dial positions and house rules.
     func saveClassifierTypeTagging(typeID: String, settings: TaggingSettings) {
         do {
@@ -157,19 +102,6 @@ extension VaultClassifierViewModel {
     }
 
     /// The per-type research form: `researchMode` is "inherit", "on" or "off".
-    static func parseClassifierTypeResearchWebInput(
-        _ data: [String: Any]
-    ) throws -> ClassifierTypeResearchWebInput {
-        guard let typeID = data["typeID"] as? String, !typeID.isEmpty, typeID.count <= 256 else {
-            throw WebBridgeInputError.missingValue("typeID")
-        }
-        switch (data["researchMode"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) {
-        case "inherit", nil, "": return .init(typeID: typeID, researchEnabled: nil)
-        case "on": return .init(typeID: typeID, researchEnabled: true)
-        case "off": return .init(typeID: typeID, researchEnabled: false)
-        default: throw WebBridgeInputError.invalidChoice("researchMode")
-        }
-    }
 
     func positiveInteger(_ raw: String, label: String) throws -> Int {
         let digits = raw.replacingOccurrences(of: ",", with: "").trimmingCharacters(in: .whitespacesAndNewlines)

@@ -4,11 +4,6 @@ import VaultClassifierCore
 import VaultClassifierBridge
 @testable import VaultClassifierApp
 
-private struct SettlementDictionary: DictionaryEvidenceProviding {
-    func localEvidence(title: String, creatorID: String) -> DictionaryEvidence { .init() }
-    func evidence(title: String, creatorID: String, subscriberCount: Int64?) async -> DictionaryEvidence { .init() }
-}
-
 private actor SettlementLLM: BatchClassificationEngine {
     enum Mode { case allFail, mixed, succeed, empty }
     enum Failure: Error { case injected }
@@ -67,7 +62,6 @@ final class ClassificationFailureSettlementTests: XCTestCase {
         catalog.classifierTypes.append(.init(id: "settlement-type", name: "YouTube", treeID: tree.id, treeRevision: tree.revision,
                                             datasetID: dataset.id, datasetRevision: dataset.revision, applicablePlatformIDs: ["youtube"], chatGPT: .init(accountID: "fixture", model: "fixture")))
         try coordinator.updateWorkspaceCatalog(catalog)
-        coordinator.setDictionaryProvider(SettlementDictionary())
         for item in [failed, good] {
             try coordinator.collectPlatformEntry(.init(platform: "youtube", entryID: item.entryID, sourceID: item.creatorID,
                                                        surface: .feed, evidence: .init(title: item.title)))

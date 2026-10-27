@@ -35,7 +35,6 @@ let package = Package(
         .library(name: "VaultClassifierApp", targets: ["VaultClassifierApp"]),
         .library(name: "VaultClassifierBridge", targets: ["VaultClassifierBridge"]),
         .executable(name: "VaultClassifierWorker", targets: ["VaultClassifierWorker"]),
-        .executable(name: "VaultGroundingSmoke", targets: ["VaultGroundingSmoke"])
     ],
     dependencies: portableDependencies,
     targets: windowsTargets + nativeHostTargets + [
@@ -46,7 +45,6 @@ let package = Package(
         .target(name: "VaultClassifierResearch", dependencies: [.target(name: "VaultClassifierCore"), .target(name: "CVaultOAuth")] + cryptoDependencies),
         .target(name: "VaultClassifierApp", dependencies: appDependencies, exclude: appExcludes, resources: [.copy("WebAssets")]),
         .executableTarget(name: "VaultClassifierWorker", dependencies: ["VaultClassifierApp"]),
-        .executableTarget(name: "VaultGroundingSmoke", dependencies: ["VaultClassifierCore", "VaultClassifierResearch"]),
         .testTarget(name: "VaultClassifierCoreTests", dependencies: coreTestDependencies, exclude: coreTestExcludes),
         .testTarget(name: "VaultClassifierAppTests", dependencies: ["VaultClassifierApp", "VaultClassifierCore", "VaultClassifierBridge", "VaultClassifierResearch"])
     ]

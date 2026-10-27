@@ -207,35 +207,9 @@ final class WorkspaceAssetsTests: XCTestCase {
         XCTAssertEqual(catalog.classifierTypes.first?.applicablePlatformIDs, [], "…unbound")
     }
 
-    func testClassifierTypeLocalModelOverridesLegacyAndRoundTrip() throws {
-        let legacy = Data(#"{"id":"type","name":"Type","treeID":"tree","treeRevision":1,"datasetID":"dataset","datasetRevision":1,"applicablePlatformID":"youtube","order":0}"#.utf8)
-        let decodedLegacy = try JSONDecoder().decode(ClassifierTypeAsset.self, from: legacy)
-        XCTAssertEqual(decodedLegacy.tagging, TaggingSettings())
-        XCTAssertNil(decodedLegacy.researchEnabled)
-
-        let value = ClassifierTypeAsset(
-            id: "type", name: "Type", treeID: "tree", treeRevision: 1,
-            datasetID: "dataset", datasetRevision: 1, applicablePlatformIDs: ["youtube"],
-            tagging: .init(strictness: .strict, houseRules: "Prefer documentaries."),
-            researchEnabled: false
-        )
-        let roundTrip = try JSONDecoder().decode(ClassifierTypeAsset.self, from: JSONEncoder().encode(value))
-        XCTAssertEqual(roundTrip.tagging, value.tagging)
-        XCTAssertEqual(roundTrip.researchEnabled, false)
-    }
 
     /// A type written before the dials (per-type model file, full research profile,
     /// preset provenance) keeps its tier and research switch; the rest is dropped.
-    func testPreDialClassifierTypeDecodesToDialPositions() throws {
-        let old = #"{"id":"type","name":"Type","treeID":"tree","treeRevision":1,"datasetID":"dataset","datasetRevision":1,"applicablePlatformID":"youtube","order":0,"modelFileName":"Qwen2.5-3B-Instruct-Q4_K_M.gguf","localModelOverrides":{"allowDecline":false,"maximumTags":1},"researchOverrides":{"enabled":false,"requestsPerMinute":6,"dailyTokenLimit":5000,"cooldownHours":24},"presetID":"gentle"}"#
-        let decoded = try JSONDecoder().decode(ClassifierTypeAsset.self, from: Data(old.utf8))
-        XCTAssertEqual(decoded.tagging, TaggingSettings(), "retired overrides reconcile only while decoding the complete state")
-        XCTAssertEqual(decoded.researchEnabled, false)
-        let reencoded = String(decoding: try JSONEncoder().encode(decoded), as: UTF8.self)
-        for retired in ["presetID", "researchOverrides", "\"modelFileName\"", "allowDecline", "maximumTags"] {
-            XCTAssertFalse(reencoded.contains(retired), "retired key written back: \(retired)")
-        }
-    }
 
     func testCatalogAndBindingDiscardRetiredTrainableModelFields() throws {
         let legacyCatalog = Data(#"{"models":[{"id":"retired-model","name":"Retired"}]}"#.utf8)
@@ -248,19 +222,4 @@ final class WorkspaceAssetsTests: XCTestCase {
         XCTAssertFalse(String(decoding: try JSONEncoder().encode(binding), as: UTF8.self).contains("activeModelID"))
     }
 
-    func testWorkspaceCatalogRetainsPerVideoLLMStores() throws {
-        var catalog = WorkspaceCatalog.starter()
-        let tree = catalog.trees[0]
-        catalog.videoClassifications = [.init(
-            classifierTypeID: "type", platformID: "youtube",
-            entryID: "youtube:video:1", creatorID: "youtube:channel:creator",
-            treeID: tree.id, treeRevision: tree.revision,
-            tags: [.init(tagID: "tag", confidence: 5)],
-            source: .model, modelVersion: "test"
-        )]
-        catalog.knowledgeEntries = [.init(kind: .term, subject: "subject", meaning: "meaning")]
-        let decoded = try JSONDecoder().decode(WorkspaceCatalog.self, from: JSONEncoder().encode(catalog))
-        XCTAssertEqual(decoded.videoClassifications, catalog.videoClassifications)
-        XCTAssertEqual(decoded.knowledgeEntries, catalog.knowledgeEntries)
-    }
 }

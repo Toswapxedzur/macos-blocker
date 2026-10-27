@@ -26,7 +26,6 @@ public final class VaultClassifierWorkerService {
             self.model = VaultClassifierViewModel()
         }
         #if os(Windows)
-        model.contributionPromptNative = true
         #endif
         let directory: URL
         if let testingDirectory { directory = testingDirectory.appendingPathComponent("Activity", isDirectory: true) }
@@ -49,19 +48,11 @@ public final class VaultClassifierWorkerService {
             }
             let payload = data["data"] as? [String: Any] ?? [:]
             guard payload.count <= VaultClassifierPresentation.maximumWebActionDataFields else { throw WorkerInputError.invalidAction }
-            if action == "knowledgePage" {
-                guard let packet = await model.knowledgePagePayload(payload) else { throw WorkerInputError.invalidAction }
-                return ["list": remapResources(packet)]
-            }
             guard ClassifierWebActionCatalog.descriptor(named: action) != nil else { throw WorkerInputError.invalidAction }
             let rerender = model.performWebAction(action, data: payload)
             let snapshot = remapResources(model.webSnapshot(includeCollections: false))
             if rerender { emit(["event": "state", "value": snapshot]) }
-            var answer: [String: Any] = ["rerender": rerender, "issue": model.issue ?? NSNull(), "snapshot": snapshot]
-            if action == "editKnowledgeEntry", let id = payload["id"] as? String,
-               let acknowledgement = model.knowledgeEditAcknowledgementPayload(id: id) {
-                answer["knowledgeRow"] = acknowledgement
-            }
+            let answer: [String: Any] = ["rerender": rerender, "issue": model.issue ?? NSNull(), "snapshot": snapshot]
             return answer
         case "hub":
             guard let sourcePeerID = data["sourcePeerID"] as? String,
@@ -97,9 +88,6 @@ public final class VaultClassifierWorkerService {
         case "resource":
             guard let name = data["url"] as? String, name.count <= 512, let url = URL(string: name),
                   url.scheme == SourceIconCache.scheme else { throw WorkerInputError.invalidResource }
-            if let image = model.creatorPictures?.response(for: url) {
-                return ["contentType": "image/jpeg", "dataBase64": image.base64EncodedString()]
-            }
             if let image = model.sourceIconCache?.response(for: url) {
                 return ["contentType": image.contentType, "dataBase64": image.data.base64EncodedString()]
             }

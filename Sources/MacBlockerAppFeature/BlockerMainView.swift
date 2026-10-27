@@ -74,7 +74,6 @@ public struct BlockerMainView: View {
                     install: { VaultClassifierPage.shared.install(in: $0) },
                     attach: { VaultClassifierPage.shared.attach($0) },
                     reloaded: { VaultClassifierPage.shared.pageReloaded() },
-                    windowChanged: { VaultClassifierPage.shared.hostWindowChanged($0, window: $1) }
                 ),
                 ActivityPage.shared.scene,
             ]

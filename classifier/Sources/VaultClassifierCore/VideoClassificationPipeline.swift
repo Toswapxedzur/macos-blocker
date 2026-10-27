@@ -33,7 +33,7 @@ public struct VideoClassificationPipeline: Sendable {
         // p2 = bare tag-name reply, confidence derived from token odds (2026-09-21).
         // Cached p1 rows stay valid: the currency check matches the model file only.
         // p4 = researched creator sentence on the creator line, single pass (2026-09-22).
-        promptVersion: String = "p4"
+        promptVersion: String = "p5"
     ) {
         self.llm = llm
         self.maximumTags = maximumTags
@@ -70,15 +70,12 @@ public struct VideoClassificationPipeline: Sendable {
         tree: TagTreeAsset,
         catalog: WorkspaceCatalog,
         houseRules: String? = nil,
-        extraTagMinimumOdds: Double? = nil,
-        knowledgeTTLDays: Int = ResearchSettings.defaultKnowledgeTTLDays,
-        maxKnowledgePerVideo: Int = ResearchSettings.defaultMaxKnowledgePerVideo
+        extraTagMinimumOdds: Double? = nil
     ) async throws -> VideoClassification {
         try await classifyBatch(
             [Input(title: title, summary: summary, text: text, entryID: entryID, creatorID: creatorID)],
             platformID: platformID, classifierType: classifierType, tree: tree, catalog: catalog,
-            houseRules: houseRules, extraTagMinimumOdds: extraTagMinimumOdds,
-            knowledgeTTLDays: knowledgeTTLDays, maxKnowledgePerVideo: maxKnowledgePerVideo
+            houseRules: houseRules, extraTagMinimumOdds: extraTagMinimumOdds
         )[0]
     }
 
@@ -95,10 +92,7 @@ public struct VideoClassificationPipeline: Sendable {
         tree: TagTreeAsset,
         catalog: WorkspaceCatalog,
         houseRules: String? = nil,
-        extraTagMinimumOdds: Double? = nil,
-        knowledgeTTLDays: Int = ResearchSettings.defaultKnowledgeTTLDays,
-        maxKnowledgePerVideo: Int = ResearchSettings.defaultMaxKnowledgePerVideo,
-        dictionaryEvidence: [String: DictionaryEvidence] = [:]
+        extraTagMinimumOdds: Double? = nil
     ) async throws -> [VideoClassification] {
         guard !inputs.isEmpty else { return [] }
         let timing = ProcessInfo.processInfo.environment["VAULT_DECODE_TIMING"] == "1"
@@ -110,17 +104,14 @@ public struct VideoClassificationPipeline: Sendable {
             gatherEvidence(
                 title: input.title, entryID: input.entryID, creatorID: input.creatorID, platformID: platformID,
                 classifierType: classifierType, tree: tree,
-                catalog: (dictionaryEvidence[input.entryID] ?? .init()).overlay(on: catalog, title: input.title, creatorID: input.creatorID),
-                knowledgeTTLDays: knowledgeTTLDays, maxKnowledgePerVideo: maxKnowledgePerVideo
+                catalog: catalog
             )
         }
-        func parts(_ index: Int, knowledge: [KnowledgeEntry]) -> ClassificationPromptParts {
+        func parts(_ index: Int) -> ClassificationPromptParts {
             ClassificationPromptAssembler.assemble(
                 tree: tree, houseRules: houseRules, maximumTags: maximumTags, minimumTags: minimumTags,
                 title: inputs[index].title, summary: inputs[index].summary, text: inputs[index].text,
-                creatorPrior: evidence[index].creatorPrior, creatorVideoCount: evidence[index].creatorVideoCount,
-                knowledge: knowledge,
-                creatorSummary: evidence[index].creatorEntry?.meaning
+                creatorPrior: evidence[index].creatorPrior, creatorVideoCount: evidence[index].creatorVideoCount
             )
         }
         func request(_ index: Int, _ parts: ClassificationPromptParts) -> LLMClassificationRequest {
@@ -135,7 +126,7 @@ public struct VideoClassificationPipeline: Sendable {
 
         // Primary decode: each video's own content plus any matched term
         // knowledge and the matching creator description.
-        let primaryParts = inputs.indices.map { parts($0, knowledge: evidence[$0].termKnowledge) }
+        let primaryParts = inputs.indices.map { parts($0) }
         let tAssembled = DispatchTime.now()
         let primaryResults = try await llm.classifyAll(primaryParts.enumerated().map { request($0.offset, $0.element) })
         if timing {
@@ -148,7 +139,6 @@ public struct VideoClassificationPipeline: Sendable {
         // ONE pass per video. The creator's stored sentence rides on the creator
         // line above; the former second decode over weak videos (full description,
         // a whole extra video's time) was measured worse than this on 450 videos.
-        let knowledgeUsed = evidence.map { $0.termKnowledge + ($0.creatorEntry.map { [$0] } ?? []) }
 
         return inputs.indices.map { index in
             VideoClassification(
@@ -159,14 +149,10 @@ public struct VideoClassificationPipeline: Sendable {
                 treeID: tree.id,
                 treeRevision: tree.revision,
                 tags: tags[index],
-                knowledgeRefs: knowledgeUsed[index].map(\.id),
-                knowledgeFingerprint: DictionaryEvidence.fingerprint(title: inputs[index].title, creatorID: inputs[index].creatorID,
-                    catalog: (dictionaryEvidence[inputs[index].entryID] ?? .init()).overlay(on: catalog, title: inputs[index].title, creatorID: inputs[index].creatorID),
-                    settings: .init(), limit: maxKnowledgePerVideo, ttlDays: knowledgeTTLDays),
                 inputFingerprint: CloudClassificationCurrency.input(
                     title: inputs[index].title, summary: inputs[index].summary, text: inputs[index].text, creatorID: inputs[index].creatorID,
                     creatorName: catalog.datasets.flatMap(\.collectedEntries).first { $0.platformID == platformID && $0.entryID == inputs[index].entryID }?.creatorName),
-                source: knowledgeUsed[index].isEmpty ? .model : .modelKnowledge,
+                source: .model,
                 modelVersion: "\(llm.modelVersion)+\(promptVersion)",
                 tagBounds: TagBounds(minimum: minimumTags, maximum: maximumTags)
             )
@@ -183,10 +169,8 @@ public struct VideoClassificationPipeline: Sendable {
         platformID: String,
         classifierType: ClassifierTypeAsset,
         tree: TagTreeAsset,
-        catalog: WorkspaceCatalog,
-        knowledgeTTLDays: Int,
-        maxKnowledgePerVideo: Int
-    ) -> (creatorPrior: [CreatorPriorTag], creatorVideoCount: Int, termKnowledge: [KnowledgeEntry], creatorEntry: KnowledgeEntry?) {
+        catalog: WorkspaceCatalog
+    ) -> (creatorPrior: [CreatorPriorTag], creatorVideoCount: Int) {
         let nameByID = Dictionary(tree.nodes.map { ($0.id, $0.name) }, uniquingKeysWith: { first, _ in first })
 
         // Derived creator prior: how often THIS creator's already-classified
@@ -205,14 +189,7 @@ public struct VideoClassificationPipeline: Sendable {
                 .sorted { $0.share == $1.share ? $0.tagName < $1.tagName : $0.share > $1.share }
         }
 
-        // Matched terms; creator descriptions enter separately on the creator line.
-        let termKnowledge = catalog.matchedKnowledge(
-            title: title,
-            creatorID: creatorID,
-            limit: maxKnowledgePerVideo,
-            ttlDays: knowledgeTTLDays
-        )
-        return (creatorPrior, creatorVideoCount, termKnowledge, catalog.creatorKnowledgeEntry(for: creatorID))
+        return (creatorPrior, creatorVideoCount)
     }
 
     /// The exact prompt parts `classify`'s primary decode would build for one
@@ -229,14 +206,11 @@ public struct VideoClassificationPipeline: Sendable {
         classifierType: ClassifierTypeAsset,
         tree: TagTreeAsset,
         catalog: WorkspaceCatalog,
-        houseRules: String? = nil,
-        knowledgeTTLDays: Int = ResearchSettings.defaultKnowledgeTTLDays,
-        maxKnowledgePerVideo: Int = ResearchSettings.defaultMaxKnowledgePerVideo
+        houseRules: String? = nil
     ) -> ClassificationPromptParts {
         let evidence = gatherEvidence(
             title: title, entryID: entryID, creatorID: creatorID, platformID: platformID,
-            classifierType: classifierType, tree: tree, catalog: catalog,
-            knowledgeTTLDays: knowledgeTTLDays, maxKnowledgePerVideo: maxKnowledgePerVideo
+            classifierType: classifierType, tree: tree, catalog: catalog
         )
         return ClassificationPromptAssembler.assemble(
             tree: tree,
@@ -247,9 +221,7 @@ public struct VideoClassificationPipeline: Sendable {
             summary: summary,
             text: text,
             creatorPrior: evidence.creatorPrior,
-            creatorVideoCount: evidence.creatorVideoCount,
-            knowledge: evidence.termKnowledge,
-            creatorSummary: evidence.creatorEntry?.meaning
+            creatorVideoCount: evidence.creatorVideoCount
         )
     }
 

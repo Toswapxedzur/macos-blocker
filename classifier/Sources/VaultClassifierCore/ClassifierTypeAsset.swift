@@ -24,13 +24,6 @@ public struct ClassifierTypeAsset: Codable, Equatable, Sendable, Identifiable {
     public var chatGPT: ChatGPTClassificationSettings
     /// Pauses new automatic classification for this group without deleting it.
     public var isPaused: Bool
-    /// Grounded research for this type: nil follows the global switch, false
-    /// turns it off here, true keeps it on — but the app-wide research consent
-    /// remains the master gate either way.
-    public var researchEnabled: Bool?
-    /// Position in the reorderable classifier-type list. Types targeting the
-    /// same platform apply in ascending order; a card unions their tags in this
-    /// order.
     public var order: Int
     public var updatedAtMilliseconds: Int64
 
@@ -47,7 +40,6 @@ public struct ClassifierTypeAsset: Codable, Equatable, Sendable, Identifiable {
         chatGPT: ChatGPTClassificationSettings = .init(),
         apiKey: APIKeyClassificationSettings = .init(),
         isPaused: Bool = false,
-        researchEnabled: Bool? = nil,
         order: Int = 0,
         updatedAtMilliseconds: Int64 = WorkspaceCatalog.now()
     ) {
@@ -63,7 +55,6 @@ public struct ClassifierTypeAsset: Codable, Equatable, Sendable, Identifiable {
         self.apiKey = apiKey
         self.chatGPT = chatGPT
         self.isPaused = isPaused
-        self.researchEnabled = researchEnabled
         self.order = order
         self.updatedAtMilliseconds = updatedAtMilliseconds
     }
@@ -78,10 +69,9 @@ public struct ClassifierTypeAsset: Codable, Equatable, Sendable, Identifiable {
 
     private enum CodingKeys: String, CodingKey {
         case id, name, treeID, treeRevision, datasetID, datasetRevision, applicablePlatformIDs,
-             tagging, classificationProvider, chatGPT, apiKey, isPaused, researchEnabled, order, updatedAtMilliseconds
+             tagging, classificationProvider, chatGPT, apiKey, isPaused, order, updatedAtMilliseconds
         // Pre-dial keys (before 2026-09-23), read only to find the nearest position.
         case retiredLocalModel = "localModel"
-        case researchOverrides
         // The single platform of before 2026-09-30, read once into the list.
         case applicablePlatformID
     }
@@ -106,14 +96,6 @@ public struct ClassifierTypeAsset: Codable, Equatable, Sendable, Identifiable {
         chatGPT = try container.decodeIfPresent(ChatGPTClassificationSettings.self, forKey: .chatGPT) ?? .init()
         apiKey = try container.decodeIfPresent(APIKeyClassificationSettings.self, forKey: .apiKey) ?? .init()
         isPaused = (try? container.decodeIfPresent(Bool.self, forKey: .isPaused)) ?? false
-        if let explicit = try container.decodeIfPresent(Bool.self, forKey: .researchEnabled) {
-            researchEnabled = explicit
-        } else if let legacy = try? container.decodeIfPresent(ResearchSettings.self, forKey: .researchOverrides) {
-            // Pre-dial per-type research profiles keep only their on/off switch.
-            researchEnabled = legacy.enabled
-        } else {
-            researchEnabled = nil
-        }
         order = try container.decodeIfPresent(Int.self, forKey: .order) ?? 0
         updatedAtMilliseconds = try container.decodeIfPresent(Int64.self, forKey: .updatedAtMilliseconds)
             ?? WorkspaceCatalog.now()
@@ -133,7 +115,6 @@ public struct ClassifierTypeAsset: Codable, Equatable, Sendable, Identifiable {
         try container.encode(chatGPT, forKey: .chatGPT)
         try container.encode(apiKey, forKey: .apiKey)
         try container.encode(isPaused, forKey: .isPaused)
-        try container.encodeIfPresent(researchEnabled, forKey: .researchEnabled)
         try container.encode(order, forKey: .order)
         try container.encode(updatedAtMilliseconds, forKey: .updatedAtMilliseconds)
     }

@@ -24,8 +24,7 @@ final class ClassificationRecordsTests: XCTestCase {
             classifierTypeID: "type", platformID: "youtube", entryID: "youtube:video:v1",
             creatorID: "youtube:handle:c1", treeID: "tree", treeRevision: 1,
             tags: [ScoredTag(tagID: "games", confidence: 5), ScoredTag(tagID: "politics", confidence: 3)],
-            knowledgeRefs: ["term:hermitcraft"],
-            source: .modelKnowledge, modelVersion: "llama-3.2-3b/v1"
+            source: .model, modelVersion: "cloud/v1"
         )
         let data = try JSONEncoder().encode(original)
         let decoded = try JSONDecoder().decode(VideoClassification.self, from: data)
@@ -100,39 +99,7 @@ final class ClassificationRecordsTests: XCTestCase {
 
     // MARK: - Knowledge map
 
-    func testKnowledgeKeyAndTitleMatching() {
-        let term = KnowledgeEntry(kind: .term, subject: "HermitCraft", meaning: "A Minecraft SMP server.")
-        XCTAssertEqual(term.id, "term:hermitcraft")
-        XCTAssertTrue(term.matches(title: "My HERMITCRAFT season 9 base"))
-        XCTAssertFalse(term.matches(title: "Cooking pasta"))
 
-        let creator = KnowledgeEntry(kind: .creator, subject: "youtube:handle:xyz", meaning: "A political channel.")
-        XCTAssertEqual(creator.id, "creator:youtube:handle:xyz")
-        XCTAssertFalse(creator.matches(title: "anything"), "creators match by key, not title")
-    }
-
-    func testMatchedKnowledgeReturnsOnlyTitleTermMatchesAndCreatorLivesApart() {
-        var catalog = WorkspaceCatalog()
-        catalog.upsertKnowledgeEntry(KnowledgeEntry(kind: .term, subject: "HermitCraft", meaning: "A Minecraft SMP."))
-        catalog.upsertKnowledgeEntry(KnowledgeEntry(kind: .term, subject: "Bedrock", meaning: "A Minecraft edition."))
-        catalog.upsertKnowledgeEntry(KnowledgeEntry(kind: .creator, subject: "youtube:handle:c1", meaning: "A gaming channel."))
-
-        // Creator entries are routed to the separate creator map, not the term map.
-        XCTAssertTrue(catalog.knowledgeEntries.allSatisfy { $0.kind == .term })
-        XCTAssertEqual(catalog.creatorKnowledge.map(\.id), ["creator:youtube:handle:c1"])
-        XCTAssertEqual(catalog.creatorKnowledgeEntry(for: "youtube:handle:c1")?.meaning, "A gaming channel.")
-
-        // matchedKnowledge is term-only now; the creator description is a
-        // separate low-confidence fallback, never injected into the primary decode.
-        let matched = catalog.matchedKnowledge(title: "HermitCraft finale", creatorID: "youtube:handle:c1")
-        let ids = Set(matched.map(\.id))
-        XCTAssertFalse(ids.contains("creator:youtube:handle:c1"))
-        XCTAssertTrue(ids.contains("term:hermitcraft"))
-        XCTAssertFalse(ids.contains("term:bedrock"))
-
-        // Unknown creator + no term match -> nothing.
-        XCTAssertTrue(catalog.matchedKnowledge(title: "unrelated title", creatorID: "youtube:handle:unknown").isEmpty)
-    }
 
     /// Research term extraction can emit junk subjects — single letters,
     /// abbreviations, bare numbers, corrupt text. Under raw substring matching a
@@ -140,156 +107,15 @@ final class ClassificationRecordsTests: XCTestCase {
     /// into every prompt (measured live: ~570 tokens/video, the entire tagging
     /// slowdown). Such subjects are never stored and never match; real subjects
     /// match as whole words (CJK, which has no word boundaries, as substrings).
-    func testTermSubjectsMustBeSpecificAndMatchWholeWords() {
-        for junk in ["e", "T", "tE", "CE", "ml", "0", "2200", "832,000", ",", "12345678901234567890123456789", "\u{FFFD}劉", "新"] {
-            XCTAssertFalse(KnowledgeEntry.isSpecificTermSubject(junk), "junk subject accepted: \(junk)")
-            let entry = KnowledgeEntry(kind: .term, subject: junk, meaning: "Meaning")
-            XCTAssertFalse(entry.matches(title: "The best 2200 e-bikes: T, CE and ML explained"), "junk subject matched: \(junk)")
-            var catalog = WorkspaceCatalog()
-            catalog.upsertKnowledgeEntry(entry)
-            XCTAssertTrue(catalog.knowledgeEntries.isEmpty, "junk subject was stored: \(junk)")
-        }
-        for real in ["url", "KIA", "ГЛИ", "Clash Royale", "友宜", "太監"] {
-            XCTAssertTrue(KnowledgeEntry.isSpecificTermSubject(real), "real subject rejected: \(real)")
-        }
 
-        // Whole words only: "her" is not inside "hero" or "HERMITCRAFT".
-        let her = KnowledgeEntry(kind: .term, subject: "her", meaning: "A pronoun.")
-        XCTAssertTrue(her.matches(title: "Her story, told by her"))
-        XCTAssertFalse(her.matches(title: "My HERMITCRAFT base and a hero"))
-        let clash = KnowledgeEntry(kind: .term, subject: "Clash Royale", meaning: "A mobile game.")
-        XCTAssertTrue(clash.matches(title: "clash royale: best deck"))
-        XCTAssertFalse(clash.matches(title: "clash royalex deck"))
 
-        // CJK: no word boundaries, so two characters match as a substring.
-        let cjk = KnowledgeEntry(kind: .term, subject: "友宜", meaning: "侯友宜")
-        XCTAssertTrue(cjk.matches(title: "侯友宜宣布參選"))
-        XCTAssertFalse(cjk.matches(title: "unrelated"))
-    }
 
-    func testMatchedKnowledgeIsTermOnlyAndBounded() {
-        var catalog = WorkspaceCatalog()
-        let creatorID = "youtube:handle:c1"
-        catalog.upsertKnowledgeEntry(.init(kind: .creator, subject: creatorID, meaning: "Creator context"))
-        let subjects = (1...12).map { "Entity" + String(repeating: "x", count: $0) }
-        for (index, subject) in subjects.enumerated() {
-            catalog.upsertKnowledgeEntry(.init(
-                kind: .term,
-                subject: subject,
-                meaning: "Meaning \(index)",
-                updatedAtMilliseconds: Int64(index)
-            ))
-        }
 
-        let matched = catalog.matchedKnowledge(
-            title: subjects.joined(separator: " "),
-            creatorID: creatorID
-        )
-        // Only terms are returned, bounded, longest-subject first — the creator
-        // is retrievable apart via creatorKnowledgeEntry.
-        XCTAssertEqual(matched.count, WorkspaceCatalog.maximumMatchedKnowledgeEntries)
-        XCTAssertTrue(matched.allSatisfy { $0.kind == .term })
-        XCTAssertEqual(matched.first?.subject, subjects.last)
-        XCTAssertNotNil(catalog.creatorKnowledgeEntry(for: creatorID))
-    }
 
-    func testMatchedKnowledgeHonorsPerRequestLimitAndTTL() {
-        var catalog = WorkspaceCatalog()
-        let day: Int64 = 24 * 60 * 60 * 1_000
-        catalog.upsertKnowledgeEntry(.init(
-            kind: .creator,
-            subject: "creator",
-            meaning: "stale",
-            updatedAtMilliseconds: day
-        ))
-        catalog.upsertKnowledgeEntry(.init(
-            kind: .term,
-            subject: "Current",
-            meaning: "fresh",
-            updatedAtMilliseconds: 10 * day
-        ))
-        catalog.upsertKnowledgeEntry(.init(
-            kind: .term,
-            subject: "Second",
-            meaning: "fresh too",
-            updatedAtMilliseconds: 10 * day
-        ))
 
-        let matched = catalog.matchedKnowledge(
-            title: "Current Second",
-            creatorID: "creator",
-            limit: 1,
-            ttlDays: 2,
-            nowMilliseconds: 10 * day
-        )
-        XCTAssertEqual(matched.map(\.subject), ["Current"])
-    }
-
-    func testCreatorKnowledgeIsKeyedForeverRegardlessOfTTL() {
-        let day: Int64 = 24 * 60 * 60 * 1_000
-        let ancientCreator = KnowledgeEntry(
-            kind: .creator, subject: "c1", meaning: "desc", updatedAtMilliseconds: day
-        )
-        let ancientTerm = KnowledgeEntry(
-            kind: .term, subject: "Thing", meaning: "desc", updatedAtMilliseconds: day
-        )
-        // Even with a short TTL and a far-future clock, the creator stays active;
-        // the term expires.
-        XCTAssertTrue(ancientCreator.isActive(ttlDays: 1, nowMilliseconds: 1_000 * day))
-        XCTAssertFalse(ancientTerm.isActive(ttlDays: 1, nowMilliseconds: 1_000 * day))
-    }
-
-    func testLegacyCombinedKnowledgeMigratesCreatorsIntoSeparateMap() throws {
-        // A pre-split state stored terms and creators together under knowledgeEntries.
-        let legacy = Data(#"""
-        {"knowledgeEntries":[
-          {"id":"creator:youtube:handle:c1","kind":"creator","subject":"youtube:handle:c1","meaning":"A gaming channel.","contextTagHints":[],"sourceURLs":[],"createdAtMilliseconds":1,"updatedAtMilliseconds":1},
-          {"id":"term:hermitcraft","kind":"term","subject":"HermitCraft","meaning":"A Minecraft SMP.","contextTagHints":[],"sourceURLs":[],"createdAtMilliseconds":1,"updatedAtMilliseconds":1}
-        ]}
-        """#.utf8)
-        let decoded = try JSONDecoder().decode(WorkspaceCatalog.self, from: legacy)
-        XCTAssertEqual(decoded.knowledgeEntries.map(\.id), ["term:hermitcraft"])
-        XCTAssertEqual(decoded.creatorKnowledge.map(\.id), ["creator:youtube:handle:c1"])
-        XCTAssertEqual(decoded.creatorKnowledgeEntry(for: "youtube:handle:c1")?.meaning, "A gaming channel.")
-    }
-
-    func testCreatorAndTermKnowledgeRoundTripInSeparateMaps() throws {
-        var catalog = WorkspaceCatalog()
-        catalog.upsertKnowledgeEntry(KnowledgeEntry(kind: .term, subject: "HermitCraft", meaning: "SMP"))
-        catalog.upsertKnowledgeEntry(KnowledgeEntry(kind: .creator, subject: "c1", meaning: "A gaming channel."))
-        let decoded = try JSONDecoder().decode(WorkspaceCatalog.self, from: JSONEncoder().encode(catalog))
-        XCTAssertEqual(decoded.knowledgeEntries, catalog.knowledgeEntries)
-        XCTAssertEqual(decoded.creatorKnowledge, catalog.creatorKnowledge)
-    }
-
-    func testUpsertKnowledgeEntryDedupsByKey() {
-        var catalog = WorkspaceCatalog()
-        catalog.upsertKnowledgeEntry(KnowledgeEntry(kind: .term, subject: "HermitCraft", meaning: "old"))
-        catalog.upsertKnowledgeEntry(KnowledgeEntry(kind: .term, subject: "hermitcraft", meaning: "new"))
-        XCTAssertEqual(catalog.knowledgeEntries.count, 1)
-        XCTAssertEqual(catalog.knowledgeEntries.first?.meaning, "new")
-    }
 
     // MARK: - Catalog Codable + validation + greenfield
 
-    func testCatalogRoundTripsNewStores() throws {
-        var catalog = WorkspaceCatalog()
-        catalog.upsertVideoClassification(VideoClassification(
-            classifierTypeID: "t", platformID: "youtube", entryID: "v1", creatorID: "c1",
-            treeID: "tree", treeRevision: 1, tags: [ScoredTag(tagID: "games", confidence: 4)],
-            source: .model, modelVersion: "v1"))
-        catalog.upsertKnowledgeEntry(KnowledgeEntry(kind: .term, subject: "HermitCraft", meaning: "A Minecraft SMP."))
-        catalog.correctionExamples.append(CorrectionExample(
-            classifierTypeID: "t", platformID: "youtube", entryID: "v1", creatorID: "c1",
-            title: "Some title", correctTagIDs: ["news"]))
-
-        let data = try JSONEncoder().encode(catalog)
-        let decoded = try JSONDecoder().decode(WorkspaceCatalog.self, from: data)
-        XCTAssertEqual(decoded.videoClassifications, catalog.videoClassifications)
-        XCTAssertEqual(decoded.knowledgeEntries, catalog.knowledgeEntries)
-        XCTAssertEqual(decoded.correctionExamples, catalog.correctionExamples)
-        XCTAssertEqual(decoded.creatorHistograms, catalog.creatorHistograms)
-    }
 
     func testValidateLocalLLMStoresRejectsDuplicateIDs() {
         var catalog = WorkspaceCatalog()
@@ -303,14 +129,6 @@ final class ClassificationRecordsTests: XCTestCase {
         XCTAssertThrowsError(try catalog.validateClassificationStores())
     }
 
-    func testStarterHasEmptyNewStores() {
-        let starter = WorkspaceCatalog.starter()
-        XCTAssertTrue(starter.videoClassifications.isEmpty)
-        XCTAssertTrue(starter.knowledgeEntries.isEmpty)
-        XCTAssertTrue(starter.correctionExamples.isEmpty)
-        XCTAssertTrue(starter.creatorHistograms.isEmpty)
-        XCTAssertNoThrow(try starter.validate())
-    }
 
     // MARK: - Creator research score
 
@@ -318,107 +136,18 @@ final class ClassificationRecordsTests: XCTestCase {
 
     /// A video that could not be tagged adds 1; a shaky tag a fraction; a sure tag
     /// nothing (and never subtracts).
-    func testCreatorScoreSteps() {
-        XCTAssertEqual(CreatorResearchAccumulator.step(forUrgency: 5), 1)
-        XCTAssertEqual(CreatorResearchAccumulator.step(forUrgency: 4), 2.0 / 3, accuracy: 1e-9)
-        XCTAssertEqual(CreatorResearchAccumulator.step(forUrgency: 3), 1.0 / 3, accuracy: 1e-9)
-        XCTAssertEqual(CreatorResearchAccumulator.step(forUrgency: 2), 0)
-        XCTAssertEqual(CreatorResearchAccumulator.step(forUrgency: 1), 0)
-    }
 
-    func testCreatorScoreFiresAtTheThresholdThenResets() {
-        var catalog = WorkspaceCatalog()
-        let rule = AuthorResearchThreshold(score: 3, halfLifeDays: 14)
-        let now: Int64 = 1_000_000_000_000
-        // One screenful (same instant, so nothing has faded yet): two untaggable
-        // videos and any number of sure ones are not enough.
-        for _ in 0..<2 {
-            XCTAssertNil(catalog.recordCreatorResearchUrgency(
-                classifierTypeID: "t", creatorID: "c", urgency: 5, threshold: rule, nowMilliseconds: now))
-        }
-        for _ in 0..<20 {
-            XCTAssertNil(catalog.recordCreatorResearchUrgency(
-                classifierTypeID: "t", creatorID: "c", urgency: 1, threshold: rule, nowMilliseconds: now))
-        }
-        XCTAssertEqual(catalog.creatorResearchAccumulators.first?.score ?? 0, 2, accuracy: 1e-9, "a sure tag never subtracts")
-        // The third untaggable video reaches 3 → research, and the score resets.
-        XCTAssertNotNil(catalog.recordCreatorResearchUrgency(
-            classifierTypeID: "t", creatorID: "c", urgency: 5, threshold: rule, nowMilliseconds: now))
-        XCTAssertTrue(catalog.creatorResearchAccumulators.isEmpty)
-        XCTAssertNil(catalog.recordCreatorResearchUrgency(
-            classifierTypeID: "t", creatorID: "c", urgency: 5, threshold: rule, nowMilliseconds: now))
-    }
 
     /// The score is always fading. Three untaggable videos in one sitting (minutes
     /// apart) still fire at 3 thanks to the small tolerance; spread a day apart they
     /// reach only ~2.86, so the fourth fires.
-    func testSpreadOutVideosNeedOneMoreThanTheThreshold() {
-        var catalog = WorkspaceCatalog()
-        let rule = AuthorResearchThreshold(score: 3, halfLifeDays: 14)
-        let base: Int64 = 1_000 * day
-        let minute: Int64 = 60 * 1_000
-        var sitting = WorkspaceCatalog()
-        for index in 0..<2 {
-            XCTAssertNil(sitting.recordCreatorResearchUrgency(
-                classifierTypeID: "t", creatorID: "c", urgency: 5, threshold: rule, nowMilliseconds: base + Int64(index) * 10 * minute))
-        }
-        XCTAssertNotNil(sitting.recordCreatorResearchUrgency(
-            classifierTypeID: "t", creatorID: "c", urgency: 5, threshold: rule, nowMilliseconds: base + 20 * minute))
-
-        for index in 0..<3 {
-            XCTAssertNil(catalog.recordCreatorResearchUrgency(
-                classifierTypeID: "t", creatorID: "c", urgency: 5, threshold: rule, nowMilliseconds: base + Int64(index) * day))
-        }
-        XCTAssertNotNil(catalog.recordCreatorResearchUrgency(
-            classifierTypeID: "t", creatorID: "c", urgency: 5, threshold: rule, nowMilliseconds: base + 3 * day))
-    }
 
     /// The score halves every half-life, so a creator who is only occasionally hard
     /// to classify never builds up: one untaggable video a month stays near 1.
-    func testCreatorScoreDecaysOverTime() {
-        var catalog = WorkspaceCatalog()
-        let rule = AuthorResearchThreshold(score: 3, halfLifeDays: 14)
-        let base: Int64 = 1_000 * day
-        for month in 0..<12 {
-            XCTAssertNil(catalog.recordCreatorResearchUrgency(
-                classifierTypeID: "t", creatorID: "c", urgency: 5, threshold: rule, nowMilliseconds: base + Int64(month) * 30 * day))
-        }
-        XCTAssertLessThan(catalog.creatorResearchAccumulators.first?.score ?? 9, 1.4)
-        let stored = CreatorResearchAccumulator(id: "x", score: 2, updatedAtMilliseconds: base)
-        XCTAssertEqual(stored.decayedScore(halfLifeDays: 14, nowMilliseconds: base + 14 * day), 1, accuracy: 1e-9)
-        XCTAssertEqual(stored.decayedScore(halfLifeDays: 14, nowMilliseconds: base + 28 * day), 0.5, accuracy: 1e-9)
-    }
 
     /// A creator who already has a description is looked up once: never scored again.
-    func testADescribedCreatorIsNeverScored() {
-        var catalog = WorkspaceCatalog()
-        catalog.upsertKnowledgeEntry(KnowledgeEntry(kind: .creator, subject: "c", meaning: "A Minecraft channel."))
-        let rule = AuthorResearchThreshold(score: 1, halfLifeDays: 14)
-        for i in 0..<5 {
-            XCTAssertNil(catalog.recordCreatorResearchUrgency(
-                classifierTypeID: "t", creatorID: "c", urgency: 5, threshold: rule, nowMilliseconds: Int64(i)))
-        }
-        XCTAssertTrue(catalog.creatorResearchAccumulators.isEmpty)
-    }
 
-    func testCreatorScoreIsPerTypeAndCreatorAndSurvivesCodableRoundTrip() throws {
-        var catalog = WorkspaceCatalog()
-        let rule = AuthorResearchThreshold(score: 3, halfLifeDays: 14)
-        let now: Int64 = 2_000_000_000_000
-        _ = catalog.recordCreatorResearchUrgency(classifierTypeID: "t1", creatorID: "c", urgency: 4, threshold: rule, nowMilliseconds: now)
-        _ = catalog.recordCreatorResearchUrgency(classifierTypeID: "t2", creatorID: "c", urgency: 4, threshold: rule, nowMilliseconds: now)
-        XCTAssertEqual(catalog.creatorResearchAccumulators.count, 2)   // keyed per type+creator
-        let decoded = try JSONDecoder().decode(WorkspaceCatalog.self, from: JSONEncoder().encode(catalog))
-        XCTAssertEqual(decoded.creatorResearchAccumulators, catalog.creatorResearchAccumulators)
-    }
 
     /// Rows written by the retired sample-list rule decode as an empty score (they
     /// are transient); the rule itself is a constant (3 / 14 days) with clamped inputs.
-    func testRetiredSampleListStateStillDecodes() throws {
-        let oldRow = #"{"id":"t\u001Fc","samples":[{"urgency":5,"atMilliseconds":1}]}"#
-        let row = try JSONDecoder().decode(CreatorResearchAccumulator.self, from: Data(oldRow.utf8))
-        XCTAssertEqual(row.score, 0)
-        XCTAssertEqual(AuthorResearchThreshold(score: 0, halfLifeDays: 0), AuthorResearchThreshold(score: 0.5, halfLifeDays: 1))
-        XCTAssertEqual(AuthorResearchThreshold(score: 999, halfLifeDays: 9_999), AuthorResearchThreshold(score: 50, halfLifeDays: 365))
-    }
 }

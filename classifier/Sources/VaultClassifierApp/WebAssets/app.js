@@ -40,18 +40,14 @@
   const treeViewportPositions = new Map();
   const editorViewportPositions = new Map();
   const liveEdits = new Map();
-  const knowledgeRows = new Map();
+
   let replacingControls = false;
   let composingEdit = false;
   // Non-null while the "create a group" dialog is open: { platformIDs, name? }.
   // A group can only be created through this dialog.
   let pendingCreateType = null;
   let utilityPanel = null;
-  let researchSetupRequested = false;
-  let researchSetupFocusPending = false;
-  let dictionarySetupFocusPending = false;
-  let researchModelQuery = "";
-  let researchModelQueryProvider = null;
+
   let releaseDialogFocus = null;
   let dialogFocusKind = null;
   // "More" / "Options" expands the user opened: the page re-renders on every update.
@@ -66,7 +62,7 @@
   let languageRevision = 0;
   let navigationPanelWidth = navigationWidthRange.fallback;
   let navigationResize = null;
-  const workspaceNames = new Set(["browserBridge", "knowledge"]);
+  const workspaceNames = new Set(["browserBridge"]);
   let lastRenderedMarkup = null;
   const listViewportPositions = new Map();
 
@@ -215,13 +211,7 @@
     const form = control.closest("[data-autosave-action]");
     if (!form) return false;
     // A setup choice is navigation, never a group mutation (including input/blur).
-    if (control.matches("[data-group-research-choice]") && control.value === "on" && !researchAvailability().ready) {
-      const draft = liveEdits.get(liveEditKey(form));
-      const type = (state.assets?.classifierTypes || []).find((item) => item.id === form.dataset.typeId);
-      control.value = draft?.values.researchMode ?? (type?.researchEnabled === true ? "on" : type?.researchEnabled === false ? "off" : "inherit");
-      openResearchSetup();
-      return true;
-    }
+
     const key = liveEditKey(form);
     const previous = liveEdits.get(key);
     window.clearTimeout(previous?.timer);
@@ -257,7 +247,7 @@
     const assets = state?.assets || {};
     const type = (assets.classifierTypes || []).find((item) => item.id === edit.identity.typeID);
     switch (edit.action) {
-      case "saveDictionarySettings": return { creatorMode: state.settings?.dictionaries?.creatorMode || "cache", creatorCacheSize: String(state.settings?.dictionaries?.creatorCacheSize || 10000), contributionEnabled: state.settings?.dictionaries?.contributionEnabled !== false, choiceMade: true };
+
       case "configureClassifierType": return type && { name: type.name };
       case "saveClassifierTypeTagging": return type && {
         strictness: String(type.tagging?.strictness ?? 3),
@@ -267,17 +257,10 @@
       };
       case "saveClassificationProvider": return type && { providerModel: selectedTaggingModel(type), reasoningEffort: (type.classificationProvider === "apiKey" ? type.apiKey : type.chatGPT)?.reasoningEffort || (type.classificationProvider === "apiKey" ? "default" : "low") };
       case "saveChatGPTUsageLimit": return { dailyRequestLimit: state.assets?.chatGPT?.dailyRequestLimit == null ? "" : String(state.assets.chatGPT.dailyRequestLimit) };
-      case "saveClassifierTypeResearch": return type && {
-        researchMode: type.researchEnabled === true ? "on" : type.researchEnabled === false ? "off" : "inherit",
-      };
-      case "saveResearchSettings": return { ...state.settings?.research,
-        llmProviderProfileID: state.settings?.research?.llmProviderProfileID || "",
-        llmModelIdentifier: state.settings?.research?.llmModelIdentifier || "" };
+
       case "saveClassificationSettings": return state.settings;
       case "saveBackup": return state.backup;
-      case "editKnowledgeEntry": if (assets.knowledge?.paged) return knowledgeRows.get(edit.identity.id) || {};
-        return [...(assets.knowledge?.creators || []),
-        ...(assets.knowledge?.terms || [])].find((item) => item.id === edit.identity.id);
+
       case "updateTag": return (assets.trees || []).find((tree) => tree.id === edit.identity.treeID)
         ?.nodes.find((node) => node.id === edit.identity.nodeID);
       case "updateProviderConnection": {
@@ -348,7 +331,7 @@
   function reconcileLiveEdits() {
     liveEdits.forEach((edit, key) => {
       const saved = savedLiveEdit(edit);
-      if (edit.action === "editKnowledgeEntry" && state.assets?.knowledge?.paged) return;
+
       if (!saved || (edit.sent && !state.issue && liveEditMatches(edit, saved))) {
         window.clearTimeout(edit.timer);
         liveEdits.delete(key);
@@ -403,19 +386,16 @@
 
   // English field explanations are explicit; translations remain a release-time batch.
   const fieldInfo = Object.freeze({
-    "dictionary.openJSON": "Choose a personal dictionary JSON file to load into the import draft. Review it and click Import to add its definitions.",
-    "dictionary.creatorMode": "Keep recently used creator definitions in a bounded cache, or download the full creator dictionary.",
-    "dictionary.cacheMaximum": "The maximum number of creator definitions retained in cache mode. Full dictionary mode ignores this limit.",
-    "dictionary.helpImprove": "Allow sampled public creator handles and available counts to be contributed to the shared dictionary. You can turn sharing off here.",
+
     "bridge.typeName": "The name shown for this Classifier group.",
     "createType.nameLabel": "The name of the new Classifier group.",
     "createType.platformLabel": "Choose the platforms this group will classify. A platform can belong to only one Classifier group.",
     "bridge.applicablePlatform": "The platforms assigned when this Classifier group was created. Platform assignments are fixed for that group.",
-    "bridge.researchMode": "Allow research for this group, turn it off, or follow the app-wide switch. Research also requires global consent and a configured provider.",
+
     "llm.providerType": "Choose the provider’s API type before adding its configuration. Adding a provider does not create an API key.",
     "llm.apiKeyOrToken": "Paste the credential issued by this provider. Vault uses it to authenticate requests to that provider.",
     "llm.apiEndpoint": "The provider’s API base address. Leave blank to use its default endpoint.",
-    "llm.testModel": "The model identifier used by Test connection. This does not select the model used for web research.",
+    "llm.testModel": "The model identifier used by Test connection. Each group selects its tagging model.",
     "llm.protocol.accountID": "The account identifier required by this provider’s API.",
     "llm.protocol.apiVersion": "The API version sent to this provider. Use a version supported by its endpoint.",
     "llm.protocol.clientID": "The application or client identifier issued for this provider’s API.",
@@ -425,14 +405,11 @@
     "llm.protocol.userAgent": "The client identification sent with this provider’s API requests.",
     "llm.protocol.searchEngineID": "The search engine identifier required by this saved provider configuration.",
     "llm.protocol.protocolFamily": "The API format this endpoint accepts. Choose the format supported by the provider.",
-    "research.model": "The model used for web research. Fetch the selected provider’s model list, then choose a model.",
-    "research.modelSearch": "Find a model by its identifier in the fetched list.",
+
     "classification.enabled": "Allow the Classifier to tag content. Individual Classifier groups can still be paused.",
-    "research.consent": "Allow web research to send public source identifiers and requested terms to the selected provider. Turning this off disables research.",
+
     "backup.auto": "Create a local backup after configuration changes, using the configured backup folder.",
-    "knowledge.platform": "The platform that owns this content source. This determines how its name or link is interpreted.",
-    "knowledge.description": "Describe what this term or content source means so the Classifier can use that knowledge. Saved descriptions are editable.",
-    "knowledge.search": "Find saved knowledge by name, identifier, or description.",
+
     "tree.nodeName": "The name of this tag in the taxonomy and on tagged content.",
     "tree.tagName": "The name of the tag to add to this Classifier group’s taxonomy."
   });
@@ -492,36 +469,6 @@
 
   // Research lane status: live queue counters + the durable cooldown picture,
   // plus the user's escape hatch when a provider was down ("retry now").
-  function researchStatusBlock(status) {
-    if (!status || typeof status !== "object") return "";
-    const lines = [tx("research.status.queue", {
-      pending: status.pending ?? 0,
-      inCooldown: status.inCooldown ?? 0,
-      transient: status.transientInCooldown ?? 0,
-      succeeded: status.succeeded ?? 0,
-      failed: status.failed ?? 0,
-      retries: status.retries ?? 0,
-      skippedBudget: status.skippedBudget ?? 0
-    })];
-    if (status.inFlight) lines.push(tx("research.status.inFlight", { subject: status.inFlight }));
-    const failure = status.lastFailure;
-    if (failure && typeof failure === "object") {
-      const kindKey = `research.failure.${failure.kind || "unknown"}`;
-      const kind = tx(kindKey) === kindKey ? tx("research.failure.unknown") : tx(kindKey);
-      const retryIn = Number(failure.retryInSeconds) || 0;
-      lines.push(tx(retryIn > 0 ? "research.status.lastFailure" : "research.status.lastFailure.due", {
-        kind,
-        subject: failure.subject || "",
-        ago: formatDuration(failure.agoSeconds),
-        count: failure.failureCount ?? 1,
-        retry: formatDuration(retryIn)
-      }));
-    } else {
-      lines.push(tx("research.status.noFailures"));
-    }
-    const canRetry = (status.retryable ?? 0) > 0 || (status.inCooldown ?? 0) > 0;
-    return `<div class="research-status notice navy" data-research-status><strong>${tx("research.status.heading")}</strong>${lines.map((line) => `<p class="small-copy">${esc(line)}</p>`).join("")}<div class="action-row"><button class="secondary" data-action="retryFailedResearch" data-hint="${esc(tx("research.status.retryNowHint"))}"${canRetry ? "" : " disabled"}>${tx("research.status.retryNow")}</button></div></div>`;
-  }
 
   function statusPill(title, tone = "navy") {
     return `<span class="status-pill ${esc(tone)}">${esc(title)}</span>`;
@@ -530,8 +477,6 @@
   function header(titleKey, copyKey, badge, tone = "navy") {
     return `<div class="workspace-head"><div><h2>${tx(titleKey)}</h2><p class="section-copy" data-info>${tx(copyKey)}</p></div>${statusPill(badge, tone)}</div>`;
   }
-
-
 
   const STRICTNESS_POSITIONS = [1, 2, 3, 4, 5];
 
@@ -544,134 +489,9 @@
   }
 
   // Read only acknowledged native state: a draft key/model is not ready yet.
-  function researchAvailability() {
-    const research = state.settings?.research || {};
-    const profile = (state.assets?.providerProfiles || []).find((item) => item.id === research.llmProviderProfileID);
-    const protocol = state.assets?.providerProtocols?.[profile?.type] || {};
-    const providerReady = protocol.supportsGenerateText === true && protocol.supportsNativeWebSearch === true;
-    const keyReady = providerReady && (!protocol.credentialRequired || Boolean(profile?.credential?.trim()));
-    const modelReady = Boolean(research.llmModelIdentifier?.trim());
-    const configured = providerReady && keyReady && modelReady;
-    return { profile, providerReady, keyReady, modelReady, configured, ready: configured && research.enabled === true,
-      actionKey: !configured ? "research.setup" : research.enabled ? "research.configure" : "research.enable" };
-  }
-
-  function openResearchSetup() {
-    openExpands.add("classifier-services");
-    const profile = researchAvailability().profile;
-    connectionTab = KEY_CONNECTIONS.includes(profile?.type) ? profile.type : "openAI";
-    utilityPanel = "settings";
-    window.VaultSettings.open();
-    dictionarySetupFocusPending = false;
-    researchSetupRequested = true;
-    researchSetupFocusPending = true;
-    render();
-    window.requestAnimationFrame(placeResearchSetup);
-  }
-
-  function openDictionarySetup() {
-    openExpands.add("classifier-services");
-    utilityPanel = "settings";
-    window.VaultSettings.open();
-    researchSetupRequested = false;
-    researchSetupFocusPending = false;
-    dictionarySetupFocusPending = true;
-    render();
-    window.requestAnimationFrame(placeDictionarySetup);
-  }
-
-  function placeDictionarySetup() {
-    if (!dictionarySetupFocusPending || utilityPanel !== "settings") return;
-    const target = uiQuery(".utility-dictionary-section h3");
-    if (!target) return;
-    dictionarySetupFocusPending = false;
-    target.tabIndex = -1;
-    target.focus({ preventScroll: true });
-    target.scrollIntoView({ block: "center" });
-  }
-
-  function placeResearchSetup() {
-    if (!researchSetupRequested || utilityPanel !== "settings") return;
-    const availability = researchAvailability();
-    const missing = [];
-    if (!availability.providerReady) {
-      missing.push(uiQuery((state.assets?.providerProfiles || []).some((profile) => {
-        const protocol = state.assets?.providerProtocols?.[profile.type];
-        return protocol?.supportsGenerateText && protocol?.supportsNativeWebSearch;
-      }) ? '[data-form-id="utility-research-form"] [data-field="llmProviderProfileID"]' : '[data-tagging-connections] [data-action="createProviderProfile"]'));
-    } else if (!availability.keyReady) {
-      missing.push(uiQuery(`[data-form-id="${CSS.escape(`provider-profile-${availability.profile.id}`)}"] [data-field="credential"]`));
-    }
-    if (!availability.modelReady) missing.push(uiQuery("[data-model-selector], [data-model-fetch]"));
-    if (availability.configured && !availability.ready) missing.push(uiQuery('[data-form-id="utility-research-form"] [data-field="enabled"]'));
-    uiQueryAll(".research-setup-needed").forEach((field) => field.classList.remove("research-setup-needed"));
-    missing.filter(Boolean).forEach((control) => (control.closest(".field, label") || control).classList.add("research-setup-needed"));
-    if (!researchSetupFocusPending) return;
-    researchSetupFocusPending = false;
-    const target = missing.find(Boolean) || uiQuery(".utility-research-section h3");
-    if (target) {
-      if (target.tagName === "H3") target.tabIndex = -1;
-      const focusTarget = target.matches("select") ? target.nextElementSibling?.querySelector(".vui-select-button") || target : target;
-      focusTarget.focus({ preventScroll: true });
-      focusTarget.scrollIntoView({ block: "center" });
-    }
-  }
-
-  function currentResearchValues() {
-    const draft = [...liveEdits.values()].find((edit) => edit.formID === "utility-research-form");
-    return { ...state.settings?.research, ...draft?.values };
-  }
-
-  function researchModelPicker() {
-    const research = currentResearchValues();
-    const providerID = research.llmProviderProfileID || "";
-    const profile = (state.assets?.providerProfiles || []).find((item) => item.id === providerID);
-    const protocol = state.assets?.providerProtocols?.[profile?.type] || {};
-    const canFetch = protocol.supportsGenerateText && protocol.supportsNativeWebSearch
-      && (!protocol.credentialRequired || Boolean(profile?.credential?.trim()));
-    const catalogs = state.assets?.providerModelCatalogs || {};
-    const fetched = Boolean(profile && Object.hasOwn(catalogs, providerID));
-    const models = fetched ? catalogs[providerID] : [];
-    const loading = (state.assets?.loadingProviderModelProfileIDs || []).includes(providerID);
-    const error = state.assets?.providerModelCatalogErrors?.[providerID];
-    const current = research.llmModelIdentifier || "";
-    if (researchModelQueryProvider !== providerID) {
-      researchModelQueryProvider = providerID;
-      researchModelQuery = "";
-    }
-    const expandKey = `research-model:${providerID}`;
-    const unavailable = fetched && current && !models.includes(current);
-    const choices = models.map((model) => `<button type="button" class="vui-menu-item research-model-option${model === current ? " is-selected" : ""}" data-model-pick="${esc(model)}" aria-pressed="${model === current}">${esc(model)}</button>`).join("");
-    const picker = fetched ? `<details class="research-model-picker" data-expand="${esc(expandKey)}"${openExpands.has(expandKey) ? " open" : ""}><summary class="vui-select-button" tabindex="0" data-model-selector aria-label="${tx("research.model")}: ${current ? esc(current) : tx("research.chooseModel")}"><span class="vui-select-label">${current ? esc(current) : tx("research.chooseModel")}</span></summary><div class="research-model-menu vui-menu"><div class="vui-info-field" ${infoAttrs("research.modelSearch")}><input type="search" data-model-search value="${esc(researchModelQuery)}" aria-label="${tx("research.modelSearch")}" placeholder="${tx("research.modelSearch")}" autocomplete="off" spellcheck="false"></div><div class="research-model-list vui-list-box" data-list-key="${esc(expandKey)}" tabindex="0" aria-label="${tx("research.model")}">${choices}</div><p class="small-copy" data-model-no-matches hidden>${tx("research.noMatchingModels")}</p>${models.length ? "" : `<p class="small-copy">${tx("research.noModels")}</p>`}</div></details>` : current ? `<p class="small-copy">${tx("research.savedModel", { model: current })}</p>` : "";
-    return `<div class="field research-model-field"><span class="field-label" ${infoAttrs("research.model")}>${tx("research.model")}</span><input type="hidden" data-field="llmModelIdentifier" value="${esc(current)}">${picker}${unavailable ? `<p class="small-copy research-model-unavailable">${tx("research.modelUnavailable")}</p>` : ""}<div class="action-row"><button type="button" class="secondary" data-action="probeProviderModelCatalog" data-profile-id="${esc(providerID)}" data-model-fetch${disabled(!canFetch || loading)}>${tx(loading ? "research.fetchingModels" : error ? "research.retryModels" : fetched ? "research.refreshModels" : "research.fetchModels")}</button></div>${!canFetch ? `<p class="small-copy">${tx(profile ? "research.modelKeyRequired" : "research.modelProviderRequired")}</p>` : ""}${loading ? `<p class="small-copy" role="status">${tx("research.fetchingModels")}</p>` : ""}${error ? `<div role="alert">${notice(error, "red")}</div>` : ""}</div>`;
-  }
-
-  function filterResearchModels() {
-    const query = researchModelQuery.trim().toLowerCase();
-    const options = [...uiQueryAll("[data-model-pick]")];
-    options.forEach((option) => { option.hidden = !option.dataset.modelPick.toLowerCase().includes(query); });
-    const noMatches = uiQuery("[data-model-no-matches]");
-    if (noMatches) noMatches.hidden = !options.length || options.some((option) => !option.hidden);
-    placeResearchModelMenu();
-  }
-
-  function closeResearchModelMenu(restoreFocus = false) {
-    const picker = uiQuery(".research-model-picker[open]");
-    if (!picker) return false;
-    window.VaultUI.hideMenuLayer(picker.querySelector(".research-model-menu"));
-    picker.open = false;
-    openExpands.delete(picker.dataset.expand);
-    if (restoreFocus) picker.querySelector("summary")?.focus({ preventScroll: true });
-    return true;
-  }
 
   // Keep the menu inside the Settings dialog for its focus trap, but out of
   // layout flow. It uses the same white floating card as the shared selects.
-  function placeResearchModelMenu() {
-    const picker = uiQuery(".research-model-picker[open]");
-    if (!picker) return;
-    placeClassifierMenu(picker.querySelector("summary"), picker.querySelector(".research-model-menu"));
-  }
 
   function placeClassifierMenu(anchor, menu) {
     window.VaultUI.showMenuLayer(menu);
@@ -690,19 +510,8 @@
     menu.style.visibility = "visible";
   }
 
-  document.addEventListener("pointerdown", (event) => {
-    const picker = uiQuery(".research-model-picker[open]");
-    if (picker && !event.composedPath().includes(picker)) closeResearchModelMenu();
-    const suggestions = uiQuery("[data-knowledge-suggestions]");
-    const creator = uiQuery("[data-knowledge-creator]");
-    if (suggestions && !event.composedPath().includes(suggestions) && !event.composedPath().includes(creator)) closeKnowledgeSuggestions();
-  }, true);
-  listen("scroll", (event) => {
-    if (!event.target.closest?.(".research-model-menu")) placeResearchModelMenu();
-    placeKnowledgeSuggestions();
-  }, true);
-  document.addEventListener("scroll", () => { placeResearchModelMenu(); placeKnowledgeSuggestions(); }, true);
-  window.addEventListener("resize", () => { placeResearchModelMenu(); placeKnowledgeSuggestions(); });
+  document.addEventListener("scroll", () => {   }, true);
+  window.addEventListener("resize", () => {   });
 
   function chatGPTAccountSection() {
     const account = state.assets?.chatGPT || {};
@@ -744,29 +553,9 @@
   }
 
   function nativeSettingsContent() {
-    if (!utilityPanel || !state) return "";
-    let content = "";
-    if (utilityPanel === "settings") {
-      const settings = state.settings;
-      const research = settings.research || {};
-      const assets = state.assets || {};
-      const profiles = assets.providerProfiles || [];
-      const protocols = assets.providerProtocols || {};
-      const generationProfiles = profiles.filter((profile) => protocols[profile.type]?.supportsGenerateText === true);
-      const isGroundingCapable = (profile) => protocols[profile.type]?.supportsGenerateText === true && protocols[profile.type]?.supportsNativeWebSearch === true;
-      // Research is provider-grounding only, so only grounding-capable providers are offered.
-      const llmProviderOptions = [["", tx("research.chooseProvider")]].concat(generationProfiles.filter(isGroundingCapable).map((profile) => [profile.id, profile.name]));
-      const classificationSection = `<section class="utility-settings-section" data-form-id="classification-settings-form" data-autosave-action="saveClassificationSettings"><h3 class="utility-settings-section-title">${tx("classification.title")}</h3><div class="utility-toggles">${toggle("classification.enabled", "classificationEnabled", settings.classificationEnabled !== false)}</div><p class="section-copy" data-info>${tx("classification.copy")}</p></section>`;
-      const researchSection = `<section class="utility-settings-section utility-research-section" data-form-id="utility-research-form" data-autosave-action="saveResearchSettings"><h3 class="utility-settings-section-title">${tx("research.title")} ${statusPill(tx(research.enabled ? "research.status.on" : "research.status.off"), research.enabled ? "cyan" : "muted")}</h3><p class="section-copy" data-info>${tx("research.copy")}</p><div class="notice navy research-data-flow" data-info>${tx("research.disclosure")}</div><div class="utility-toggles">${
-        toggle("research.consent", "enabled", research.enabled === true)
-      }</div><div class="utility-settings-fields">${
-        valueSelectField("research.llmProvider", "research.llmProviderHint", "llmProviderProfileID", research.llmProviderProfileID || "", llmProviderOptions)
-      }${
-        researchModelPicker()
-      }</div><p class="small-copy" data-info="research.constantsNote" data-info-target=".utility-research-section h3">${tx("research.constantsNote")}</p><p class="small-copy">${tx("research.usageToday", { used: research.tokensUsedToday ?? 0, limit: research.dailyTokenLimit ?? 10000 })}</p>${researchStatusBlock(research.status)}</section>`;
-      content = `${notice(state.issue, "red")}${classificationSection}${connectionsSection()}<details data-expand="classifier-services"${openExpands.has("classifier-services") ? " open" : ""}><summary>${tx("connections.advanced")}</summary>${apiKeySettings()}${researchSection}${dictionaryControls()}</details>`;
-    }
-    return content;
+    if (utilityPanel !== "settings" || !state) return "";
+    const settings = state.settings;
+    return `${notice(state.issue, "red")}<section class="utility-settings-section" data-form-id="classification-settings-form" data-autosave-action="saveClassificationSettings"><h3 class="utility-settings-section-title">${tx("classification.title")}</h3><div class="utility-toggles">${toggle("classification.enabled", "classificationEnabled", settings.classificationEnabled !== false)}</div><p class="section-copy" data-info>${tx("classification.copy")}</p></section>${connectionsSection()}`;
   }
 
   function navButton(workspace, symbol, titleKey, metaKey) {
@@ -801,7 +590,7 @@
       <div class="sidebar-group-title">${tx("navigation.classifierTypes")}</div>
       <div class="classifier-type-nav vui-list-box" data-classifier-type-nav data-list-key="types" tabindex="0" aria-label="${tx("navigation.classifierTypes")}">${typeRows}</div>
       <button class="sidebar-add" type="button" data-action="newType"><span aria-hidden="true">＋</span> ${tx("navigation.newType")}</button>
-      ${navButton("knowledge", "✦", "navigation.knowledge", "navigation.knowledgeMeta")}`;
+      `;
   }
 
   function shell(content) {
@@ -846,11 +635,7 @@
         control.dataset.action === previousControl.action && control.dataset.field === previousControl.field
         && control.hasAttribute("data-create-type-name") === previousControl.createName
         && (!previousControl.platform || control.value === previousControl.platform)) : null;
-    releaseDialogFocus = window.VaultUI.focusDialog(card, {
-      initialFocus: initial || card.querySelector(kind === "welcome" ? '[data-action="acknowledgeChatGPTPlan"]' : kind === "create" ? "[data-create-type-name]" : '[data-action="closeUtilityPanel"]'),
-      returnFocus: () => uiQuery(kind === "create" ? '[data-action="newType"]' : '[data-action="openUtilityPanel"]'),
-      onEscape: kind === "welcome" ? () => send("acknowledgeChatGPTPlan") : dismissClassifierDialog
-    });
+
     if (previousControl?.start != null && initial?.setSelectionRange) {
       initial.setSelectionRange(previousControl.start, previousControl.end);
     }
@@ -1068,39 +853,6 @@
     return keys[fieldName] || "llm.protocol.protocolFamily";
   }
 
-  const listRequests = new Map();
-  let listRequestNumber = 0;
-  function queryKnowledge(kind, platformID, request) {
-    const requestID = "knowledge-" + (++listRequestNumber);
-    return new Promise(resolve => {
-      const timer = setTimeout(() => { listRequests.delete(requestID); resolve(null); }, 15000);
-      listRequests.set(requestID, packet => { clearTimeout(timer); resolve(packet); });
-      const drafts = Object.fromEntries([...liveEdits.values()].filter(edit => edit.action === "editKnowledgeEntry").slice(-256).map(edit => [edit.identity.id, edit.values.meaning]));
-      send("knowledgePage", { ...request, query: String(request.query || "").slice(0, 200), requestID, kind, platformID, drafts });
-    });
-  }
-  let pendingLists = [];
-  function listPlaceholder(key, items, render, text, pageSize = 12) {
-    const nativeKnowledge = key.startsWith("knowledge:") && state.assets?.knowledge?.paged;
-    const parts = key.split(":");
-    pendingLists.push({ key, items, render, text, pageSize,
-      ...(nativeKnowledge ? { total: state.assets.knowledge.counts?.[parts.slice(1).join(":")] || 0,
-        queryPage: request => queryKnowledge(parts[1], parts[2] || "", request) } : {}) });
-    return "";
-  }
-  function mountLists() {
-    for (const options of pendingLists) {
-      const list = [...uiQueryAll("[data-vui-search]")].find(list => list.dataset.vuiSearch === options.key);
-      if (!list) continue;
-      let focused = null;
-      window.VaultUI.renderList(list, { ...options, scope, beforePaint() { focused = captureLiveEditFocus(); }, afterPaint() {
-        restoreLiveEdits(focused);
-        uiQueryAll(".knowledge-card").forEach(updateKnowledgeSearchText);
-        window.VaultUI.enhance(list);
-      } });
-    }
-  }
-
   function apiKeySettings(connectionType = null) {
     const profiles = (state.assets.providerProfiles || []).filter(profile => connectionType ? profile.type === connectionType : !KEY_CONNECTIONS.includes(profile.type) && profile.type !== "ollama");
     const requestRecords = state.assets.providerRequestRecords || [];
@@ -1212,9 +964,7 @@
       const expandKey = `type-more:${classifierType.id}`;
       const taggingSection = `<section class="classifier-type-section classifier-tagging" data-tagging-section><div class="section-header"><div><h3>${tx("cloud.tagging")}</h3></div></div><div class="field wide"><span class="field-label">${tx("localModel.strictness")}<span class="field-hint" data-info> · ${tx("localModel.strictnessHint")}</span></span>${strictnessOptions(tagging.strictness, classifierType.id)}${tagging.minimumTagsOverride != null || tagging.maximumTagsOverride != null ? `<p class="small-copy" data-info="bridge.tagBounds.precedence">${tx("bridge.tagBounds.precedence")}</p>` : ""}</div>${textareaField("bridge.localModelHouseRules", "bridge.localModelHouseRulesCopy", "houseRules", tagging.houseRules, 'rows="4" maxlength="4000"')}</section>`;
       const tagBoundsSection = `<details class="vui-expand classifier-group-more" data-expand="${esc(expandKey)}"${openExpands.has(expandKey) ? " open" : ""}><summary><span>${tx("navigation.more")}</span><span class="small-copy classifier-override-summary">${esc(boundsSummary)}</span></summary><section class="classifier-type-section"><p class="section-copy" data-info data-tag-bounds-defaults>${tx("bridge.tagBounds.copy", { minimum: defaultMinimum, maximum: defaultMaximum })}</p><div class="utility-settings-fields">${field("bridge.tagBounds.minimum", "bridge.tagBounds.minimumHint", "minimumTagsOverride", tagging.minimumTagsOverride ?? "", "number", `min="0" max="3" step="1" placeholder="${defaultMinimum}"`)}${field("bridge.tagBounds.maximum", "bridge.tagBounds.maximumHint", "maximumTagsOverride", tagging.maximumTagsOverride ?? "", "number", `min="1" max="3" step="1" placeholder="${defaultMaximum}"`)}</div><p class="notice red" data-tag-bounds-error role="status" hidden>${tx("bridge.tagBounds.error")}</p></section></details>`;
-      const researchFormID = `classifier-research-form-${classifierType.id}`;
-      const researchMode = classifierType.researchEnabled === true ? "on" : classifierType.researchEnabled === false ? "off" : "inherit";
-      const researchOverrideSection = `<section class="classifier-type-section classifier-research-overrides"><div class="section-header"><div><h3>${tx("bridge.researchOverrides")}</h3><p class="section-copy" data-info>${tx("bridge.researchOverridesCopy")}</p></div></div><div data-form-id="${esc(researchFormID)}" data-autosave-action="saveClassifierTypeResearch" data-type-id="${esc(classifierType.id)}"><div class="utility-settings-fields">${valueSelectField("bridge.researchMode", "", "researchMode", researchMode, [["inherit", t("bridge.researchMode.inherit")], ["on", t(researchAvailability().ready ? "bridge.researchMode.on" : researchAvailability().actionKey)], ["off", t("bridge.researchMode.off")]], "data-group-research-choice")}${researchMode === "on" && !researchAvailability().ready ? `<button class="secondary" data-action="openResearchSetup">${tx(researchAvailability().actionKey)}</button>` : ""}</div><p class="small-copy research-master-note" data-info>${tx("bridge.researchMasterGate")}</p></div></section>`;
+
       return `<section class="classifier-type-panel" data-form-id="${esc(formID)}" data-type-id="${esc(classifierType.id)}" data-autosave-action="configureClassifierType">
         <div class="classifier-name-row">${field("bridge.typeName", "", "name", classifierType.name, "text", 'maxlength="128"')}</div>
         <section class="classifier-type-section classifier-applicable-platform-section"><span class="field-label" ${infoAttrs("bridge.applicablePlatform")}>${tx("bridge.applicablePlatform")}</span>${platformChoices(chosen, classifierType.id)}<p class="small-copy" data-info="bridge.platformsFixed">${tx("bridge.platformsFixed")}</p>${platformNotes.map((note) => `<p class="small-copy">${esc(note)}</p>`).join("")}</section>
@@ -1225,7 +975,7 @@
           ${taggingSection}
           ${tagBoundsSection}
         </div>
-        ${classifierType.classificationProvider === "chatGPT" ? "" : researchOverrideSection}
+
         <div class="action-row classifier-type-delete"><button class="danger" data-action="confirmDeleteClassifierType" data-type-id="${esc(classifierType.id)}">${deleteLabel(`type:${classifierType.id}`, tx("bridge.deleteType"))}</button></div>
       </section>`;
     };
@@ -1252,170 +1002,19 @@
   // Knowledge (owner 2026-09-30): terms are shared by every platform; known
   // creators are listed per platform, each with its name and picture. What
   // you write is marked "By you", lookups "Looked up". No source links.
-  const KNOWLEDGE_PLATFORMS = [["youtube", "YouTube"], ["bilibili", "Bilibili"], ["reddit", "Reddit"], ["twitter", "X"]];
-  let knowledgeAddPlatform = "youtube";
-  let knowledgeCreatorDraft = "";
-  let personalDictionaryImportDraft = "";
-  let knowledgeSuggestionsOpen = false;
 
-  function dictionaryControls() {
-    const d = state.settings?.dictionaries || {};
-    const packs = d.packs || [];
-    const pack = (kind, label) => {
-      const row = packs.find(item => item.kind === kind) || {};
-      return `<div class="dictionary-pack"><div><strong>${label}</strong><p class="small-copy">${tx("dictionary.entries", { count: row.entryCount || 0, version: row.installedVersion || t("dictionary.notDownloaded"), update: row.updateAvailable ? t("dictionary.updateAvailable") : "" })}</p></div><button class="secondary" data-action="downloadDictionary" data-kind="${kind}" ${d.busy ? "disabled" : ""}>${tx(kind === "creator" && d.creatorMode !== "full" ? "dictionary.updateCache" : "dictionary.download")}</button></div>`;
-    };
-    return `<section class="utility-settings-section utility-dictionary-section dictionary-controls"><div class="section-header"><div><h3 class="utility-settings-section-title">${tx("dictionary.title")}</h3><p class="section-copy">${tx("dictionary.priority")}</p></div><button class="secondary" data-action="checkDictionaryUpdates" ${d.busy ? "disabled" : ""}>${tx(d.busy ? "dictionary.working" : "dictionary.checkUpdates")}</button></div>
-      ${pack("term", tx("dictionary.terms"))}${pack("creator", tx("dictionary.creators"))}
-      <div data-form-id="dictionary-settings" data-autosave-action="saveDictionarySettings" class="form-stack">
-        <label class="field"><span class="field-label" ${infoAttrs("dictionary.creatorMode")}>${tx("dictionary.creatorMode")}</span><select data-field="creatorMode"><option value="cache" ${selected(d.creatorMode || "cache", "cache")}>${tx("dictionary.cacheMode")}</option><option value="full" ${selected(d.creatorMode, "full")}>${tx("dictionary.fullMode")}</option></select></label>
-        <label class="field"><span class="field-label" ${infoAttrs("dictionary.cacheMaximum")}>${tx("dictionary.cacheMaximum")}</span><input type="number" data-field="creatorCacheSize" min="1" max="100000" step="1" value="${d.creatorCacheSize || 10000}" ${d.creatorMode === "full" ? "readonly" : ""}></label>
-        <label class="field wide dictionary-contribution"><span class="toggle-row"><input type="checkbox" data-field="contributionEnabled" ${d.contributionEnabled !== false ? "checked" : ""}> <span ${infoAttrs("dictionary.helpImprove")}>${tx("dictionary.helpImprove")}</span></span><span class="small-copy">${tx("dictionary.sharingExplanation")}</span></label>
-        <input type="checkbox" data-field="choiceMade" checked hidden>
-      </div>
-      <p class="small-copy">${tx("dictionary.cacheSummary", { count: d.cachedCreators || 0, guidance: d.creatorMode === "full" && !d.fullCreatorReady ? t("dictionary.fullDownloadRequired") : "" })}</p>
-      ${notice(d.notice, "navy")}
-      <details class="dictionary-personal" data-expand="dictionary-personal"${openExpands.has("dictionary-personal") ? " open" : ""}><summary>${tx("dictionary.importExport")}</summary><div data-form-id="dictionary-import" class="form-stack"><label class="field wide"><span class="field-label">${tx("dictionary.personalJSON")}</span><textarea data-field="json" data-personal-import rows="5" maxlength="8388608" placeholder='{"schemaVersion":1,"entries":[{"kind":"term","subject":"Example","meaning":"Description"}]}'>${esc(personalDictionaryImportDraft)}</textarea></label><label class="field"><span class="field-label" ${infoAttrs("dictionary.openJSON")}>${tx("dictionary.openJSON")}</span><input type="file" accept=".json,application/json" data-personal-file></label><div class="action-row"><button class="secondary" data-action="importPersonalDictionary" data-form="dictionary-import">${tx("dictionary.import")}</button><button class="secondary" data-action="exportPersonalDictionary">${tx("dictionary.export")}</button></div></div>${d.personalJSON ? `<textarea class="dictionary-export" data-personal-export readonly rows="6" aria-label="${tx("dictionary.exported")}">${esc(d.personalJSON)}</textarea><button class="secondary" data-action="copyPersonalDictionary">${tx("dictionary.copy")}</button>` : ""}</details></section>`;
-  }
-  listen("change", async event => {
-    if (!event.target.matches("[data-personal-file]")) return;
-    const file = event.target.files?.[0];
-    if (!file || file.size > 8 * 1024 * 1024) return;
-    personalDictionaryImportDraft = await file.text();
-    const input = uiQuery("[data-personal-import]");
-    if (input) input.value = personalDictionaryImportDraft;
-  });
-  listen("input", event => {
-    if (event.target.matches("[data-personal-import]")) personalDictionaryImportDraft = event.target.value;
-  });
-  function dictionaryOnboarding() {
-    const d = state.settings?.dictionaries;
-    if (!d || d.contributionChoiceMade || d.nativePrompt) return "";
-    return `<div class="utility-popover-layer" role="presentation"><div class="deletion-dialog" role="dialog" aria-modal="true" aria-label="${tx("dictionary.contributionTitle")}"><h3>${tx("dictionary.helpImprove")}</h3><p>${tx("dictionary.webContributionBody")}</p><label><input type="checkbox" data-contribution-first checked> ${tx("dictionary.share")}</label><p class="small-copy">${tx("dictionary.retention")}</p><div class="action-row"><button class="primary" data-action="saveDictionaryFirstChoice">${tx("dictionary.saveChoice")}</button><button class="secondary" data-action="declineDictionaryContribution">${tx("dictionary.decline")}</button></div></div></div>`;
-  }
-
-  function dictionaryConnection() {
-    const d = state.settings?.dictionaries || {};
-    const packs = d.packs || [];
-    const term = packs.find(item => item.kind === "term") || {};
-    const creator = packs.find(item => item.kind === "creator") || {};
-    const version = pack => pack.installedVersion || t("dictionary.notDownloaded");
-    const creatorSummary = d.creatorMode === "full"
-      ? t("dictionary.fullSummary", {count: creator.entryCount || 0})
-      : t("dictionary.lookupSummary", {count: d.cachedCreators || 0});
-    const updating = packs.some(pack => pack.updateAvailable);
-    const creatorReady = creator.installedVersion && (d.creatorMode !== "full" || d.fullCreatorReady);
-    const complete = term.installedVersion && creatorReady;
-    const status = t(d.busy ? "dictionary.working" : updating ? "dictionary.updateStatus" : complete ? "dictionary.installed" : "dictionary.notDownloaded");
-    return `<section class="knowledge-dictionary-connection"><div><h3>${tx("dictionary.connectionTitle")}</h3><p class="small-copy">${tx("dictionary.termSummary", {count: term.entryCount || 0, version: version(term)})}</p><p class="small-copy">${tx("dictionary.creatorSummary", {summary: creatorSummary, version: creatorReady ? version(creator) : t("dictionary.notDownloaded")})}</p>${statusPill(esc(status), d.busy || updating || !complete ? "gold" : "cyan")}</div><button class="secondary" data-action="openDictionarySetup">${tx("dictionary.configure")}</button></section>`;
-  }
-
-  function knowledgeWorkspace() {
-    const availability = researchAvailability();
-    const research = state.settings?.research || {};
-    const connection = `<section class="knowledge-research-connection"><div><h3>${tx("knowledge.lookupProvider")}</h3><p class="small-copy">${availability.profile ? esc(availability.profile.name) : tx("research.noProvider")}${research.llmModelIdentifier ? ` · ${esc(research.llmModelIdentifier)}` : ""}</p>${statusPill(tx(availability.ready ? "research.status.on" : availability.configured ? "research.status.off" : "research.status.setup"), availability.ready ? "cyan" : "gold")}</div><button class="secondary" data-action="openResearchSetup">${tx(availability.actionKey)}</button></section>`;
-    const knowledge = state.assets?.knowledge || { creators: [], terms: [] };
-    const creators = knowledge.creators || [];
-    const terms = knowledge.terms || [];
-
-    const origin = (entry) => statusPill(tx(entry.writtenByUser ? "knowledge.byYou" : "knowledge.lookedUp"), entry.writtenByUser ? "gold" : "cyan");
-    const entryCard = (entry, kind) => {
-      const formID = `knowledge-edit-${entry.id}`;
-      const name = kind === "creator" ? (entry.name || entry.subject) : entry.subject;
-      const face = kind === "creator"
-        ? (entry.icon ? `<img class="knowledge-face" src="${esc(entry.icon)}" alt="" aria-hidden="true" loading="lazy">` : `<span class="knowledge-face knowledge-face-empty" aria-hidden="true">${esc((name || "?").trim().charAt(0).toUpperCase())}</span>`)
-        : "";
-      const idLine = kind === "creator" ? `<span class="knowledge-id" dir="auto">${esc(entry.subject)}</span>` : "";
-      const searchName = `${name} ${entry.subject}`;
-      const search = `${searchName} ${entry.meaning || ""}`;
-      return `<article class="knowledge-card" data-form-id="${esc(formID)}" data-knowledge-search-name="${esc(searchName)}" data-vui-search-text="${esc(search)}" data-autosave-action="editKnowledgeEntry" data-id="${esc(entry.id)}"><div class="knowledge-card-head">${face}<span class="knowledge-name"><span class="knowledge-subject" dir="auto">${esc(name)}</span>${idLine}</span>${origin(entry)}</div><label class="field wide"><span class="field-label" ${infoAttrs("knowledge.description")}>${tx("knowledge.description")}</span><textarea data-field="meaning" rows="3" maxlength="2000">${esc(entry.meaning || "")}</textarea></label><div class="action-row"><button class="danger" data-action="deleteKnowledgeEntry" data-id="${esc(entry.id)}">${deleteLabel(`knowledge:${entry.id}`, tx("knowledge.delete"))}</button></div></article>`;
-    };
-
-    const group = (title, hint, items, kind, platformID = "") => {
-      const key = `knowledge:${kind}${platformID ? `:${platformID}` : ""}`;
-      const total = knowledge.paged ? (knowledge.counts?.[`${kind}${platformID ? ":" + platformID : ""}`] || 0) : items.length;
-      return `<section class="knowledge-group" data-knowledge-group><div class="section-header"><div><h3>${esc(title)} <span class="knowledge-count" data-knowledge-count>${total}</span></h3>${hint ? `<p class="section-copy" data-info>${esc(hint)}</p>` : ""}</div></div>${total ? `<div class="knowledge-list vui-list-box" data-list-key="${key}" data-vui-search="${key}" data-vui-search-items=".knowledge-card" data-vui-search-label="${tx("knowledge.search")} · ${esc(title)}" data-vui-search-copy="${esc(fieldInfo["knowledge.search"])}" tabindex="0" aria-label="${esc(title)}">${listPlaceholder(key, items, entry => entryCard(entry, kind), entry => `${entry.name || ""} ${entry.subject} ${[...liveEdits.values()].find(edit => edit.action === "editKnowledgeEntry" && edit.identity.id === entry.id)?.values?.meaning || entry.meaning || ""}`)}</div>` : `<div class="empty">${tx("knowledge.empty")}</div>`}</section>`;
-    };
-
-    // Terms are only ever added here, by the user: name the term, and either
-    // write what it means or leave that blank to have it looked up.
-    const addTerm = `<section class="knowledge-group" data-form-id="knowledge-add-term"><div class="section-header"><div><h3>${tx("knowledge.addTerm")}</h3><p class="section-copy" data-info>${tx("knowledge.addTermHint")}</p></div></div><div class="form-stack">${field("knowledge.termSubject", "knowledge.termSubjectHint", "subject", "", "text", 'maxlength="120"')}<label class="field wide"><span class="field-label" ${infoAttrs("knowledge.description")}>${tx("knowledge.description")}</span><textarea data-field="meaning" rows="2" maxlength="2000" placeholder="${tx("knowledge.termMeaningPlaceholder")}"></textarea></label><div class="action-row"><button class="primary" data-action="addKnowledgeTerm" data-form="knowledge-add-term">${tx("knowledge.addTermButton")}</button></div></div></section>`;
-
-    // A creator: pick the platform, then a link, @handle, r/name or the name of
-    // one already seen (suggested as you type).
-    const addCreator = `<section class="knowledge-group" data-form-id="knowledge-add-creator"><div class="section-header"><div><h3>${tx("knowledge.addCreator")}</h3><p class="section-copy" data-info>${tx("knowledge.addCreatorHint")}</p></div></div><div class="form-stack">${valueSelectField("knowledge.platform", "", "platformID", knowledgeAddPlatform, KNOWLEDGE_PLATFORMS, "data-knowledge-platform")}<label class="field"><span class="field-label">${tx("knowledge.creator")}<span class="field-hint" data-info> · ${tx("knowledge.creatorHint")}</span></span><input type="text" data-field="creator" data-knowledge-creator value="${esc(knowledgeCreatorDraft)}" maxlength="512" autocomplete="off" spellcheck="false"></label><div class="knowledge-suggestions vui-menu" data-knowledge-suggestions></div><label class="field wide"><span class="field-label" ${infoAttrs("knowledge.description")}>${tx("knowledge.description")}</span><textarea data-field="meaning" rows="2" maxlength="2000" placeholder="${tx("knowledge.creatorMeaningPlaceholder")}"></textarea></label><div class="action-row"><button class="primary" data-action="addKnowledgeCreator" data-form="knowledge-add-creator">${tx("knowledge.addCreatorButton")}</button></div></div></section>`;
-
-    const creatorGroups = KNOWLEDGE_PLATFORMS.map(([platformID, label]) =>
-      group(t("knowledge.creatorsOn", { platform: label }), "", creators.filter((entry) => entry.platformID === platformID), "creator", platformID)).join("");
-
-    return `<div class="workspace knowledge-workspace">${header("knowledge.title", "knowledge.copy", tx("knowledge.badge"), "gold")}<div class="notice navy" data-info="knowledge.disclosure">${tx("knowledge.disclosure")}</div>${dictionaryConnection()}${connection}${notice(state.notices?.knowledge, "navy")}${notice(state.issue, "red")}${addTerm}${addCreator}${group(t("knowledge.terms"), t("knowledge.termsHint"), terms, "term")}<p class="small-copy" data-info="knowledge.creatorsHint">${tx("knowledge.creatorsHint")}</p>${creatorGroups}</div>`;
-  }
 
   // Each platform and Terms share the standard per-list search. Keep names,
   // identifiers and the currently edited description searchable without a render.
-  function updateKnowledgeSearchText(card) {
-    card.dataset.vuiSearchText = `${card.dataset.knowledgeSearchName} ${card.querySelector('[data-field="meaning"]').value}`;
-  }
-
-  listen("vui-search-filtered", (event) => {
-    if (!event.target.matches(".knowledge-list")) return;
-    const count = event.target.closest("[data-knowledge-group]").querySelector("[data-knowledge-count]");
-    const { query, shown, total } = event.detail;
-    count.textContent = query ? `${shown} / ${total}` : String(total);
-  }, true);
 
   // "Add a creator" suggestions: creators already collected on the chosen
   // platform whose name contains what is typed.
-  let suggestionRevision = 0;
-  async function showKnowledgeSuggestions(input) {
-    const box = uiQuery("[data-knowledge-suggestions]");
-    if (!box) return;
-    const revision = ++suggestionRevision;
-    const query = input.value.trim().toLowerCase();
-    knowledgeCreatorDraft = input.value;
-    const known = (state.assets?.knowledge?.knownCreators || []).filter((creator) => creator.platformID === knowledgeAddPlatform);
-    const rank = (name) => (name.startsWith(query) ? 0 : name.split(/\s+/).some((word) => word.startsWith(query)) ? 1 : 2);
-    let matches = query.length < 2 ? [] : known
-      .filter((creator) => creator.name.toLowerCase().includes(query))
-      .sort((a, b) => rank(a.name.toLowerCase()) - rank(b.name.toLowerCase()))
-      .slice(0, 6);
-    if (state.assets?.knowledge?.paged && query.length >= 2) {
-      const result = await queryKnowledge("suggestion", knowledgeAddPlatform, { query, offset: 0, limit: 6 });
-      if (revision !== suggestionRevision || !box.isConnected) return;
-      matches = result?.items || [];
-    }
-    box.innerHTML = matches.map((creator) => `<button type="button" class="vui-menu-item knowledge-suggestion" data-knowledge-pick="${esc(creator.name)}"><span dir="auto">${esc(creator.name)}</span><span class="knowledge-id">${esc(creator.id)}</span></button>`).join("");
-    knowledgeSuggestionsOpen = matches.length > 0;
-    if (!knowledgeSuggestionsOpen) window.VaultUI.hideMenuLayer(box);
-    if (knowledgeSuggestionsOpen) { window.VaultUI.close(); placeKnowledgeSuggestions(); }
-  }
-
-  function closeKnowledgeSuggestions(restoreFocus = false) {
-    suggestionRevision++;
-    const box = uiQuery("[data-knowledge-suggestions]");
-    if (restoreFocus) uiQuery("[data-knowledge-creator]")?.focus({ preventScroll: true });
-    if (box) { window.VaultUI.hideMenuLayer(box); box.replaceChildren(); }
-    knowledgeSuggestionsOpen = false;
-  }
-
-  function placeKnowledgeSuggestions() {
-    const box = uiQuery("[data-knowledge-suggestions]");
-    const input = uiQuery("[data-knowledge-creator]");
-    if (box?.children.length && input) placeClassifierMenu(input, box);
-  }
-
-  listen("focusin", (event) => {
-    if (event.target.matches?.("[data-knowledge-creator]") && !replacingControls) showKnowledgeSuggestions(event.target);
-  });
-  listen("focusout", () => window.requestAnimationFrame(() => {
-    if (knowledgeSuggestionsOpen && !activeControl()?.matches?.("[data-knowledge-creator], [data-knowledge-pick]")) closeKnowledgeSuggestions();
-  }));
 
   const DELETE_KEYS = {
     confirmDeleteProviderProfile: (data) => `provider:${data.profileId}`,
     deleteTag: (data) => `tag:${data.nodeId}`,
     confirmDeleteClassifierType: (data) => `type:${data.typeId}`,
-    deleteKnowledgeEntry: (data) => `knowledge:${data.id}`
+
   };
 
   function deleteLabel(key, label) {
@@ -1438,7 +1037,7 @@
   function workspace() {
     switch (state.workspace) {
       case "browserBridge": return browserBridgeWorkspace();
-      case "knowledge": return knowledgeWorkspace();
+
       default: return browserBridgeWorkspace();
     }
   }
@@ -1507,32 +1106,6 @@
     render();
   }
 
-  listen("input", (event) => {
-    if (!event.isComposing) queueLiveEdit(event.target);
-    const knowledgeCard = event.target.closest(".knowledge-card");
-    if (knowledgeCard && event.target.matches('[data-field="meaning"]')) {
-      updateKnowledgeSearchText(knowledgeCard);
-      window.VaultUI.refreshList(knowledgeCard.parentElement);
-      return;
-    }
-    const creatorInput = event.target.closest("input[data-knowledge-creator]");
-    if (creatorInput) {
-      showKnowledgeSuggestions(creatorInput);
-      return;
-    }
-    const modelSearch = event.target.closest("input[data-model-search]");
-    if (modelSearch) {
-      researchModelQuery = modelSearch.value;
-      filterResearchModels();
-      return;
-    }
-    const input = event.target.closest("input[data-live-tag-name]");
-    if (!input) return;
-    const { treeId: treeID, nodeId: nodeID } = input.dataset;
-    if (!treeID || !nodeID) return;
-    updateRenderedTagName(treeID, nodeID, input.value);
-  });
-
   function rememberTreeViewportPositions() {
     uiQueryAll("[data-tree-map]").forEach((map) => {
       treeViewportPositions.set(map.dataset.treeId, { x: map.scrollLeft, y: map.scrollTop });
@@ -1565,12 +1138,11 @@
   }
 
   // Create-a-group dialog: platform and name. The new group follows the global
-  // dials, house rules and research switch until given its own.
+  // dials and house rules until given its own.
   function createTypeModal() {
     if (!pendingCreateType) return "";
     return `<div class="utility-popover-layer" role="presentation"><button class="utility-popover-dismiss" data-action="cancelCreateType" aria-label="${tx("common.cancel")}"></button><div class="deletion-dialog create-type-dialog" role="dialog" aria-modal="true" aria-label="${tx("createType.title")}" data-create-type-dialog><h3>${tx("createType.title")}</h3><p class="section-copy" data-info>${tx("createType.copy")}</p><div class="field"><span class="field-label" ${infoAttrs("createType.platformLabel")}>${tx("createType.platformLabel")}</span>${platformChoices(pendingCreateType.platformIDs || [], null)}${pendingCreateType.issue ? notice(t("createType.platformRequired"), "red") : ""}</div><label class="field"><span class="field-label" ${infoAttrs("createType.nameLabel")}>${tx("createType.nameLabel")}</span><input type="text" data-create-type-name autocomplete="off" spellcheck="false" value="${esc(pendingCreateType.name != null ? pendingCreateType.name : t("createType.defaultName"))}"></label><div class="action-row"><button class="secondary" data-action="cancelCreateType">${tx("common.cancel")}</button><button class="primary" data-action="confirmCreateType">${tx("createType.create")}</button></div></div></div>`;
   }
-
 
   function chatGPTWelcome() {
     if (!state?.assets?.chatGPT?.needsWelcome) return "";
@@ -1591,14 +1163,14 @@
     if (activeTagPanel?.kind === "create" && tagForm?.dataset.treeId === activeTagPanel.treeID) {
       activeTagPanel.draft = collect("tag-popover-form");
     }
-    pendingLists = []; deferredChoices = new Map();
-    const markup = shell(workspace()) + createTypeModal() + dictionaryOnboarding() + chatGPTWelcome();
+    deferredChoices = new Map();
+    const markup = shell(workspace()) + createTypeModal() + chatGPTWelcome();
     const settingsMarkup = nativeSettingsContent();
     // Nothing changed on the page: keep the DOM (and its scroll) as it is.
     if (markup === lastRenderedMarkup && settingsMarkup === settingsRoot.__markup && root.firstChild) {
       const searchFocus = captureSearch(), focused = captureLiveEditFocus();
       replacingControls = true;
-      mountChoices(); mountLists(); mountLargeGraphs();
+      mountChoices(); mountLargeGraphs();
       restoreLiveEdits(focused);
       replacingControls = false;
       restoreSearch(searchFocus);
@@ -1615,10 +1187,7 @@
     });
     const listSearchFocus = captureSearch();
     const focused = captureLiveEditFocus();
-    const creatorInput = activeControl()?.matches("[data-knowledge-creator]") ? activeControl() : null;
-    const creatorSelection = creatorInput ? { start: creatorInput.selectionStart, end: creatorInput.selectionEnd } : null;
-    const modelSearch = activeControl()?.matches("[data-model-search]") ? activeControl() : null;
-    const searchSelection = modelSearch ? { start: modelSearch.selectionStart, end: modelSearch.selectionEnd } : null;
+
     const active = activeControl();
     const pendingTagFocus = activeTagPanel?.kind === "create" && active?.closest?.("[data-tree-popover]") && active.matches("[data-field]")
       ? { field: active.dataset.field, start: active.selectionStart, end: active.selectionEnd, direction: active.selectionDirection } : null;
@@ -1633,7 +1202,7 @@
     root.innerHTML = markup;
     settingsRoot.innerHTML = settingsMarkup;
     settingsRoot.__markup = settingsMarkup;
-    mountChoices(); mountLists();
+    mountChoices();
     restoreLiveEdits(focused);
     if (pendingTagFocus) {
       const control = uiQuery(`[data-tree-popover] [data-field="${CSS.escape(pendingTagFocus.field)}"]`);
@@ -1644,21 +1213,7 @@
     lastRenderedMarkup = markup;
     bindTreeMapWheel();
     mountLargeGraphs();
-    uiQueryAll(".knowledge-card").forEach(updateKnowledgeSearchText);
-    if (knowledgeSuggestionsOpen) {
-      const creator = uiQuery("[data-knowledge-creator]");
-      if (creator) showKnowledgeSuggestions(creator);
-    }
-    if (creatorSelection) {
-      const creator = uiQuery("[data-knowledge-creator]");
-      creator?.focus({ preventScroll: true });
-      creator?.setSelectionRange(creatorSelection.start, creatorSelection.end);
-    }
-    filterResearchModels();
-    if (searchSelection) {
-      const search = uiQuery("[data-model-search]");
-      if (search) { search.focus({ preventScroll: true }); search.setSelectionRange(searchSelection.start, searchSelection.end); }
-    }
+
     syncDialogFocus(dialogControl);
     if (toolbarAction) uiQuery(`.vui-topbar-links [data-action="${toolbarAction}"]`)?.focus({ preventScroll: true });
     restoreSearch(listSearchFocus);
@@ -1673,10 +1228,7 @@
       for (const map of uiQueryAll("[data-tree-map]")) if ((graphModels.get(map.dataset.treeId)?.nodes.length || 0) > 200) paintLargeGraph(map);
       drawTreeConnections();
       placeTreePopovers();
-      placeResearchSetup();
-      placeDictionarySetup();
-      placeResearchModelMenu();
-      placeKnowledgeSuggestions();
+
     });
   }
 
@@ -1690,23 +1242,7 @@
 
   listen("click", (event) => {
     const button = event.target.closest("button[data-action]");
-    const modelPick = event.target.closest("button[data-model-pick]");
-    if (modelPick) {
-      closeResearchModelMenu();
-      const modelValue = uiQuery('[data-form-id="utility-research-form"] [data-field="llmModelIdentifier"]');
-      if (modelValue) { modelValue.value = modelPick.dataset.modelPick; queueLiveEdit(modelValue, true); }
-      render();
-      window.requestAnimationFrame(() => uiQuery("[data-model-selector]")?.focus({ preventScroll: true }));
-      return;
-    }
-    const pick = event.target.closest("button[data-knowledge-pick]");
-    if (pick) {
-      const creatorInput = uiQuery("input[data-knowledge-creator]");
-      knowledgeCreatorDraft = pick.dataset.knowledgePick;
-      if (creatorInput) creatorInput.value = knowledgeCreatorDraft;
-      closeKnowledgeSuggestions(true);
-      return;
-    }
+
     if (!button) {
       const map = event.target.closest("[data-tree-map]");
       if (map && !event.target.closest(".tree-map-node, [data-tree-popover]")) {
@@ -1721,14 +1257,7 @@
     if (button.disabled) return;
     flushLiveEdits();
     const action = button.dataset.action;
-    if (action === "saveDictionaryFirstChoice" || action === "declineDictionaryContribution") {
-      send("completeDictionaryOnboarding", { enabled: action === "saveDictionaryFirstChoice" && uiQuery("[data-contribution-first]")?.checked === true });
-      return;
-    }
-    if (action === "copyPersonalDictionary") {
-      const text = uiQuery("[data-personal-export]");
-      text?.focus(); text?.select(); document.execCommand("copy"); return;
-    }
+
     if (DELETE_KEYS[action] && !confirmDelete(DELETE_KEYS[action](button.dataset))) return;
     if (action === "setClassifierTypePaused") {
       send(action, { typeID: button.dataset.typeId, paused: button.dataset.paused === "true" });
@@ -1749,7 +1278,7 @@
     if (action === "workspace") {
       const nextWorkspace = button.dataset.workspace;
       if (!state || !workspaceNames.has(nextWorkspace) || state.workspace === nextWorkspace) return;
-      closeKnowledgeSuggestions();
+
       state.workspace = nextWorkspace;
       render();
       send("workspace", { workspace: nextWorkspace });
@@ -1822,23 +1351,16 @@
       return;
     }
 
-    if (action === "openDictionarySetup") { openDictionarySetup(); return; }
-    if (action === "openResearchSetup") { openResearchSetup(); return; }
     if (action === "openManual") { window.VaultManual?.open("user", "Classifier"); return; }
     if (action === "openUtilityPanel") {
-      closeKnowledgeSuggestions();
-      researchSetupRequested = false;
-      researchSetupFocusPending = false;
-      dictionarySetupFocusPending = false;
+
       window.VaultSettings.open();
       return;
     }
     if (action === "closeUtilityPanel") {
       window.VaultSettings.close();
       utilityPanel = null;
-      researchSetupRequested = false;
-      researchSetupFocusPending = false;
-      dictionarySetupFocusPending = false;
+
       render();
       return;
     }
@@ -1904,44 +1426,20 @@
       send(action, data);
       return;
     }
-    if (action === "addKnowledgeCreator") {
-      knowledgeCreatorDraft = "";
-      closeKnowledgeSuggestions();
-    }
+
     send(action, data);
   });
 
   function dismissClassifierDialog() {
-    if (closeResearchModelMenu(true)) return;
+
     pendingCreateType = null;
     utilityPanel = null;
-    researchSetupRequested = false;
-    researchSetupFocusPending = false;
-    dictionarySetupFocusPending = false;
+
     render();
   }
 
   listen("keydown", (event) => {
-    const menu = event.target.closest?.(".research-model-menu, [data-knowledge-suggestions]")
-      || (event.target.matches?.("[data-knowledge-creator]") ? uiQuery("[data-knowledge-suggestions]") : null);
-    if (menu && ["ArrowDown", "ArrowUp"].includes(event.key) && !event.isComposing) {
-      const options = [...menu.querySelectorAll("[data-model-pick], [data-knowledge-pick]")].filter((option) => !option.hidden);
-      if (options.length) {
-        const index = options.indexOf(activeControl());
-        const next = index < 0 ? (event.key === "ArrowDown" ? 0 : options.length - 1)
-          : (index + (event.key === "ArrowDown" ? 1 : -1) + options.length) % options.length;
-        event.preventDefault();
-        options[next].focus({ preventScroll: true });
-        options[next].scrollIntoView({ block: "nearest" });
-      }
-      return;
-    }
-    if (event.key === "Escape" && closeResearchModelMenu(true)) { event.preventDefault(); event.stopPropagation(); return; }
-    if (event.key === "Escape" && knowledgeSuggestionsOpen) {
-      event.preventDefault();
-      closeKnowledgeSuggestions(true);
-      return;
-    }
+
     if (event.key !== "Escape" || !pendingCreateType) return;
     event.preventDefault();
     dismissClassifierDialog();
@@ -1951,32 +1449,13 @@
     if (!event.target.isConnected) return;
     const key = event.target.matches?.("details[data-expand]") ? event.target.dataset.expand : null;
     if (key) event.target.open ? openExpands.add(key) : openExpands.delete(key);
-    if (event.target.matches?.(".research-model-picker") && !event.target.open) window.VaultUI.hideMenuLayer(event.target.querySelector(".research-model-menu"));
-    if (event.target.matches?.(".research-model-picker") && event.target.open) {
-      window.VaultUI.close();
-      placeResearchModelMenu();
-      // A snapshot restores the current focus; only a newly opened menu
-      // moves focus from its selector into search.
-      if (activeControl() === event.target.querySelector("summary")) {
-        event.target.querySelector("[data-model-search]")?.focus({ preventScroll: true });
-      }
-    }
+
   }, true);
 
   listen("change", (event) => {
-    if (event.target.matches('[data-form-id="utility-research-form"] [data-field="llmProviderProfileID"]')) {
-      queueLiveEdit(event.target, true);
-      render();
-      return;
-    }
+
     if (queueLiveEdit(event.target, true)) return;
-    const knowledgePlatform = event.target.closest("[data-knowledge-platform]");
-    if (knowledgePlatform) {
-      knowledgeAddPlatform = knowledgePlatform.value;
-      const creatorInput = uiQuery("input[data-knowledge-creator]");
-      if (creatorInput) showKnowledgeSuggestions(creatorInput);
-      return;
-    }
+
     // Preserve creation choices across page re-renders.
     const choice = event.target.closest("input[data-platform-choice]");
     if (choice) {
@@ -2374,24 +1853,6 @@
   listen("mouseup", finishTagDrag);
 
   window.VaultClassifier = {
-    receiveKnowledgeRow(row) {
-      if (!row?.id) return;
-      for (const [key, edit] of liveEdits) if (edit.action === "editKnowledgeEntry" && edit.identity.id === row.id && edit.sent && liveEditMatches(edit, row)) { clearTimeout(edit.timer); liveEdits.delete(key); }
-    },
-    receiveList(packet) {
-      const resolve = listRequests.get(packet.requestID);
-      if (resolve) {
-        listRequests.delete(packet.requestID);
-        for (const row of packet.items || []) {
-          knowledgeRows.set(row.id, row);
-          for (const [key, edit] of liveEdits) {
-            if (edit.action === "editKnowledgeEntry" && edit.identity.id === row.id && edit.sent && !state.issue && liveEditMatches(edit, row)) { clearTimeout(edit.timer); liveEdits.delete(key); }
-          }
-        }
-        while (knowledgeRows.size > 256) knowledgeRows.delete(knowledgeRows.keys().next().value);
-        resolve(packet);
-      }
-    },
     receive(payload) {
       const revision = Number(payload?.presentationRevision);
       if (Number.isSafeInteger(revision) && revision > 0) {
@@ -2426,8 +1887,7 @@
   window.addEventListener("vault-settings-changed", event => {
     utilityPanel = event.detail.open ? "settings" : null;
     if (!event.detail.open) {
-      closeResearchModelMenu();
-      researchSetupRequested = false; researchSetupFocusPending = false; dictionarySetupFocusPending = false;
+
       flushLiveEdits();
     }
     render();

@@ -36,7 +36,6 @@ public struct ScoredTag: Codable, Equatable, Sendable {
 /// preference learning; `model` and `modelKnowledge` are the LLM's own calls.
 public enum VideoClassificationSource: String, Codable, Sendable, CaseIterable {
     case model            // local LLM over the video's own evidence only
-    case modelKnowledge   // local LLM + injected knowledge-map context
     case humanCorrected   // user confirmed/overrode
 }
 
@@ -57,8 +56,6 @@ public struct VideoClassification: Codable, Equatable, Sendable, Identifiable {
     /// Per-tag scored result (1–5 confidence).
     public var tags: [ScoredTag]
     /// Knowledge-map keys injected into the prompt that produced this result.
-    public var knowledgeRefs: [String]
-    public var knowledgeFingerprint: String?
     public var inputFingerprint: String?
     public var source: VideoClassificationSource
     /// Model id + prompt/schema version, so stale results can be recomputed.
@@ -77,8 +74,6 @@ public struct VideoClassification: Codable, Equatable, Sendable, Identifiable {
         treeID: String,
         treeRevision: Int,
         tags: [ScoredTag],
-        knowledgeRefs: [String] = [],
-        knowledgeFingerprint: String? = nil,
         inputFingerprint: String? = nil,
         source: VideoClassificationSource,
         modelVersion: String,
@@ -94,8 +89,6 @@ public struct VideoClassification: Codable, Equatable, Sendable, Identifiable {
         self.treeID = treeID
         self.treeRevision = treeRevision
         self.tags = Array(tags.prefix(Self.maximumTags))
-        self.knowledgeRefs = knowledgeRefs
-        self.knowledgeFingerprint = knowledgeFingerprint
         self.inputFingerprint = inputFingerprint
         self.source = source
         self.modelVersion = modelVersion
@@ -109,7 +102,7 @@ public struct VideoClassification: Codable, Equatable, Sendable, Identifiable {
 
     private enum CodingKeys: String, CodingKey {
         case id, classifierTypeID, platformID, entryID, creatorID, treeID,
-             treeRevision, tags, knowledgeRefs, knowledgeFingerprint, inputFingerprint, source,
+             treeRevision, tags, inputFingerprint, source,
              modelVersion, tagBounds, createdAtMilliseconds, updatedAtMilliseconds
     }
 
@@ -124,10 +117,8 @@ public struct VideoClassification: Codable, Equatable, Sendable, Identifiable {
         treeRevision = try container.decode(Int.self, forKey: .treeRevision)
         tags = Array((try container.decodeIfPresent([ScoredTag].self, forKey: .tags) ?? []).prefix(Self.maximumTags))
         // (Legacy `unknownTerms` key is intentionally ignored on decode — dropped in Phase 1.)
-        knowledgeRefs = try container.decodeIfPresent([String].self, forKey: .knowledgeRefs) ?? []
-        knowledgeFingerprint = try container.decodeIfPresent(String.self, forKey: .knowledgeFingerprint)
         inputFingerprint = try container.decodeIfPresent(String.self, forKey: .inputFingerprint)
-        source = try container.decodeIfPresent(VideoClassificationSource.self, forKey: .source) ?? .model
+        source = (try? container.decodeIfPresent(VideoClassificationSource.self, forKey: .source)) ?? .model
         modelVersion = try container.decodeIfPresent(String.self, forKey: .modelVersion) ?? ""
         tagBounds = try? container.decodeIfPresent(TagBounds.self, forKey: .tagBounds)
         createdAtMilliseconds = try container.decode(Int64.self, forKey: .createdAtMilliseconds)
@@ -135,169 +126,7 @@ public struct VideoClassification: Codable, Equatable, Sendable, Identifiable {
     }
 }
 
-// MARK: - Knowledge map (RAG store for grounded research results)
 
-public enum KnowledgeEntryKind: String, Codable, Sendable, CaseIterable, Hashable {
-    case term      // a special noun / entity, e.g. "HermitCraft"
-    case creator   // a creator's grounded identity
-}
-
-/// One grounded fact learned by research, injected at classify time. Knowledge —
-/// not tags — is what research produces (the model still assigns tags). Keyed so
-/// a term/creator is researched once and reused: `term:<lowercased>` or
-/// `creator:<creatorID>`.
-public struct KnowledgeEntry: Codable, Equatable, Sendable, Identifiable {
-    public static let maximumMeaningLength = 2_000
-    public static let maximumContextTagHints = 16
-
-    public var id: String
-    public var kind: KnowledgeEntryKind
-    /// The raw subject (term text, or creator id/display) for prompting.
-    public var subject: String
-    /// The grounded description injected into the prompt.
-    public var meaning: String
-    /// Non-authoritative tag hints (the model may ignore them).
-    public var contextTagHints: [String]
-    /// Written (or last edited) by the user, not looked up.
-    public var writtenByUser: Bool
-    public var createdAtMilliseconds: Int64
-    public var updatedAtMilliseconds: Int64
-
-    public init(
-        kind: KnowledgeEntryKind,
-        subject: String,
-        meaning: String,
-        contextTagHints: [String] = [],
-        writtenByUser: Bool = false,
-        createdAtMilliseconds: Int64 = WorkspaceCatalog.now(),
-        updatedAtMilliseconds: Int64 = WorkspaceCatalog.now()
-    ) {
-        self.id = Self.key(kind: kind, subject: subject)
-        self.kind = kind
-        self.subject = subject
-        self.meaning = String(meaning.prefix(Self.maximumMeaningLength))
-        self.contextTagHints = Array(contextTagHints.prefix(Self.maximumContextTagHints))
-        self.writtenByUser = writtenByUser
-        self.createdAtMilliseconds = createdAtMilliseconds
-        self.updatedAtMilliseconds = updatedAtMilliseconds
-    }
-
-    /// Stable key for dedup + lookup. Terms normalize to lowercase; creators use
-    /// their id verbatim (already platform-scoped).
-    public static func key(kind: KnowledgeEntryKind, subject: String) -> String {
-        switch kind {
-        case .term:
-            return "term:\(subject.lowercased().trimmingCharacters(in: .whitespacesAndNewlines))"
-        case .creator:
-            return "creator:\(subject.trimmingCharacters(in: .whitespacesAndNewlines))"
-        }
-    }
-
-    /// Minimum specificity for a TERM subject to be matched against titles (and
-    /// to be stored at all). Research term extraction can emit junk — single
-    /// letters ("e", "T"), abbreviations ("CE", "ml"), bare numbers, corrupt
-    /// text — and a raw substring match on those hits essentially every title,
-    /// injecting the whole "meaning" into every prompt (measured live:
-    /// ~570 tokens per video, i.e. the entire tagging slowdown). CJK has no word
-    /// boundaries, so two characters suffice there; other scripts need three
-    /// characters including a real word of three or more letters.
-    public static func isSpecificTermSubject(_ subject: String) -> Bool {
-        let trimmed = subject.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty,
-              !trimmed.unicodeScalars.contains(where: { $0.value == 0xFFFD }) else { return false }
-        if containsCJK(trimmed) {
-            return trimmed.unicodeScalars.filter(isCJK).count >= 2
-        }
-        guard trimmed.count >= 3 else { return false }
-        var run = 0
-        for scalar in trimmed.unicodeScalars {
-            if CharacterSet.letters.contains(scalar) {
-                run += 1
-                if run >= 3 { return true }
-            } else {
-                run = 0
-            }
-        }
-        return false
-    }
-
-    private static func isCJK(_ scalar: Unicode.Scalar) -> Bool {
-        switch scalar.value {
-        case 0x3040...0x30FF, 0x3400...0x4DBF, 0x4E00...0x9FFF, 0xF900...0xFAFF, 0xAC00...0xD7AF: return true
-        default: return false
-        }
-    }
-
-    private static func containsCJK(_ text: String) -> Bool {
-        text.unicodeScalars.contains(where: isCJK)
-    }
-
-    /// A term entry matches a title when its subject appears in the title — as a
-    /// whole word for scripts with word boundaries, as a substring for CJK —
-    /// and only for specific subjects (see `isSpecificTermSubject`). Creator
-    /// entries are matched by key, not by title.
-    public func matches(title: String) -> Bool {
-        guard kind == .term, Self.isSpecificTermSubject(subject) else { return false }
-        let needle = subject.trimmingCharacters(in: .whitespacesAndNewlines)
-        if Self.containsCJK(needle) {
-            return title.lowercased().contains(needle.lowercased())
-        }
-        // Whole-word match without a regex: this runs for every term entry on every
-        // video, and compiling an NSRegularExpression per entry cost ~0.3 s per
-        // video (measured) — as much as the model's own prefill.
-        let haystack = title.lowercased()
-        let lowered = needle.lowercased()
-        func isWordCharacter(_ character: Character) -> Bool { character.isLetter || character.isNumber }
-        var searchStart = haystack.startIndex
-        while let found = haystack.range(of: lowered, range: searchStart..<haystack.endIndex) {
-            let boundedBefore = found.lowerBound == haystack.startIndex
-                || !isWordCharacter(haystack[haystack.index(before: found.lowerBound)])
-            let boundedAfter = found.upperBound == haystack.endIndex || !isWordCharacter(haystack[found.upperBound])
-            if boundedBefore && boundedAfter { return true }
-            searchStart = haystack.index(after: found.lowerBound)
-        }
-        return false
-    }
-
-    /// A TTL of zero means knowledge never expires. Expired entries stay in
-    /// the durable map but are excluded from prompts and research deduping.
-    ///
-    /// Creator descriptions are keyed forever: a creator's grounded identity is
-    /// stable, so it is never expired by TTL regardless of the setting.
-    public func isActive(
-        ttlDays: Int,
-        nowMilliseconds: Int64 = WorkspaceCatalog.now()
-    ) -> Bool {
-        guard kind == .term else { return true }
-        let clampedDays = min(ResearchSettings.maximumKnowledgeTTLDays, max(0, ttlDays))
-        guard clampedDays > 0 else { return true }
-        let lifetime = Int64(clampedDays) * 24 * 60 * 60 * 1_000
-        return updatedAtMilliseconds >= nowMilliseconds - lifetime
-    }
-
-    private enum CodingKeys: String, CodingKey {
-        case id, kind, subject, meaning, contextTagHints, writtenByUser,
-             createdAtMilliseconds, updatedAtMilliseconds
-    }
-
-    public init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        id = try container.decode(String.self, forKey: .id)
-        kind = try container.decode(KnowledgeEntryKind.self, forKey: .kind)
-        subject = try container.decode(String.self, forKey: .subject)
-        meaning = String((try container.decodeIfPresent(String.self, forKey: .meaning) ?? "").prefix(Self.maximumMeaningLength))
-        contextTagHints = Array((try container.decodeIfPresent([String].self, forKey: .contextTagHints) ?? []).prefix(Self.maximumContextTagHints))
-        writtenByUser = try container.decodeIfPresent(Bool.self, forKey: .writtenByUser) ?? false
-        createdAtMilliseconds = try container.decode(Int64.self, forKey: .createdAtMilliseconds)
-        updatedAtMilliseconds = try container.decode(Int64.self, forKey: .updatedAtMilliseconds)
-    }
-}
-
-// MARK: - Correction example (few-shot preference signal)
-
-/// A user correction: the ground-truth tags for a specific video. These feed the
-/// distilled house-rules (in the cached prefix) and, if needed later, few-shot
-/// retrieval. They are the only authoritative preference signal.
 public struct CorrectionExample: Codable, Equatable, Sendable, Identifiable {
     public static let maximumTagIDs = 32
     public static let maximumNoteLength = 500
@@ -470,66 +299,9 @@ public struct CreatorTagHistogram: Codable, Equatable, Sendable, Identifiable {
     }
 }
 
-// MARK: - Author research accumulator (RESEARCH-REDESIGN §8)
-
-/// A creator's research SCORE (per classifier type): how urgently they need a
-/// description. It rises when one of their videos is hard to classify, halves
-/// every `AuthorResearchThreshold.halfLifeDays` while nothing happens, and fires
-/// research when it reaches the threshold. One number and one date per creator.
-public struct CreatorResearchAccumulator: Codable, Equatable, Sendable, Identifiable {
-    /// `classifierTypeID\u{1F}creatorID`.
-    public var id: String
-    public var score: Double
-    public var updatedAtMilliseconds: Int64
-
-    public init(id: String, score: Double = 0, updatedAtMilliseconds: Int64 = 0) {
-        self.id = id
-        self.score = max(0, score.isFinite ? score : 0)
-        self.updatedAtMilliseconds = updatedAtMilliseconds
-    }
-
-    public static func key(classifierTypeID: String, creatorID: String) -> String {
-        "\(classifierTypeID)\u{1F}\(creatorID)"
-    }
-
-    private enum CodingKeys: String, CodingKey { case id, score, updatedAtMilliseconds }
-
-    /// Rows written by the retired sample-list rule carry `samples` and no score:
-    /// they decode as an empty score and are dropped at the next update.
-    public init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        self.init(
-            id: try container.decode(String.self, forKey: .id),
-            score: try container.decodeIfPresent(Double.self, forKey: .score) ?? 0,
-            updatedAtMilliseconds: try container.decodeIfPresent(Int64.self, forKey: .updatedAtMilliseconds) ?? 0
-        )
-    }
-
-    /// The score after decaying from its last update to `nowMilliseconds`.
-    public func decayedScore(halfLifeDays: Double, nowMilliseconds: Int64) -> Double {
-        let elapsedDays = Double(max(0, nowMilliseconds - updatedAtMilliseconds)) / 86_400_000
-        return score * pow(0.5, elapsedDays / max(0.01, halfLifeDays))
-    }
-
-    /// How much one classified video adds: a video that could not be tagged
-    /// (urgency 5) adds 1, a shaky tag a fraction, a sure tag nothing. A sure tag
-    /// never SUBTRACTS — the lookup is paid once per creator and helps exactly the
-    /// videos that got no tag, so a prolific creator with some untagged videos is
-    /// still worth it; staleness is handled by the decay alone.
-    public static func step(forUrgency urgency: Int) -> Double {
-        max(0, Double(min(5, max(1, urgency)) - 2) / 3)
-    }
-}
-
-// MARK: - Catalog integration (additive)
-
 public extension WorkspaceCatalog {
     static let maximumRetainedVideoClassifications = 5_000
-    static let maximumKnowledgeEntries = 20_000
-    static let maximumResearchAttempts = 20_000
     static let maximumCorrectionExamples = 5_000
-    static let maximumMatchedKnowledgeEntries = 8
-    static let maximumCreatorAccumulators = 20_000
     static let minimumRetainedCreatorScore = 0.05
     static let creatorScoreTolerance = 0.05
 
@@ -604,122 +376,6 @@ public extension WorkspaceCatalog {
         creatorHistograms = Array(byKey.values)
     }
 
-    /// Term knowledge relevant to one video: term entries whose subject appears
-    /// in the title. This is the classify-time RAG lookup for the primary
-    /// (content-based) decode — creator descriptions are looked up separately
-    /// via `creatorKnowledgeEntry(for:)` and supplied on the creator line.
-    func matchedKnowledge(
-        title: String,
-        creatorID: String,
-        limit requestedLimit: Int = Self.maximumMatchedKnowledgeEntries,
-        ttlDays: Int = 0,
-        nowMilliseconds: Int64 = WorkspaceCatalog.now()
-    ) -> [KnowledgeEntry] {
-        let limit = min(ResearchSettings.maximumKnowledgePerVideo, max(1, requestedLimit))
-        let terms = knowledgeEntries
-            .filter {
-                $0.kind == .term
-                    && $0.isActive(ttlDays: ttlDays, nowMilliseconds: nowMilliseconds)
-                    && $0.matches(title: title)
-            }
-            .sorted { lhs, rhs in
-                if lhs.subject.count != rhs.subject.count { return lhs.subject.count > rhs.subject.count }
-                if lhs.updatedAtMilliseconds != rhs.updatedAtMilliseconds {
-                    return lhs.updatedAtMilliseconds > rhs.updatedAtMilliseconds
-                }
-                return lhs.id < rhs.id
-            }
-        return Array(terms.prefix(limit))
-    }
-
-    /// The stored, permanent description for a creator (or nil if not keyed yet).
-    func creatorKnowledgeEntry(for creatorID: String) -> KnowledgeEntry? {
-        let creatorKey = KnowledgeEntry.key(kind: .creator, subject: creatorID)
-        return creatorKnowledge.first(where: { $0.id == creatorKey })
-    }
-
-    /// Insert or update a knowledge entry (dedup by key), routed to the term or
-    /// creator map by kind. Bounded by trimming the oldest when over the cap.
-    mutating func upsertKnowledgeEntry(_ entry: KnowledgeEntry) {
-        // Junk term subjects (see isSpecificTermSubject) are never stored: they
-        // could never match legitimately and would only bloat the catalog.
-        if entry.kind == .term, !KnowledgeEntry.isSpecificTermSubject(entry.subject) { return }
-        switch entry.kind {
-        case .creator:
-            if let index = creatorKnowledge.firstIndex(where: { $0.id == entry.id }) {
-                creatorKnowledge[index] = entry
-            } else {
-                creatorKnowledge.append(entry)
-                if creatorKnowledge.count > Self.maximumKnowledgeEntries {
-                    creatorKnowledge.sort { $0.updatedAtMilliseconds > $1.updatedAtMilliseconds }
-                    creatorKnowledge = Array(creatorKnowledge.prefix(Self.maximumKnowledgeEntries))
-                }
-            }
-        case .term:
-            if let index = knowledgeEntries.firstIndex(where: { $0.id == entry.id }) {
-                knowledgeEntries[index] = entry
-            } else {
-                knowledgeEntries.append(entry)
-                if knowledgeEntries.count > Self.maximumKnowledgeEntries {
-                    knowledgeEntries.sort { $0.updatedAtMilliseconds > $1.updatedAtMilliseconds }
-                    knowledgeEntries = Array(knowledgeEntries.prefix(Self.maximumKnowledgeEntries))
-                }
-            }
-        }
-    }
-
-    mutating func upsertResearchAttempt(_ attempt: ResearchAttemptRecord) {
-        researchAttempts.removeAll {
-            $0.classifierTypeID == attempt.classifierTypeID && $0.subjectKey == attempt.subjectKey
-        }
-        researchAttempts.insert(attempt, at: 0)
-        if researchAttempts.count > Self.maximumResearchAttempts {
-            researchAttempts = Array(researchAttempts.prefix(Self.maximumResearchAttempts))
-        }
-    }
-
-    mutating func removeResearchAttempt(subjectKey: String, classifierTypeID: String? = nil) {
-        researchAttempts.removeAll {
-            $0.classifierTypeID == classifierTypeID && $0.subjectKey == subjectKey
-        }
-    }
-
-    /// Adds one classified video to its creator's research score (decayed to now)
-    /// and, when the score reaches `threshold.score`, RESETS it and returns the
-    /// urgency to research the creator with. nil = not yet. A creator who already
-    /// has a description is never scored: the lookup happens once.
-    @discardableResult
-    mutating func recordCreatorResearchUrgency(
-        classifierTypeID: String,
-        creatorID: String,
-        urgency: Int,
-        threshold: AuthorResearchThreshold,
-        nowMilliseconds: Int64
-    ) -> Int? {
-        let key = CreatorResearchAccumulator.key(classifierTypeID: classifierTypeID, creatorID: creatorID)
-        let existing = creatorResearchAccumulators.first(where: { $0.id == key })
-        creatorResearchAccumulators.removeAll { $0.id == key }
-        guard creatorKnowledgeEntry(for: creatorID) == nil else { return nil }
-
-        let decayed = existing?.decayedScore(halfLifeDays: threshold.halfLifeDays, nowMilliseconds: nowMilliseconds) ?? 0
-        let score = decayed + CreatorResearchAccumulator.step(forUrgency: urgency)
-        // The score never stops fading, so N whole steps taken minutes apart sum to a
-        // hair under N. The tolerance makes "three untaggable videos in one sitting"
-        // (within ~8 hours at a 14-day half-life) reach a threshold of 3, as intended.
-        if score >= threshold.score - Self.creatorScoreTolerance {
-            return min(5, max(3, Int(score.rounded())))   // reset: nothing is stored back
-        }
-        // Keep only scores that still matter, newest activity first, under the bound.
-        if score >= Self.minimumRetainedCreatorScore {
-            creatorResearchAccumulators.insert(
-                .init(id: key, score: score, updatedAtMilliseconds: nowMilliseconds), at: 0)
-            if creatorResearchAccumulators.count > Self.maximumCreatorAccumulators {
-                creatorResearchAccumulators = Array(creatorResearchAccumulators.prefix(Self.maximumCreatorAccumulators))
-            }
-        }
-        return nil
-    }
-
     /// Stores one authoritative correction per classifier type/platform/video.
     /// Replacing an existing identity retains its stable id, while new examples
     /// are kept newest-first under the catalog's persisted bound.
@@ -751,16 +407,10 @@ public extension WorkspaceCatalog {
         guard videoClassifications.count <= Self.maximumRetainedVideoClassifications else {
             throw WorkspaceCatalogError.invalidCollectedEntry("videoClassifications")
         }
-        guard knowledgeEntries.count <= Self.maximumKnowledgeEntries,
-              creatorKnowledge.count <= Self.maximumKnowledgeEntries,
-              researchAttempts.count <= Self.maximumResearchAttempts,
-              correctionExamples.count <= Self.maximumCorrectionExamples else {
+        guard correctionExamples.count <= Self.maximumCorrectionExamples else {
             throw WorkspaceCatalogError.invalidCollectedEntry("localLLMStores")
         }
         try llmUniqueIDs(videoClassifications.map(\.id))
-        try llmUniqueIDs(knowledgeEntries.map(\.id))
-        try llmUniqueIDs(creatorKnowledge.map(\.id))
-        try llmUniqueIDs(researchAttempts.map(\.id))
         try llmUniqueIDs(correctionExamples.map(\.id))
         try llmUniqueIDs(creatorHistograms.map(\.id))
         for classification in videoClassifications {

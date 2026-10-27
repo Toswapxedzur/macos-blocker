@@ -55,14 +55,11 @@ final class VideoClassificationPipelineTests: XCTestCase {
     }
 
     func testDynamicSuffixFeedsCreatorStatsAsDataWithoutFraming() {
-        let knowledge = [KnowledgeEntry(kind: .term, subject: "HermitCraft", meaning: "A Minecraft SMP.")]
         let suffix = ClassificationPromptAssembler.dynamicSuffix(
             title: "HermitCraft finale", summary: nil, text: nil,
             creatorPrior: [CreatorPriorTag(tagName: "Games", count: 17, share: 17.0 / 20.0, averageConfidence: 4.2, confidenceStdev: 0.6)],
-            creatorVideoCount: 20,
-            knowledge: knowledge
+            creatorVideoCount: 20
         )
-        XCTAssertTrue(suffix.contains("HermitCraft: A Minecraft SMP."))
         // Owner spec: total classified videos + a frequency per tag — nothing else
         // (no percentages, no confidence statistics), on one compact line; no framing.
         XCTAssertTrue(suffix.contains("Creator (20 videos): Games 17"))
@@ -105,24 +102,6 @@ final class VideoClassificationPipelineTests: XCTestCase {
         XCTAssertEqual(result.modelVersion, "scripted/v9+pX")
     }
 
-    func testPipelineInjectsKnowledgeAndMarksSource() async throws {
-        let recorder = RequestRecorder()
-        let llm = ScriptedClassificationEngine(
-            modelVersion: "s/1",
-            result: LLMClassificationResult(tags: [LLMTagScore(name: "Games", confidence: 4)]),
-            recorder: recorder
-        )
-        var catalog = WorkspaceCatalog()
-        catalog.upsertKnowledgeEntry(KnowledgeEntry(kind: .term, subject: "HermitCraft", meaning: "A Minecraft SMP."))
-        let pipeline = VideoClassificationPipeline(llm: llm)
-        let result = try await pipeline.classify(
-            title: "HermitCraft season 9", entryID: "v1", creatorID: "c1", platformID: "youtube",
-            classifierType: makeType(), tree: makeTree(), catalog: catalog
-        )
-        XCTAssertEqual(result.source, .modelKnowledge)
-        XCTAssertEqual(result.knowledgeRefs, ["term:hermitcraft"])
-        XCTAssertTrue(recorder.last?.dynamicSuffix.contains("A Minecraft SMP.") ?? false)
-    }
 
     func testPipelineFeedsDerivedCreatorPriorIntoPrompt() async throws {
         let recorder = RequestRecorder()
@@ -167,80 +146,9 @@ final class VideoClassificationPipelineTests: XCTestCase {
     /// A researched creator's one sentence rides on the creator line of the ONE
     /// pass (there is no second decode any more), and the classification records
     /// that the description was used.
-    func testCreatorSentenceIsReadInTheSinglePass() async throws {
-        var catalog = WorkspaceCatalog()
-        catalog.upsertKnowledgeEntry(KnowledgeEntry(kind: .creator, subject: "c1", meaning: "A Politics news channel."))
-        let recorder = RequestRecorder()
-        let pipeline = VideoClassificationPipeline(llm: ScriptedClassificationEngine(modelVersion: "s/1", result: .init(tags: []), recorder: recorder))
-        let result = try await pipeline.classify(
-            title: "weekly roundup", entryID: "v1", creatorID: "c1", platformID: "youtube",
-            classifierType: makeType(), tree: makeTree(), catalog: catalog
-        )
-        XCTAssertEqual(recorder.count, 1, "one pass per video")
-        XCTAssertTrue(recorder.last?.dynamicSuffix.contains("Creator makes: A Politics news channel.") == true)
-        XCTAssertEqual(result.source, .modelKnowledge)
-        XCTAssertEqual(result.knowledgeRefs, ["creator:c1"])
-    }
 
-    func testNoCreatorSentenceWhenCreatorNotKeyed() async throws {
-        let recorder = RequestRecorder()
-        let pipeline = VideoClassificationPipeline(llm: ScriptedClassificationEngine(modelVersion: "s/1", result: .init(tags: []), recorder: recorder))
-        let result = try await pipeline.classify(
-            title: "weekly roundup", entryID: "v1", creatorID: "c1", platformID: "youtube",
-            classifierType: makeType(), tree: makeTree(), catalog: WorkspaceCatalog()
-        )
-        XCTAssertEqual(recorder.count, 1)
-        XCTAssertFalse(recorder.last?.dynamicSuffix.contains("Creator makes:") == true)
-        XCTAssertTrue(result.tags.isEmpty)
-        XCTAssertEqual(result.source, .model)
-        XCTAssertTrue(result.knowledgeRefs.isEmpty)
-    }
 
-    func testGranularResearchDefaultsLeaveClassificationRequestByteIdentical() async throws {
-        let recorder = RequestRecorder()
-        let pipeline = VideoClassificationPipeline(llm: ScriptedClassificationEngine(
-            modelVersion: "s/1",
-            result: .init(tags: []),
-            recorder: recorder
-        ))
-        var catalog = WorkspaceCatalog()
-        catalog.upsertKnowledgeEntry(.init(
-            kind: .term,
-            subject: "HermitCraft",
-            meaning: "A Minecraft SMP."
-        ))
-
-        let inherited = try await pipeline.classify(
-            title: "HermitCraft finale", entryID: "v", creatorID: "c", platformID: "youtube",
-            classifierType: makeType(), tree: makeTree(), catalog: catalog
-        )
-        let inheritedRequest = try XCTUnwrap(recorder.last)
-        let defaults = ResearchSettings()
-        let explicit = try await pipeline.classify(
-            title: "HermitCraft finale", entryID: "v", creatorID: "c", platformID: "youtube",
-            classifierType: makeType(), tree: makeTree(), catalog: catalog,
-            knowledgeTTLDays: defaults.knowledgeTTLDays,
-            maxKnowledgePerVideo: defaults.maxKnowledgePerVideo
-        )
-
-        XCTAssertEqual(recorder.last, inheritedRequest)
-        XCTAssertEqual(explicit.knowledgeRefs, inherited.knowledgeRefs)
-        XCTAssertEqual(explicit.source, inherited.source)
-    }
 }
 
 extension VideoClassificationPipelineTests {
-    func testOfficialCreatorDescriptionEntersEveryInitialPrompt() async throws {
-        let recorder = RequestRecorder()
-        let engine = ScriptedClassificationEngine(modelVersion: "s/1", result: .init(tags: [LLMTagScore(name: "Games", confidence: 5)]), recorder: recorder)
-        let pipeline = VideoClassificationPipeline(llm: engine)
-        let creator = KnowledgeEntry(kind: .creator, subject: "youtube:channel:UCfixture", meaning: "Official creator context")
-        for id in ["first", "second"] {
-            let outputs = try await pipeline.classifyBatch([.init(title: "Unclear title", entryID: id, creatorID: "youtube:handle:@fixture")], platformID: "youtube", classifierType: makeType(), tree: makeTree(), catalog: WorkspaceCatalog(), dictionaryEvidence: [id:.init(creator:creator)])
-            XCTAssertTrue(recorder.last?.dynamicSuffix.contains("Official creator context") ?? false)
-            XCTAssertEqual(outputs.first?.source, .modelKnowledge)
-            XCTAssertNotNil(outputs.first?.knowledgeFingerprint)
-        }
-        XCTAssertEqual(recorder.count, 2, "one initial decode per input")
-    }
 }

@@ -25,7 +25,7 @@ public struct ClassifierWebActionDescriptor: Equatable, Sendable {
 public enum ClassifierWebActionCatalog {
     public static let actions: [ClassifierWebActionDescriptor] = [
         .init(name: "state", keys: [], summary: "Refresh local state from the store."),
-        .init(name: "workspace", keys: ["workspace"], summary: "Switch the page's workspace (browserBridge, knowledge). API keys and web research are in Settings."),
+        .init(name: "workspace", keys: ["workspace"], summary: "Switch the page's workspace (browserBridge). API connections are in Settings."),
         .init(name: "clearCollectedData", keys: ["platformID"], summary: "Permanently clear a platform's collected entries (the platform and its group stay)."),
         .init(name: "setCollectionEnabled", keys: ["platformID", "enabled"], summary: "Turn collection on/off for a platform."),
         .init(name: "setCollectionKeep", keys: ["platformID", "days"], summary: "Days to keep collected entries: for a platform (-1 = same as all), or without platformID for all platforms (0 = forever)."),
@@ -57,20 +57,7 @@ public enum ClassifierWebActionCatalog {
         .init(name: "saveChatGPTUsageLimit", keys: ["dailyRequestLimit"], summary: "Optional daily ChatGPT request cap on this device, UTC day; blank has no app cap. Failed dispatched requests count."),
         .init(name: "saveClassificationProvider", keys: ["typeID", "providerModel", "reasoningEffort"], summary: "Choose one group connection/model: chatgpt:<model> for subscription or api:<profileID>:<model> for a saved OpenAI, Gemini or Grok key. Fetch its model list first. Set reasoningEffort to default, low, medium or high when supported. Search is always enabled and model-directed; no fallback."),
         .init(name: "setClassifierTypePaused", keys: ["typeID", "paused"], summary: "Pause or resume automatic tagging for a classifier group."),
-        .init(name: "saveDictionarySettings", keys: ["creatorMode", "creatorCacheSize", "contributionEnabled", "choiceMade"], summary: "Creator dictionary mode cache/full; cache capacity 1–100000; creator-only contribution preference."),
-        .init(name: "completeDictionaryOnboarding", keys: ["enabled"], summary: "Save the first-launch creator contribution choice."),
-        .init(name: "checkDictionaryUpdates", keys: [], summary: "Check official term/creator dictionary versions without downloading packs."),
-        .init(name: "downloadDictionary", keys: ["kind"], summary: "Install/update term or creator dictionary; personal entries stay authoritative."),
-        .init(name: "importPersonalDictionary", keys: ["json"], summary: "Import schemaVersion 1 JSON definitions into personal knowledge (up to 8 MiB)."),
-        .init(name: "exportPersonalDictionary", keys: [], summary: "Export personal/user-researched definitions as JSON in settings.dictionaries.personalJSON."),
-        .init(name: "deleteKnowledgeEntry", keys: ["id"], summary: "Delete a knowledge entry (creator or term)."),
-        .init(name: "addKnowledgeTerm", keys: ["subject", "meaning"], summary: "Add a term (meaning may be empty to look it up through research)."),
-        .init(name: "addKnowledgeCreator", keys: ["platformID", "creator", "meaning"], summary: "Add knowledge about a creator (youtube, bilibili, reddit, twitter): creator = a link, @handle, r/name or a name already seen; blank meaning = look it up (needs research on)."),
-        .init(name: "editKnowledgeEntry", keys: ["id", "meaning"], summary: "Edit a knowledge entry's one sentence."),
-        .init(name: "retryFailedResearch", keys: [], summary: "Clear research cooldowns and re-queue failed subjects."),
-        .init(name: "saveResearchSettings", keys: ["enabled", "llmProviderProfileID", "llmModelIdentifier"], summary: "Research on/off and the provider profile + model that answers."),
         .init(name: "saveClassifierTypeTagging", keys: ["typeID", "strictness", "houseRules", "minimumTagsOverride", "maximumTagsOverride"], summary: "A group's independent strictness (1–5) and tagging instructions (blank = no additional instructions). Optional minimumTagsOverride (0–3) and maximumTagsOverride (1–3); blank/null follows that bound from strictness. Effective minimum must not exceed maximum."),
-        .init(name: "saveClassifierTypeResearch", keys: ["typeID", "researchMode"], summary: "A group's research switch: inherit, on, off."),
         .init(name: "setBackupOwnerCode", keys: ["ownerCode"], summary: "Set the backup owner code."),
         .init(name: "unlockBackup", keys: ["ownerCode"], summary: "Unlock backup settings with the owner code."),
         .init(name: "saveBackup", keys: ["enabled", "directory"], summary: "Save backup settings."),
@@ -97,7 +84,7 @@ public struct ClassifierMCPActionOutcome: Equatable, Sendable {
 @MainActor
 extension VaultClassifierViewModel {
     /// Top-level snapshot keys a process may ask for by name; `assets.<key>`
-    /// selects one asset collection (trees, datasets, knowledge, classifierTypes,
+    /// selects one asset collection (trees, datasets, classifierTypes,
     /// providerProfiles, providerProtocols, collectionPlatforms, bindings, …).
     static let mcpSnapshotSections = ["settings", "assets", "backup", "notices", "workspace", "issue"]
 

@@ -59,7 +59,7 @@ final class LocalTaggingRetirementTests: XCTestCase {
 
     func testPreviouslyDeletedLocalGroupOrphansAreDroppedWithoutRemovingOtherRows() throws {
         var catalog = WorkspaceCatalog.starter()
-        catalog.videoClassifications = ["llamacpp/Qwen2.5-3B-Instruct-Q4_K_M.gguf+p4", "other-provider/v1"].enumerated().map { index, version in
+        catalog.videoClassifications = ["llamacpp/Qwen2.5-3B-Instruct-Q4_K_M.gguf+p5", "other-provider/v1"].enumerated().map { index, version in
             .init(classifierTypeID: "orphan-\(index)", platformID: "youtube", entryID: "entry", creatorID: "creator",
                   treeID: "tree", treeRevision: 1, tags: [], source: .model, modelVersion: version)
         }

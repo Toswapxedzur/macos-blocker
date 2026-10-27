@@ -55,34 +55,5 @@ final class ClassifierTypeTaggingWebInputTests: XCTestCase {
 
     // MARK: - Per-type research switch
 
-    func testResearchModeParsesInheritOnOff() throws {
-        XCTAssertNil(try VaultClassifierViewModel.parseClassifierTypeResearchWebInput(["typeID": "type", "researchMode": "inherit"]).researchEnabled)
-        XCTAssertNil(try VaultClassifierViewModel.parseClassifierTypeResearchWebInput(["typeID": "type"]).researchEnabled)
-        XCTAssertEqual(try VaultClassifierViewModel.parseClassifierTypeResearchWebInput(["typeID": "type", "researchMode": "on"]).researchEnabled, true)
-        XCTAssertEqual(try VaultClassifierViewModel.parseClassifierTypeResearchWebInput(["typeID": "type", "researchMode": "off"]).researchEnabled, false)
-        XCTAssertThrowsError(try VaultClassifierViewModel.parseClassifierTypeResearchWebInput(["typeID": "type", "researchMode": "maybe"]))
-    }
 
-    func testDeletingProviderNullsResearchReferencesWithoutReenablingOrDisabling() {
-        let settings = ResearchSettings(
-            enabled: true,
-            llmProviderProfileID: "llm",
-            llmModelIdentifier: "model"
-        )
-
-        let withoutLLM = VaultClassifierViewModel.researchSettings(
-            settings,
-            removingProviderID: "llm"
-        )
-        XCTAssertTrue(withoutLLM.enabled)
-        XCTAssertNil(withoutLLM.llmProviderProfileID)
-        XCTAssertNil(withoutLLM.llmModelIdentifier)
-
-        let withoutOther = VaultClassifierViewModel.researchSettings(
-            settings,
-            removingProviderID: "some-other-profile"
-        )
-        XCTAssertEqual(withoutOther.llmProviderProfileID, "llm")
-        XCTAssertEqual(withoutOther.llmModelIdentifier, "model")
-    }
 }

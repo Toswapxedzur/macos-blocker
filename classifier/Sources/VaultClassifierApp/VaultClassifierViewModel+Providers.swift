@@ -372,20 +372,6 @@ extension VaultClassifierViewModel {
             catalog.providerRequestRecords.removeAll(where: { $0.profileID == profileID })
             successfulProviderTestProfileIDs.remove(profileID)
             try coordinator?.updateWorkspaceCatalog(catalog)
-            if let currentSettings = localState?.settings {
-                let research = Self.researchSettings(
-                    currentSettings.research,
-                    removingProviderID: profileID
-                )
-                guard research != currentSettings.research else {
-                    refreshLocalState()
-                    issue = nil
-                    return
-                }
-                var updated = currentSettings
-                updated.research = research
-                try coordinator?.updateSettings(updated)
-            }
             refreshLocalState()
             issue = nil
         } catch { issue = error.localizedDescription }

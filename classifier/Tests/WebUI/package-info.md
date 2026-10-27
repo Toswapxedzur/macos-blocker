@@ -92,3 +92,5 @@ simulates account/model snapshots and makes no provider requests.
 `api-connections.js` checks exactly four connection choices, masked key drafts/autosave, provider-specific model catalogs, API versus subscription billing, explicit group selection/search-off and navigation to the selected connection. It uses synthetic keys and model lists; no provider request is dispatched. Run with UI_TEST_EXPRESSION=runAPIConnectionTests() at wide and narrow widths.
 
 - `reasoning-group-preview.js`: actual desktop Classifier group preview and bounded model/effort/search-policy controls, using synthetic state.
+
+Dormancy cleanup: official-dictionaries/research-setup and Knowledge-only list suites are archived in prior source history. `autosave.html` covers current group/key editing; `dropdown-layout.js` covers supported reasoning choices, hit targets and absent dormant controls. Existing desktop previews verify four connection tabs and model/effort/search controls.

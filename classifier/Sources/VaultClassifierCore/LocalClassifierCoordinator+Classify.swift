@@ -36,12 +36,6 @@ extension LocalClassifierCoordinator {
                       classification.inputFingerprint == CloudClassificationCurrency.input(title: observed.title,
                         summary: observed.summary, text: observed.text, creatorID: observed.creatorID, creatorName: entry?.creatorName) else { return nil }
             }
-            if classification.source != .humanCorrected, let dictionaryProvider {
-                guard let observed else { return nil }
-                let evidence = dictionaryProvider.localEvidence(title: observed.title, creatorID: classification.creatorID)
-                let enriched = evidence.overlay(on: catalog, title: observed.title, creatorID: classification.creatorID)
-                guard classification.knowledgeFingerprint == DictionaryEvidence.fingerprint(title: observed.title, creatorID: classification.creatorID, catalog: enriched, settings: state.settings.research) else { return nil }
-            }
         }
         guard sawClassification else { return nil }
         return Self.videoTagsProjection(entryID: entryID, platformID: platformID, types: types, catalog: catalog)
@@ -54,7 +48,7 @@ extension LocalClassifierCoordinator {
         servingModelVersion: String
     ) -> Bool {
         if classification.source == .humanCorrected { return true }
-        return classification.modelVersion == type.cloudModelVersion + "+p4"
+        return classification.modelVersion == type.cloudModelVersion + "+p5"
             && classification.tagBounds == type.tagging.tagBounds
             && classification.treeID == type.treeID
     }
@@ -86,14 +80,12 @@ extension LocalClassifierCoordinator {
             (
                 state.workspaceCatalog,
                 classificationEngine,
-                state.settings.research,
                 state.settings.classificationEnabled,
-                self.dictionaryProvider,
                 cloudEngineResolver
             )
         }
         let (
-            catalog, defaultLLM, globalResearchSettings, classificationEnabled, dictionaryProvider, cloudResolver
+            catalog, defaultLLM, classificationEnabled, cloudResolver
         ) = snapshot
 
         guard let binding = catalog.bindings.first(where: { $0.id == platformID }), binding.collectionEnabled else {
@@ -102,17 +94,6 @@ extension LocalClassifierCoordinator {
         let types = classificationEnabled ? Self.orderedTypes(for: platformID, in: catalog).filter { !$0.isPaused } : []
         guard !types.isEmpty, !items.isEmpty else {
             return Dictionary(items.map { ($0.entryID, VideoTagsProjection(tags: [], predicted: false)) }, uniquingKeysWith: { first, _ in first })
-        }
-
-        var dictionaryEvidence: [String: DictionaryEvidence] = [:]
-        if let dictionaryProvider {
-            for item in items {
-                let attributes = Self.collectedEntry(platformID: platformID, entryID: item.entryID, catalog: catalog)?.attributes ?? [:]
-                dictionaryEvidence[item.entryID] = await dictionaryProvider.evidence(
-                    title: item.title,
-                    creatorID: catalog.creatorKnowledgeEntry(for: item.creatorID) == nil ? item.creatorID : "",
-                    subscriberCount: DictionaryKeys.subscriberCount(attributes))
-            }
         }
 
         var classifications: [VideoClassification] = []
@@ -166,10 +147,7 @@ extension LocalClassifierCoordinator {
                 tree: tree,
                 catalog: catalog,
                 houseRules: typeHouseRules,
-                extraTagMinimumOdds: strictness.extraTagMinimumOdds,
-                knowledgeTTLDays: globalResearchSettings.knowledgeTTLDays,
-                maxKnowledgePerVideo: globalResearchSettings.maxKnowledgePerVideo,
-                dictionaryEvidence: dictionaryEvidence
+                extraTagMinimumOdds: strictness.extraTagMinimumOdds
             )
             try shutdownSignal.checkCancellation()
             classifications.append(contentsOf: results)
@@ -219,20 +197,10 @@ extension LocalClassifierCoordinator {
     /// The research settings a type runs with, or nil when it must not research.
     /// A type may switch itself off, but it can never switch itself on while the
     /// app-wide consent (the master gate) is off.
-    public static func effectiveResearchSettings(
-        global: ResearchSettings,
-        for classifierType: ClassifierTypeAsset
-    ) -> ResearchSettings? {
-        guard global.enabled, classifierType.researchEnabled ?? true else { return nil }
-        return global
-    }
 
     /// The derived research urgency for a model classification (inverse of its
     /// mean confidence; a decline = 5): the per-video sample the creator
     /// accumulator averages.
-    public static func researchUrgency(for classification: VideoClassification) -> Int {
-        ResearchUrgency.fromTagConfidences(classification.tags.map(\.confidence))
-    }
 
     public static func orderedTypes(for platformID: String, in catalog: WorkspaceCatalog) -> [ClassifierTypeAsset] {
         catalog.classifierTypes

@@ -16,14 +16,8 @@ final class VaultClassifierViewModel: ObservableObject {
         var typeID: String
         var settings: TaggingSettings
     }
-    /// A type's research switch from the web form (nil = follow the global switch).
-    struct ClassifierTypeResearchWebInput: Equatable {
-        var typeID: String
-        var researchEnabled: Bool?
-    }
     enum Workspace: String, CaseIterable, Identifiable, Hashable {
         case browserBridge
-        case knowledge
 
         var id: String { rawValue }
     }
@@ -37,8 +31,6 @@ final class VaultClassifierViewModel: ObservableObject {
     @Published var hasBackupOwnerCode = false
     @Published var backupUnlocked = false
     @Published var backupNotice: String?
-    /// Knowledge → add term: confirms a queued lookup (the entry appears when it lands).
-    @Published var knowledgeNotice: String?
     /// Web actions normally receive a synchronous state refresh. Native sheets
     /// complete later, so they explicitly use this bounded local callback.
     var onWebStateChange: (() -> Void)?
@@ -55,16 +47,14 @@ final class VaultClassifierViewModel: ObservableObject {
         if let shutdownTask { await shutdownTask.value; return }
         isShuttingDown = true
         onWebStateChange = nil
-        onDictionaryContributionChoiceChanged = nil
         sharedHubClient?.onRequest = nil
         sharedHubClient?.onStateChange = nil
         sharedHubClient?.disconnect()
         coordinator?.beginShutdown()
         let task = Task { [self] in
-            let closeResearch = Task { await groundedResearchQueue?.shutdown() }
             let closeCloud = Task { await chatGPTClient?.shutdown(); await apiKeyClassificationClient?.shutdown() }
             await classificationCoalescer.shutdown()
-            await closeResearch.value; await closeCloud.value
+            await closeCloud.value
             coordinator?.setCloudEngineResolver(nil)
             inFlightVideoClassifications.removeAll(); latestCloudClassificationInputs.removeAll()
             LocalStateFile.flushAllPendingWrites()
@@ -74,20 +64,10 @@ final class VaultClassifierViewModel: ObservableObject {
     }
 
     var coordinator: LocalClassifierCoordinator?
-    var groundedResearchQueue: GroundedResearchQueue?
-    var dictionaryService: OfficialDictionaryService?
-    @Published var dictionaryStatus: [String: Any] = [:]
-    @Published var dictionaryBusy = false
-    @Published var dictionaryNotice: String?
-    @Published var personalDictionaryJSON: String?
-    var contributionPromptNative = false
-    var onDictionaryContributionChoiceChanged: (() -> Void)?
-    @Published var researchQueueStatus = GroundedResearchQueueStatus()
     var sharedHubClient: (any SharedHubConnection)?
     var collectionDiagnostics: CollectionDiagnosticsStore?
     var providerModelCatalogStore: ProviderModelCatalogStore?
     private(set) var sourceIconCache: SourceIconCache?
-    private(set) var creatorPictures: CreatorPictureStore?
     var testingProviderProfileIDs = Set<String>()
     var successfulProviderTestProfileIDs = Set<String>()
     /// Model identifiers and model-list capability signals come from explicit
@@ -106,7 +86,6 @@ final class VaultClassifierViewModel: ObservableObject {
                 directory: vaultDirectory.appendingPathComponent("source-icons", isDirectory: true),
                 retiredDirectory: vaultDirectory.appendingPathComponent("creator-avatars", isDirectory: true)
             )
-            self.creatorPictures = CreatorPictureStore(directory: vaultDirectory.appendingPathComponent("creator-pictures", isDirectory: true))
             collectionDiagnostics.record(event: "app-started", outcome: "ready")
             let coordinator = try LocalClassifierCoordinator(verifiedPackage: package, stateFile: LocalStateFile(url: vaultDirectory.appendingPathComponent("state.json")))
             self.coordinator = coordinator
@@ -135,9 +114,7 @@ final class VaultClassifierViewModel: ObservableObject {
                 // wasteful full re-render. Record the diagnostic only.
             }
             sharedHubClient.connect()
-            installGroundedResearch(coordinator: coordinator)
             installChatGPT(directory: vaultDirectory, coordinator: coordinator)
-            try installDictionaries(directory: vaultDirectory, coordinator: coordinator, automaticallyCheck: true)
         } catch {
             issue = error.localizedDescription
         }
@@ -156,7 +133,6 @@ final class VaultClassifierViewModel: ObservableObject {
             directory: vaultDirectory.appendingPathComponent("source-icons", isDirectory: true),
             retiredDirectory: vaultDirectory.appendingPathComponent("creator-avatars", isDirectory: true)
         )
-        self.creatorPictures = CreatorPictureStore(directory: vaultDirectory.appendingPathComponent("creator-pictures", isDirectory: true))
         let coordinator = try LocalClassifierCoordinator(verifiedPackage: package, stateFile: LocalStateFile(url: vaultDirectory.appendingPathComponent("state.json")))
         self.coordinator = coordinator
         self.localState = coordinator.snapshot()
@@ -164,7 +140,6 @@ final class VaultClassifierViewModel: ObservableObject {
         self.providerModelCatalogStore = providerModelCatalogStore
         self.providerModelCatalogs = providerModelCatalogStore.load(allowedProfileIDs: llmProviderProfileIDs())
         loadBackupConfiguration(from: coordinator.snapshot().backupConfiguration)
-        try installDictionaries(directory: vaultDirectory, coordinator: coordinator, automaticallyCheck: false)
     }
 
     // Dev-only instrumentation, routed into the unified VaultDevLog file.

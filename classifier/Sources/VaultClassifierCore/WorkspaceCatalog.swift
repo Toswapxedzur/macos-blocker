@@ -49,26 +49,14 @@ public struct WorkspaceCatalog: Codable, Equatable, Sendable {
     // labels, the grounded-research knowledge map, user corrections, and the derived
     // creator priors. Empty until the new pipeline populates them.
     public var videoClassifications: [VideoClassification]
-    /// Term knowledge only. Creator descriptions live in `creatorKnowledge`, a
-    /// deliberately separate, permanent map (creator identities are keyed
-    /// forever and are used as a low-confidence classification fallback rather
-    /// than injected into every decode).
-    public var knowledgeEntries: [KnowledgeEntry]
-    /// Creator descriptions, keyed by creator id — permanent and stored apart
-    /// from term knowledge.
-    public var creatorKnowledge: [KnowledgeEntry]
-    public var researchAttempts: [ResearchAttemptRecord]
     public var correctionExamples: [CorrectionExample]
     public var creatorHistograms: [CreatorTagHistogram]
-    /// Per-creator (per classifier type) accumulator of derived research urgency,
-    /// windowed — drives author research (RESEARCH-REDESIGN §8).
-    public var creatorResearchAccumulators: [CreatorResearchAccumulator]
     /// Days to keep collected entries on every platform that doesn't set its
     /// own Keep (`PlatformBinding.collectionKeepDays`); 0 = forever. Default
     /// 365 (owner 2026-09-30; it follows Activity's "Keep all history").
     public var collectionKeepDays: Int = 365
 
-    public init(trees: [TagTreeAsset] = [], datasets: [ClassificationDataset] = [], bindings: [PlatformBinding] = [], classifierTypes: [ClassifierTypeAsset] = [], tokenUsage: [TokenUsageRecord] = [], providerRequestRecords: [ProviderRequestRecord] = [], providerProfiles: [APIKeyProviderProfile] = [], videoClassifications: [VideoClassification] = [], knowledgeEntries: [KnowledgeEntry] = [], creatorKnowledge: [KnowledgeEntry] = [], researchAttempts: [ResearchAttemptRecord] = [], correctionExamples: [CorrectionExample] = [], creatorHistograms: [CreatorTagHistogram] = [], creatorResearchAccumulators: [CreatorResearchAccumulator] = []) {
+    public init(trees: [TagTreeAsset] = [], datasets: [ClassificationDataset] = [], bindings: [PlatformBinding] = [], classifierTypes: [ClassifierTypeAsset] = [], tokenUsage: [TokenUsageRecord] = [], providerRequestRecords: [ProviderRequestRecord] = [], providerProfiles: [APIKeyProviderProfile] = [], videoClassifications: [VideoClassification] = [], correctionExamples: [CorrectionExample] = [], creatorHistograms: [CreatorTagHistogram] = []) {
         self.trees = trees
         self.datasets = datasets
         self.bindings = bindings
@@ -77,12 +65,8 @@ public struct WorkspaceCatalog: Codable, Equatable, Sendable {
         self.providerRequestRecords = providerRequestRecords
         self.providerProfiles = providerProfiles
         self.videoClassifications = videoClassifications
-        self.knowledgeEntries = knowledgeEntries
-        self.creatorKnowledge = creatorKnowledge
-        self.researchAttempts = researchAttempts
         self.correctionExamples = correctionExamples
         self.creatorHistograms = creatorHistograms
-        self.creatorResearchAccumulators = creatorResearchAccumulators
     }
 
     public static func now() -> Int64 { Int64(Date().timeIntervalSince1970 * 1_000) }
@@ -285,8 +269,8 @@ public struct WorkspaceCatalog: Codable, Equatable, Sendable {
 
     private enum CodingKeys: String, CodingKey {
         case trees, datasets, bindings, classifierTypes, tokenUsage, providerRequestRecords, providerProfiles,
-             videoClassifications, knowledgeEntries, creatorKnowledge, researchAttempts, correctionExamples, creatorHistograms,
-             creatorResearchAccumulators, collectionKeepDays
+             videoClassifications, correctionExamples, creatorHistograms,
+             collectionKeepDays
     }
 
 
@@ -306,24 +290,8 @@ public struct WorkspaceCatalog: Codable, Equatable, Sendable {
         let retiredProviderIDs = Set(importedProviders.compactMap(\.retiredID))
         providerRequestRecords.removeAll { retiredProviderIDs.contains($0.profileID) }
         videoClassifications = try container.decodeIfPresent([VideoClassification].self, forKey: .videoClassifications) ?? []
-        // Migration: older states stored terms and creators together in
-        // `knowledgeEntries`. Keep terms there and move any creator entries into
-        // the dedicated `creatorKnowledge` map. New states already write both.
-        let decodedKnowledge = try container.decodeIfPresent([KnowledgeEntry].self, forKey: .knowledgeEntries) ?? []
-        let decodedCreatorKnowledge = try container.decodeIfPresent([KnowledgeEntry].self, forKey: .creatorKnowledge) ?? []
-        knowledgeEntries = decodedKnowledge.filter { $0.kind == .term }
-        var creators = decodedCreatorKnowledge.filter { $0.kind == .creator }
-        var creatorKeys = Set(creators.map(\.id))
-        for entry in decodedKnowledge where entry.kind == .creator && creatorKeys.insert(entry.id).inserted {
-            creators.append(entry)
-        }
-        creatorKnowledge = creators
-        researchAttempts = try container.decodeIfPresent([ResearchAttemptRecord].self, forKey: .researchAttempts) ?? []
         correctionExamples = try container.decodeIfPresent([CorrectionExample].self, forKey: .correctionExamples) ?? []
         creatorHistograms = try container.decodeIfPresent([CreatorTagHistogram].self, forKey: .creatorHistograms) ?? []
-        // Rows of the retired sample-list rule decode with an empty score: drop them.
-        creatorResearchAccumulators = (try container.decodeIfPresent([CreatorResearchAccumulator].self, forKey: .creatorResearchAccumulators) ?? [])
-            .filter { $0.score > 0 }
         collectionKeepDays = max(0, try container.decodeIfPresent(Int.self, forKey: .collectionKeepDays) ?? 365)
         // One-way retirement: never convert a local group into a cloud group
         // or start sending its data to a provider without a new selection.
@@ -338,8 +306,6 @@ public struct WorkspaceCatalog: Codable, Equatable, Sendable {
         videoClassifications.removeAll { retiredDataIDs.contains($0.classifierTypeID) }
         correctionExamples.removeAll { retiredDataIDs.contains($0.classifierTypeID) }
         creatorHistograms.removeAll { retiredDataIDs.contains($0.classifierTypeID) }
-        creatorResearchAccumulators.removeAll { retiredDataIDs.contains($0.id.components(separatedBy: "\u{1F}").first ?? "") }
-        researchAttempts.removeAll { retiredDataIDs.contains($0.classifierTypeID ?? "") }
         let retainedTrees = Set(bindings.map(\.treeID) + classifierTypes.map(\.treeID))
         trees.removeAll { retiredTrees.contains($0.id) && !retainedTrees.contains($0.id) }
         for i in bindings.indices where retiredIDs.contains(bindings[i].activeClassifierTypeID ?? "") {

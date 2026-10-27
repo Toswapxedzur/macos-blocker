@@ -17,16 +17,6 @@ public final class VaultClassifierPage {
     private var model: VaultClassifierViewModel?
     private var webShell: VaultClassifierWebShell?
     private var pageVisible = true
-    private weak var contributionPromptHostView: WKWebView?
-    private lazy var contributionPrompt = DictionaryContributionPrompt(
-        translate: { [weak self] key, fallback in self?.nativeText(key, fallback) ?? fallback },
-        choiceIsPending: { [weak self] in
-            guard let self, !self.isShuttingDown else { return false }
-            return self.model?.coordinator?.snapshot().settings.dictionaries.contributionChoiceMade == false
-        },
-        saveChoice: { [weak self] enabled in self?.model?.completeDictionaryOnboarding(enabled: enabled) }
-    )
-
     private init() {}
 
     public func start() {
@@ -35,21 +25,8 @@ public final class VaultClassifierPage {
         // no installer); a no-op in development and for un-bundled builds.
         NativeMessagingHostRegistration.registerBundledHost()
         model = VaultClassifierViewModel()
-        model?.contributionPromptNative = true
-        model?.onDictionaryContributionChoiceChanged = { [weak self] in
-            self?.contributionPrompt.choiceChanged()
-        }
     }
 
-    public func hostWindowChanged(_ view: WKWebView, window: NSWindow?) {
-        guard !isShuttingDown, contributionPromptHostView === view else { return }
-        contributionPrompt.setHostWindow(window)
-    }
-
-    /// Hide an undecided sheet while the host handles its normal Quit warning.
-    /// Cancelling Quit resumes it without starting classifier shutdown.
-    public func suspendContributionPromptForQuit() { contributionPrompt.suspend() }
-    public func resumeContributionPromptAfterCancelledQuit() { contributionPrompt.resume() }
 
     // MARK: The page, as a scene of the host's web view
 
@@ -68,11 +45,10 @@ public final class VaultClassifierPage {
         shell.setPresentationVisible(pageVisible)
     }
 
+
     /// The host's web view, where the page runs.
     public func attach(_ webView: WKWebView) {
         webShell?.attach(webView)
-        contributionPromptHostView = webView
-        contributionPrompt.setHostWindow(webView.window)
     }
 
     /// The host reloaded its page after the web content process died.
@@ -212,8 +188,6 @@ public final class VaultClassifierPage {
     /// Does not start a never-opened component merely to shut it down.
     public func shutdown() async {
         isShuttingDown = true
-        contributionPrompt.shutdown()
-        contributionPromptHostView = nil
         await model?.shutdown()
         LocalStateFile.flushAllPendingWrites()
     }

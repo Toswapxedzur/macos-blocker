@@ -7,7 +7,7 @@ import VaultClassifierCore
 public enum ProviderGenerationProtocol {
     public static let maximumPromptCharacters = 20_000
     public static let maximumModelIdentifierCharacters = 256
-    public static var maximumOutputTokens: Int { GroundedResearchProviderConfiguration.maximumOutputTokens }
+    public static var maximumOutputTokens: Int { 4_096 }
 
     public static func supportsGeneration(profile: APIKeyProviderProfile) -> Bool {
         let supportedFormats: [ProviderRequestBodyFormat] = [

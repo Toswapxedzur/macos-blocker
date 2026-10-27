@@ -20,7 +20,7 @@ final class VaultClassifierWebShell {
     init(model: VaultClassifierViewModel) {
         self.model = model
         self.coordinator = Coordinator(model: model)
-        self.sourceIconSchemeHandler = SourceIconSchemeHandler(cache: model.sourceIconCache, pictures: model.creatorPictures)
+        self.sourceIconSchemeHandler = SourceIconSchemeHandler(cache: model.sourceIconCache)
         Task { @MainActor [weak coordinator] in
             model.onWebStateChange = { [weak coordinator] in
                 Task { @MainActor [weak coordinator] in coordinator?.sendState() }
@@ -159,15 +159,7 @@ final class VaultClassifierWebShell {
             }
             Task { @MainActor [weak self] in
                 guard let self else { return }
-                if action == "knowledgePage" {
-                    if let script = await self.model.knowledgePage(data) { self.webView?.evaluateJavaScript(script, completionHandler: nil) }
-                    return
-                }
                 if self.model.performWebAction(action, data: data) {
-                    if action == "editKnowledgeEntry", let id = data["id"] as? String,
-                       let script = self.model.knowledgeEditAcknowledgement(id: id) {
-                        self.webView?.evaluateJavaScript(script, completionHandler: nil)
-                    }
                     // Warm the newly loaded renderer even while its scene is
                     // hidden. Later background updates retain normal batching.
                     if action == "state", !self.initialStateSent,

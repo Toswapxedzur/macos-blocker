@@ -270,12 +270,6 @@ h3 { font-size: 14px; }
   background: #f8fafc;
   box-shadow: inset 0 0 0 1px rgba(148, 163, 184, 0.22);
 }
-.utility-research-section {
-  padding: 18px;
-  border-radius: 12px;
-  background: rgba(236, 254, 255, .58);
-  box-shadow: inset 0 0 0 1px rgba(6, 182, 212, .2);
-}
 .model-library-source-note {
   padding: 9px 11px;
   border-radius: 9px;
@@ -291,7 +285,6 @@ h3 { font-size: 14px; }
 .model-download-label { color: var(--navy-700); font-size: 10px; font-weight: 700; text-align: right; }
 .model-download-progress { height: 6px; overflow: hidden; border-radius: 999px; background: #e2e8f0; }
 .model-download-progress > span { display: block; height: 100%; border-radius: inherit; background: var(--cyan-700); }
-.research-data-flow { line-height: 1.5; }
 .utility-settings-section-title {
   color: var(--muted);
   font-size: 12px;
@@ -306,44 +299,7 @@ h3 { font-size: 14px; }
 }
 
 .utility-settings-fields .field:last-child:nth-child(odd) { grid-column: 1 / -1; }
-
-/* Knowledge workspace (known creators & terms) */
-.knowledge-workspace { display: grid; gap: 16px; }
-.knowledge-group { display: grid; gap: 10px; }
-.knowledge-count {
-  display: inline-block;
-  min-width: 20px;
-  padding: 0 7px;
-  border-radius: 999px;
-  background: rgba(238, 242, 255, .8);
-  color: var(--muted);
-  font-size: 12px;
-  font-weight: 700;
-  text-align: center;
-}
-.knowledge-list { display: grid; gap: 10px; align-content: start; }
 .classifier-type-nav { --vui-list-height: min(32vh, 300px); }
-.knowledge-card {
-  display: grid;
-  gap: 8px;
-  padding: 12px 14px;
-  border: none;
-  border-radius: 12px;
-  background: #fff;
-  box-shadow: 0 3px 10px rgba(15, 23, 42, 0.06);
-}
-.knowledge-card[hidden] { display: none; }
-.knowledge-card-head { display: flex; align-items: center; gap: 10px; }
-.knowledge-face { width: 28px; height: 28px; flex: none; border-radius: 50%; object-fit: cover; }
-.knowledge-face-empty { display: inline-flex; align-items: center; justify-content: center; background: var(--navy-100); color: var(--navy-700); font-weight: 700; font-size: 12px; }
-.knowledge-name { display: flex; flex-direction: column; min-width: 0; margin-inline-end: auto; }
-.knowledge-subject { font-weight: 700; overflow-wrap: anywhere; }
-.knowledge-id { color: #64748b; font-size: 11px; overflow-wrap: anywhere; }
-.knowledge-card textarea { min-height: 60px; resize: vertical; }
-.knowledge-suggestions { display: flex; flex-direction: column; gap: 2px; }
-.knowledge-suggestions:empty { display: none; }
-.knowledge-suggestion { display: flex; align-items: baseline; gap: 8px; padding: 6px 8px; border-radius: 8px; background: #fff; color: #1f2937; font-size: 12px; font-weight: 400; text-align: start; }
-.knowledge-suggestion:hover { background: var(--navy-100); filter: none; }
 
 .utility-toggles {
   display: grid;
@@ -412,10 +368,6 @@ h3 { font-size: 14px; }
 .classifier-type-section { padding: 14px 14px 14px 18px; border-bottom: 1px solid var(--line); }
 .classifier-type-section:last-child { border-bottom: 0; }
 .classifier-type-section .section-header { margin-bottom: 10px; }
-.classifier-research-overrides .research-master-note {
-  margin: 10px 0 0;
-  color: #0e7490;
-}
 .resident-model-note { margin: 8px 0 12px; color: var(--muted); }
 /* A type's platforms: editable at creation, then a read-only checklist. */
 .platform-choices { display: grid; gap: 8px; margin-top: 2px; }
@@ -960,9 +912,7 @@ textarea,
 .section-card textarea,
 .section-card .vui-select-button,
 .utility-resource-section .vui-select-button,
-.utility-research-section .vui-select-button,
-.utility-resource-section textarea,
-.utility-research-section textarea {
+.utility-resource-section textarea{
   background: #ffffff;
 }
 
@@ -983,8 +933,7 @@ textarea:focus {
 }
 
 
-.utility-resource-section,
-.utility-research-section {
+.utility-resource-section{
   box-shadow: 0 8px 24px rgba(15, 23, 42, 0.05);
 }
 .strictness-option {
@@ -1152,30 +1101,9 @@ textarea:focus {
     max-height: 34vh;
   }
 }
+@media (max-width: 600px) { }
 
-/* Research setup lives beside the API keys it uses. */
-.utility-api-keys { min-width: 0; }
-.research-setup-needed { background: var(--gold-50); padding: 10px; border-radius: 12px; }
-.knowledge-research-connection, .knowledge-dictionary-connection { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 18px; border-radius: 16px; background: var(--cyan-50); }
-.knowledge-research-connection > div, .knowledge-dictionary-connection > div { display: grid; gap: 8px; min-width: 0; overflow-wrap: anywhere; }
-@media (max-width: 600px) { .knowledge-research-connection, .knowledge-dictionary-connection { align-items: flex-start; flex-direction: column; } }
-
-/* Provider models are selected from a fetched, searchable and bounded list. */
-.research-model-field, .research-model-picker { min-width: 0; }
-.research-model-picker > summary { cursor: pointer; list-style: none; }
-.research-model-picker > summary::-webkit-details-marker { display: none; }
-.research-model-picker > summary:focus-visible { outline: 2px solid var(--cyan-700); outline-offset: 2px; }
-.research-model-menu.vui-menu { display: flex; flex-direction: column; gap: 8px; padding: 8px; max-width: none; overflow: hidden; visibility: hidden; }
-.research-model-menu > input, .research-model-menu > p { flex-shrink: 0; margin: 0; }
-.research-model-list { display: grid; gap: 2px; max-height: min(32vh, 280px); padding: 0; border-radius: 8px; }
-.research-model-option { text-align: start; justify-content: flex-start; overflow-wrap: anywhere; }
-.research-model-option[hidden] { display: none; }
-.research-model-unavailable { color: var(--gold-text); }
-
-/* Suggestions float below the creator input instead of moving its form. */
-.knowledge-suggestions.vui-menu { visibility: hidden; max-width: none; max-height: 320px; padding: 4px; }
-.knowledge-suggestions.vui-menu .knowledge-suggestion { background: none; }
-.knowledge-suggestions.vui-menu .knowledge-suggestion:hover { background: var(--navy-100); }
+/* Provider models are selected from a fetched{ min-width: 0; }
 
 /* Title/provider fields keep their existing hidden label but expose field Info. */
 .classifier-name-row .field:has(> .vui-info-button),
@@ -1185,7 +1113,6 @@ textarea:focus {
 .classifier-name-row .field > input, .provider-create .field > .vui-select { flex: 1; min-width: 0; }
 .header-language:has(> .vui-info-button) { width: 153px; }
 .header-language > .vui-select { flex: 1; min-width: 0; }
-.research-model-menu > .vui-info-field { flex-shrink: 0; }
 
 .tree-map-node.vui-search-match { box-shadow: 0 0 0 3px #0e7490; }
 
@@ -1197,21 +1124,9 @@ input[data-field="creator"], input[data-model-search] {
   direction: ltr;
   unicode-bidi: isolate;
   text-align: start;
-}
-.dictionary-pack { display:flex; align-items:center; justify-content:space-between; gap:16px; margin-block:16px; }
-.dictionary-personal { margin-top:16px; }
-.dictionary-personal summary { cursor:pointer; font-weight:600; margin-bottom:12px; }
-.dictionary-export { width:100%; box-sizing:border-box; margin-block:12px; font-family:monospace; }
-
-/* Dictionary JSON stays literal; long localized labels fit narrow panes. */
-textarea[data-personal-import], textarea[data-personal-export] { direction:ltr; unicode-bidi:isolate; text-align:start; }
-.dictionary-pack > div { min-width:0; overflow-wrap:anywhere; }
-.dictionary-pack > button { flex-shrink:0; }
-@media (max-width:600px) { .dictionary-pack { flex-wrap:wrap; } }
-
-.utility-dictionary-section .dictionary-contribution { gap: 8px; }
-.utility-dictionary-section .dictionary-contribution .toggle-row { justify-content: flex-start; }
-@media (max-width: 600px) { .dictionary-pack { align-items: flex-start; flex-direction: column; } }
+} textarea[data-personal-export] { direction:ltr; unicode-bidi:isolate; text-align:start; }
+@media (max-width:600px) { }
+@media (max-width: 600px) { }
 
 :host(.native-settings-host) { display: block; height: auto; overflow: visible; }
 #native-settings { font: 12px/1.4 var(--font-ui); }

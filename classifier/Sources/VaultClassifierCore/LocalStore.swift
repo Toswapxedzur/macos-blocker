@@ -10,7 +10,7 @@ import Foundation
 /// classifier, audit, content-block policy — now the extension's) are simply never
 /// read, and so are never written back; see LegacyStateDecodeTests.
 public struct LocalClassifierState: Codable, Equatable, Sendable {
-    public static let currentSchemaVersion = 7
+    public static let currentSchemaVersion = 8
     /// These are alpha document schemas, not beta product major numbers.
     /// Compatible unversioned/schema-1 forms reconcile once to schema 2.
     public static let minimumSupportedSchemaVersion = 0
@@ -125,7 +125,9 @@ public final class LocalStateFile: @unchecked Sendable {
     public func load(or defaultState: LocalClassifierState = .init()) throws -> LocalClassifierState {
         Self.ioQueue.sync {}
         guard FileManager.default.fileExists(atPath: url.path) else { return defaultState }
-        var state = try JSONDecoder().decode(LocalClassifierState.self, from: Data(contentsOf: url))
+        let storedData = try Data(contentsOf: url)
+        var state = try JSONDecoder().decode(LocalClassifierState.self, from: storedData)
+        try DormantKnowledgeArchive.preserve(from: storedData, beside: url)
         let directory = collectedDirectory
         let manager = FileManager.default
         // Entries inside the state file (saved before the split) are not in any
@@ -333,8 +335,6 @@ public final class LocalClassifierCoordinator: @unchecked Sendable {
     let shutdownSignal = ClassifierShutdownSignal()
     var classificationEngine: any ClassificationEngine = UnconfiguredClassificationEngine()
     var cloudEngineResolver: (any CloudClassificationEngineResolving)?
-    var groundedResearchQueue: GroundedResearchQueue?
-    var dictionaryProvider: (any DictionaryEvidenceProviding)?
     /// When the collection Keep was last applied (see `collect`).
     var lastCollectionPrune: Int64 = 0
     var onVideoReclassifiedCallback: (@Sendable (String, String, VideoTagsProjection) -> Void)?
@@ -429,9 +429,6 @@ public final class LocalClassifierCoordinator: @unchecked Sendable {
 
     }
 
-    public func setDictionaryProvider(_ provider: any DictionaryEvidenceProviding) {
-        lock.withLock { dictionaryProvider = provider }
-    }
 
     public func setClassificationEngine(_ llm: any ClassificationEngine) {
         lock.lock()

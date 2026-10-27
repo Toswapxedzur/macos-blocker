@@ -11,112 +11,15 @@ extension VaultClassifierViewModel {
     /// The WKWebView receives only the bounded local state necessary to render
     /// this development shell. Browser evidence, API keys, pairing material,
     /// stable identifiers stay in native storage.
-    func knowledgeEditAcknowledgement(id: String) -> String? {
-        guard let payload = knowledgeEditAcknowledgementPayload(id: id),
-              let packet = try? JSONSerialization.data(withJSONObject: payload) else { return nil }
-        return "window.VaultClassifier && window.VaultClassifier.receiveKnowledgeRow(JSON.parse(new TextDecoder().decode(Uint8Array.from(atob('\(packet.base64EncodedString())'), c => c.charCodeAt(0)))));"
-    }
-
-    func knowledgeEditAcknowledgementPayload(id: String) -> [String: Any]? {
-        guard issue == nil, let catalog = (localState ?? coordinator?.snapshot())?.workspaceCatalog,
-              let entry = catalog.creatorKnowledge.first(where: { $0.id == id }) ?? catalog.knowledgeEntries.first(where: { $0.id == id }) else { return nil }
-        return ["id": entry.id, "meaning": entry.meaning]
-    }
-
-    func knowledgePage(_ data: [String: Any]) async -> String? {
-        guard let payload = await knowledgePagePayload(data),
-              let packet = try? JSONSerialization.data(withJSONObject: payload) else { return nil }
-        return "window.VaultClassifier && window.VaultClassifier.receiveList(JSON.parse(new TextDecoder().decode(Uint8Array.from(atob('\(packet.base64EncodedString())'), c => c.charCodeAt(0)))));"
-    }
-
-    func knowledgePagePayload(_ data: [String: Any]) async -> [String: Any]? {
-        guard let requestID = data["requestID"] as? String, requestID.count <= 80,
-              let kind = data["kind"] as? String, ["creator", "term", "suggestion"].contains(kind),
-              let platformID = data["platformID"] as? String, platformID.count <= 32,
-              let query = data["query"] as? String, query.count <= 200,
-              let offset = data["offset"] as? Int, offset >= 0,
-              let limit = data["limit"] as? Int, (1...64).contains(limit) else { return nil }
-        let drafts = data["drafts"] as? [String: String] ?? [:]
-        guard drafts.count <= 256, drafts.allSatisfy({ $0.key.count <= 512 && $0.value.count <= KnowledgeEntry.maximumMeaningLength }) else { return nil }
-        let catalog = (localState ?? coordinator?.snapshot())?.workspaceCatalog ?? .starter()
-        if kind == "suggestion" {
-            let rows = await Task.detached(priority: .userInitiated) {
-                var seen = Set<String>()
-                return catalog.datasets.flatMap(\.collectedEntries).filter {
-                    $0.platformID == platformID && !$0.creatorName.isEmpty && $0.creatorName != $0.creatorID
-                    && seen.insert($0.creatorID).inserted && $0.creatorName.localizedCaseInsensitiveContains(query)
-                }.sorted { left, right in
-                    let a = left.creatorName.lowercased().hasPrefix(query.lowercased()), b = right.creatorName.lowercased().hasPrefix(query.lowercased())
-                    return a != b ? a : left.creatorName < right.creatorName
-                }.dropFirst(offset).prefix(limit).map { ["id": $0.creatorID, "name": $0.creatorName, "platformID": platformID] }
-            }.value
-            return ["requestID": requestID, "items": Array(rows), "total": rows.count]
-        }
-        let result = await Task.detached(priority: .userInitiated) {
-            var faces: [String: (String?, String?)] = [:]
-            if kind == "creator" {
-                for aliases in [false, true] {
-                    for entry in catalog.datasets.flatMap(\.collectedEntries) {
-                        let name = entry.creatorName.isEmpty || entry.creatorName == entry.creatorID ? nil : entry.creatorName
-                        let icon = entry.sourceIconURL.flatMap { SourceIconURLPolicy.isAccepted(platformID: entry.platformID, value: $0) ? $0 : nil }
-                        for id in aliases ? entry.sourceAliases : [entry.creatorID] {
-                            if aliases && faces[id] != nil { continue }
-                            let face = faces[id]; faces[id] = (face?.0 ?? name, face?.1 ?? icon)
-                        }
-                    }
-                }
-            }
-            let entries = kind == "creator" ? catalog.creatorKnowledge : catalog.knowledgeEntries
-            let matches = entries.filter { entry in
-                let name = faces[entry.subject]?.0 ?? CreatorReference.fallbackName(of: entry.subject)
-                return (kind != "creator" || CreatorReference.platformID(of: entry.subject) == platformID)
-                    && (query.isEmpty || (name + " " + entry.subject + " " + (drafts[entry.id] ?? entry.meaning)).localizedCaseInsensitiveContains(query))
-            }.sorted { $0.updatedAtMilliseconds == $1.updatedAtMilliseconds ? $0.id < $1.id : $0.updatedAtMilliseconds > $1.updatedAtMilliseconds }
-            let rows = matches.dropFirst(offset).prefix(limit).map { entry in (entry, faces[entry.subject]?.0, faces[entry.subject]?.1) }
-            return (Array(rows), matches.count)
-        }.value
-        let items: [[String: Any]] = result.0.map { entry, name, remote in
-            var row: [String: Any] = ["id": entry.id, "subject": entry.subject, "meaning": entry.meaning,
-                "writtenByUser": entry.writtenByUser, "updatedAtMilliseconds": entry.updatedAtMilliseconds]
-            if kind == "creator" {
-                row["platformID"] = platformID; row["name"] = name ?? CreatorReference.fallbackName(of: entry.subject)
-                if let pictures = creatorPictures {
-                    if pictures.url(for: entry.subject) == nil, let remote {
-                        if let jpeg = sourceIconJPEG(remoteURL: remote) { pictures.save(jpeg, for: entry.subject) }
-                        else { cacheSourceIcon(remoteURL: remote) }
-                    }
-                    row["icon"] = pictures.url(for: entry.subject) ?? NSNull()
-                }
-            }
-            return row
-        }
-        return ["requestID": requestID, "items": items, "total": result.1]
-    }
-
     func webSnapshot(includeCollections: Bool = true) -> [String: Any] {
         let state = localState ?? coordinator?.snapshot()
         let backup = state?.backupConfiguration
         let notices: [String: Any] = [
             "backup": backupNotice ?? NSNull(),
-            "knowledge": knowledgeNotice ?? NSNull(),
         ]
         let catalog = state?.workspaceCatalog ?? .starter()
-        let researchSettings = state?.settings.research ?? ResearchSettings()
         let settingsPayload: [String: Any] = [
             "classificationEnabled": state?.settings.classificationEnabled ?? true,
-            "dictionaries": dictionaryPayload(state?.settings.dictionaries ?? .init()),
-            "research": [
-                "enabled": researchSettings.enabled,
-                "llmProviderProfileID": researchSettings.llmProviderProfileID ?? "",
-                "llmModelIdentifier": researchSettings.llmModelIdentifier ?? "",
-                "dailyTokenLimit": ResearchSettings.dailyTokenLimit,
-                "tokensUsedToday": GroundedResearchQueue.usedResearchTokens(in: catalog.tokenUsage, at: Date()),
-                "status": Self.researchStatusPayload(
-                    queue: researchQueueStatus,
-                    attempts: catalog.researchAttempts,
-                    now: Date()
-                ),
-            ] as [String: Any],
         ]
         let backupPayload: [String: Any] = [
             "hasOwnerCode": hasBackupOwnerCode,
@@ -141,84 +44,6 @@ extension VaultClassifierViewModel {
                     "entryCounts": Dictionary(grouping: dataset.collectedEntries, by: \.platformID).mapValues(\.count),
                 ] as [String: Any]
             }
-        // Creators as the page shows them: name and icon from what the
-        // classifier collected (by id or an alias of it), else from the id.
-        // An exact id wins over an alias; a "name" that is only the id is none.
-        // `icon` is the picture's web address, as collected.
-        var creatorFaces: [String: (name: String?, icon: String?)] = [:]
-        let collected = includeCollections ? catalog.datasets.flatMap(\.collectedEntries) : []
-        for aliasPass in [false, true] {
-            for entry in collected {
-                let name = entry.creatorName.isEmpty || entry.creatorName == entry.creatorID ? nil : entry.creatorName
-                let icon = entry.sourceIconURL.flatMap {
-                    SourceIconURLPolicy.isAccepted(platformID: entry.platformID, value: $0) ? $0 : nil
-                }
-                for id in aliasPass ? entry.sourceAliases : [entry.creatorID] {
-                    let face = creatorFaces[id]
-                    if aliasPass && face != nil { continue }
-                    creatorFaces[id] = (face?.name ?? name, face?.icon ?? icon)
-                }
-            }
-        }
-        // A creator in Knowledge keeps its picture (owner 2026-09-30): copied
-        // from the source-icon cache the first time it is there; a missing one
-        // is asked for (a few per snapshot), for a later snapshot to keep.
-        var picturesRequested = 0
-        let picture: (String) -> String? = { [self] creatorID in
-            guard let store = creatorPictures else { return nil }
-            if let kept = store.url(for: creatorID) { return kept }
-            guard let remote = creatorFaces[creatorID]?.icon else { return nil }
-            if let jpeg = sourceIconJPEG(remoteURL: remote) {
-                store.save(jpeg, for: creatorID)
-                return store.url(for: creatorID)
-            }
-            if picturesRequested < 12 {
-                picturesRequested += 1
-                cacheSourceIcon(remoteURL: remote)
-            }
-            return nil
-        }
-        let knowledgePayload: ([KnowledgeEntry]) -> [[String: Any]] = { entries in
-            entries
-                .sorted { $0.updatedAtMilliseconds > $1.updatedAtMilliseconds }
-                .map { entry in
-                    var row: [String: Any] = [
-                        "id": entry.id,
-                        "subject": entry.subject,
-                        "meaning": entry.meaning,
-                        "writtenByUser": entry.writtenByUser,
-                        "updatedAtMilliseconds": entry.updatedAtMilliseconds,
-                    ]
-                    if entry.kind == .creator {
-                        let face = creatorFaces[entry.subject]
-                        row["platformID"] = CreatorReference.platformID(of: entry.subject)
-                        row["name"] = face?.name ?? CreatorReference.fallbackName(of: entry.subject)
-                        row["icon"] = picture(entry.subject) ?? NSNull()
-                    }
-                    return row
-                }
-        }
-        var knowledge: [String: Any] = [
-            "creators": includeCollections ? knowledgePayload(catalog.creatorKnowledge) : [],
-            "terms": includeCollections ? knowledgePayload(catalog.knowledgeEntries) : [],
-            "paged": !includeCollections,
-            "counts": catalog.creatorKnowledge.reduce(into: ["term": catalog.knowledgeEntries.count]) { counts, entry in
-                let key = "creator:" + CreatorReference.platformID(of: entry.subject)
-                counts[key, default: 0] += 1
-            },
-        ]
-        // "Add a creator" suggests creators the classifier has collected (only
-        // while the Knowledge page is open: the list is long).
-        if includeCollections && workspace == .knowledge {
-            var seen = Set<String>()
-            knowledge["knownCreators"] = catalog.datasets.flatMap(\.collectedEntries).compactMap { entry -> [String: String]? in
-                guard !entry.creatorName.isEmpty, entry.creatorName != entry.creatorID,
-                      CreatorReference.platforms.contains(entry.platformID),
-                      seen.insert(entry.creatorID).inserted else { return nil }
-                return ["platformID": entry.platformID, "id": entry.creatorID, "name": entry.creatorName]
-            }
-        }
-        assets["knowledge"] = knowledge
         assets["classifierTypes"] = catalog.classifierTypes.map { classifierType in
                 [
                     "id": classifierType.id,
@@ -239,8 +64,6 @@ extension VaultClassifierViewModel {
                         "minimumTagsOverride": classifierType.tagging.minimumTagsOverride.map { $0 as Any } ?? NSNull(),
                         "maximumTagsOverride": classifierType.tagging.maximumTagsOverride.map { $0 as Any } ?? NSNull(),
                     ] as [String: Any],
-                    // nil = follow the global research switch.
-                    "researchEnabled": classifierType.researchEnabled ?? NSNull(),
                 ] as [String: Any]
             }
         assets["chatGPT"] = ["connected": chatGPTStatus.connected, "accountID": chatGPTStatus.accountID,
@@ -378,8 +201,6 @@ extension VaultClassifierViewModel {
     /// Returns whether the web shell should publish a new snapshot.
     func performWebAction(_ action: String, data: [String: Any]) -> Bool {
         guard !isShuttingDown else { return false }
-        let dictionaryTransfer = action == "importPersonalDictionary" || action == "exportPersonalDictionary"
-        if dictionaryTransfer { dictionaryNotice = nil; issue = nil }
         do {
             switch action {
             case "state":
@@ -391,9 +212,8 @@ extension VaultClassifierViewModel {
                 // The WebView already owns the current bounded snapshot and
                 // switches workspaces optimistically. Avoid echoing the same
                 // multi-megabyte state back across the bridge for navigation —
-                // except into Knowledge, whose creator suggestions ride along only
                 // while it is open.
-                return value == .knowledge
+                return false
             case "clearCollectedData":
                 clearCollectedData(platformID: try webString(data, key: "platformID", limit: 64))
             case "setCollectionKeep":
@@ -495,54 +315,9 @@ extension VaultClassifierViewModel {
                     providerModel: webString(data, key: "providerModel", limit: 520), reasoningEffort: effort)
             case "setClassifierTypePaused":
                 setClassifierTypePaused(typeID: try webString(data, key: "typeID", limit: 256), paused: try webBool(data, key: "paused"))
-            case "saveDictionarySettings":
-                guard let cacheSize = (data["creatorCacheSize"] as? Int) ?? (data["creatorCacheSize"] as? String).flatMap(Int.init) else { throw DictionaryError.invalidPack }
-                try saveDictionarySettings(mode: try webString(data, key: "creatorMode", limit: 16), cacheSize: cacheSize,
-                    contributionEnabled: try webBool(data, key: "contributionEnabled"), choiceMade: try webBool(data, key: "choiceMade"))
-            case "completeDictionaryOnboarding":
-                completeDictionaryOnboarding(enabled: try webBool(data, key: "enabled"))
-            case "checkDictionaryUpdates":
-                checkDictionaryUpdates()
-            case "downloadDictionary":
-                try downloadDictionary(kind: try webString(data, key: "kind", limit: 16))
-            case "importPersonalDictionary":
-                let json = try webString(data, key: "json", limit: 8*1024*1024)
-                try coordinator?.importPersonalDictionary(Data(json.utf8))
-                refreshLocalState(); dictionaryNotice = "Personal definitions imported."; personalDictionaryJSON = nil
-            case "exportPersonalDictionary":
-                personalDictionaryJSON = try coordinator?.exportPersonalDictionary()
-            case "deleteKnowledgeEntry":
-                deleteKnowledgeEntry(id: try webString(data, key: "id", limit: 512))
-            case "addKnowledgeTerm":
-                addKnowledgeTerm(
-                    subject: try webString(data, key: "subject", limit: 120),
-                    meaning: try webString(data, key: "meaning", limit: KnowledgeEntry.maximumMeaningLength)
-                )
-            case "addKnowledgeCreator":
-                addKnowledgeCreator(
-                    platformID: try webString(data, key: "platformID", limit: 64),
-                    creator: try webString(data, key: "creator", limit: 512),
-                    meaning: try webString(data, key: "meaning", limit: KnowledgeEntry.maximumMeaningLength)
-                )
-            case "editKnowledgeEntry":
-                editKnowledgeEntry(
-                    id: try webString(data, key: "id", limit: 512),
-                    meaning: try webString(data, key: "meaning", limit: KnowledgeEntry.maximumMeaningLength)
-                )
-            case "retryFailedResearch":
-                retryFailedResearch()
-            case "saveResearchSettings":
-                saveResearchSettings(ResearchSettings(
-                    enabled: try webBool(data, key: "enabled"),
-                    llmProviderProfileID: try webOptionalString(data, key: "llmProviderProfileID", limit: 256),
-                    llmModelIdentifier: try webOptionalString(data, key: "llmModelIdentifier", limit: 256)
-                ))
             case "saveClassifierTypeTagging":
                 let input = try Self.parseClassifierTypeTaggingWebInput(data)
                 saveClassifierTypeTagging(typeID: input.typeID, settings: input.settings)
-            case "saveClassifierTypeResearch":
-                let input = try Self.parseClassifierTypeResearchWebInput(data)
-                saveClassifierTypeResearch(typeID: input.typeID, researchEnabled: input.researchEnabled)
             case "setBackupOwnerCode":
                 backupOwnerCode = try webString(data, key: "ownerCode", limit: 512)
                 setBackupOwnerCode()
@@ -559,8 +334,7 @@ extension VaultClassifierViewModel {
                 throw WebBridgeInputError.invalidChoice("action")
             }
         } catch {
-            if dictionaryTransfer { dictionaryNotice = error.localizedDescription }
-            else { issue = error.localizedDescription }
+            issue = error.localizedDescription
         }
         return true
     }

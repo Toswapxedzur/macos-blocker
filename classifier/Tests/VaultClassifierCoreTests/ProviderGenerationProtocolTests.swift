@@ -14,7 +14,6 @@ final class ProviderGenerationProtocolTests: XCTestCase {
             let decoded = try JSONDecoder().decode(APIKeyProviderProfile.self, from: JSONEncoder().encode(profile))
             XCTAssertEqual(decoded.type, type)
             XCTAssertThrowsError(try ProviderTestProtocol.prepare(profile: profile))
-            XCTAssertFalse(GroundedGenerationProtocol.supportsProviderGrounding(profile: profile))
         }
         XCTAssertFalse(APIKeyProviderType.gemini.isRetiredSearchProvider)
     }

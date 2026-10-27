@@ -204,7 +204,7 @@ extension APIKeyClassificationTests {
         catalog["providerProfiles"] = [["id": "retired", "type": "ollama", "credential": ["malformed": true]]]
         root["workspaceCatalog"] = catalog
         let loaded = try JSONDecoder().decode(LocalClassifierState.self, from: JSONSerialization.data(withJSONObject: root))
-        XCTAssertEqual(loaded.schemaVersion, 7)
+        XCTAssertEqual(loaded.schemaVersion, LocalClassifierState.currentSchemaVersion)
         XCTAssertEqual(loaded.workspaceCatalog.classifierTypes, state.workspaceCatalog.classifierTypes)
         XCTAssertTrue(loaded.workspaceCatalog.providerProfiles.isEmpty)
         XCTAssertEqual(loaded.workspaceCatalog.classifierTypes[0].cloudModelVersion, state.workspaceCatalog.classifierTypes[0].cloudModelVersion)

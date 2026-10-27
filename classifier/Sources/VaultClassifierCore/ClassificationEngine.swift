@@ -112,20 +112,6 @@ public extension ClassificationEngine {
     }
 }
 
-/// Derives research urgency from the reliable signal: the video's own tag
-/// confidences (the model's emitted urgency just anchored to the prompt default).
-public enum ResearchUrgency {
-    /// A video's research urgency (1–5) as the inverse of its mean kept-tag
-    /// confidence; a decline (no tags) is maximally uncertain (5). This same
-    /// per-video value feeds the per-creator author accumulator (§8): a creator
-    /// whose videos are consistently low-confidence crosses the research threshold.
-    public static func fromTagConfidences(_ confidences: [Int]) -> Int {
-        guard !confidences.isEmpty else { return 5 }   // decline = maximally uncertain
-        let mean = Double(confidences.reduce(0, +)) / Double(confidences.count)
-        return min(5, max(1, 6 - Int(mean.rounded())))
-    }
-}
-
 /// Production never fabricates decisions while a cloud account/model is unconfigured.
 public struct UnconfiguredClassificationEngine: ClassificationEngine {
     public let modelVersion = "unconfigured"

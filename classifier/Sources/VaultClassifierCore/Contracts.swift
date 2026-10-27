@@ -225,118 +225,20 @@ public struct TaggingSettings: Codable, Equatable, Sendable {
     }
 }
 
-/// When to research a CREATOR — the ONLY automatic research trigger. Every
-/// creator carries a score (`CreatorResearchAccumulator`): a video that could not
-/// be tagged adds 1, a shaky tag a fraction, a sure tag nothing; the score halves
-/// every `halfLifeDays`; reaching `score` researches the creator once.
-///
-/// Fixed at 3 / 14 days since 2026-09-23 (the values the owner chose on
-/// 2026-09-21; simulated on 4,999 real videos / 1,464 creators, 41% untagged:
-/// 2 → 219 creators, 3 → 70, 4 → 43, 5 → 37). Tests and harnesses may still
-/// pass another threshold to the accumulator directly.
-public struct AuthorResearchThreshold: Equatable, Sendable {
-    public static let defaultScore = 3.0
-    public static let defaultHalfLifeDays = 14.0
-    public static let maximumScore = 50.0
-    public static let maximumHalfLifeDays = 365.0
-
-    public var score: Double
-    public var halfLifeDays: Double
-
-    public init(score: Double = defaultScore, halfLifeDays: Double = defaultHalfLifeDays) {
-        self.score = score.isFinite ? min(Self.maximumScore, max(0.5, score)) : Self.defaultScore
-        self.halfLifeDays = halfLifeDays.isFinite ? min(Self.maximumHalfLifeDays, max(1, halfLifeDays)) : Self.defaultHalfLifeDays
-    }
-}
-
-/// Grounded research: on/off plus the provider and model that answer. The
-/// budgets, cooldown, creator trigger and knowledge limits are constants since
-/// 2026-09-23; keys written before that day are ignored on decode.
-public struct ResearchSettings: Codable, Equatable, Sendable {
-    /// Explicit opt-in. When false, classification performs no queue work,
-    /// credential lookup, or network request.
-    public var enabled: Bool
-    public var llmProviderProfileID: String?
-    public var llmModelIdentifier: String?
-
-    // MARK: Constants (were settings until 2026-09-23)
-
-    /// Serialized background request limit.
-    public static let requestsPerMinute = 6
-    /// Persisted daily usage gate.
-    public static let dailyTokenLimit = 10_000
-    /// Hours before a failed subject is retried.
-    public static let cooldownHours = 24
-    public static let maximumCooldownHours = 720
-    /// When to research a creator — the only automatic trigger.
-    public static let authorThreshold = AuthorResearchThreshold()
-    /// 0 = grounded knowledge never expires.
-    public static let knowledgeTTLDays = 0
-    public static let maximumKnowledgeTTLDays = 3_650
-    /// Most matched knowledge entries injected into one prompt.
-    public static let maxKnowledgePerVideo = 8
-    public static let maximumKnowledgePerVideo = 32
-    // Spellings the pipeline's defaults use.
-    public static let defaultCooldownHours = cooldownHours
-    public static let defaultKnowledgeTTLDays = knowledgeTTLDays
-    public static let defaultMaxKnowledgePerVideo = maxKnowledgePerVideo
-
-    public init(
-        enabled: Bool = false,
-        llmProviderProfileID: String? = nil,
-        llmModelIdentifier: String? = nil
-    ) {
-        self.enabled = enabled
-        self.llmProviderProfileID = Self.optionalIdentifier(llmProviderProfileID)
-        self.llmModelIdentifier = Self.optionalIdentifier(llmModelIdentifier)
-    }
-
-    public var requestsPerMinute: Int { Self.requestsPerMinute }
-    public var dailyTokenLimit: Int { Self.dailyTokenLimit }
-    public var cooldownHours: Int { Self.cooldownHours }
-    public var authorThreshold: AuthorResearchThreshold { Self.authorThreshold }
-    public var knowledgeTTLDays: Int { Self.knowledgeTTLDays }
-    public var maxKnowledgePerVideo: Int { Self.maxKnowledgePerVideo }
-
-    private enum CodingKeys: String, CodingKey {
-        case enabled, llmProviderProfileID, llmModelIdentifier
-    }
-
-    public init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        self.init(
-            enabled: try container.decodeIfPresent(Bool.self, forKey: .enabled) ?? false,
-            llmProviderProfileID: try container.decodeIfPresent(String.self, forKey: .llmProviderProfileID),
-            llmModelIdentifier: try container.decodeIfPresent(String.self, forKey: .llmModelIdentifier)
-        )
-    }
-
-    private static func optionalIdentifier(_ value: String?) -> String? {
-        let cleaned = value?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        return cleaned.isEmpty ? nil : String(cleaned.prefix(256))
-    }
-}
-
 public struct ClassifierSettings: Codable, Equatable, Sendable {
     public var chatGPTDailyRequestLimit: Int?
-    public var research: ResearchSettings
     public var classificationEnabled: Bool
-    public var dictionaries: DictionarySettings
 
     public init(
-        research: ResearchSettings = ResearchSettings(),
         classificationEnabled: Bool = true,
-        dictionaries: DictionarySettings = .init(),
         chatGPTDailyRequestLimit: Int? = nil
     ) {
-        self.research = research
         self.classificationEnabled = classificationEnabled
-        self.dictionaries = dictionaries
         self.chatGPTDailyRequestLimit = chatGPTDailyRequestLimit
     }
 
     private enum CodingKeys: String, CodingKey {
-        case research, classificationEnabled, dictionaries, chatGPTDailyRequestLimit
+        case classificationEnabled, chatGPTDailyRequestLimit
     }
 
 
@@ -344,9 +246,7 @@ public struct ClassifierSettings: Codable, Equatable, Sendable {
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         self.init(
-            research: try container.decodeIfPresent(ResearchSettings.self, forKey: .research) ?? ResearchSettings(),
             classificationEnabled: (try? container.decodeIfPresent(Bool.self, forKey: .classificationEnabled)) ?? true,
-            dictionaries: (try? container.decodeIfPresent(DictionarySettings.self, forKey: .dictionaries)) ?? .init(),
             chatGPTDailyRequestLimit: try container.decodeIfPresent(Int.self, forKey: .chatGPTDailyRequestLimit)
         )
     }

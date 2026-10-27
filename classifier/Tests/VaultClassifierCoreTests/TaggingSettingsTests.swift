@@ -54,49 +54,12 @@ final class TaggingSettingsTests: XCTestCase {
     // MARK: - TaggingSettings
 
 
-    func testRetiredPackageUpdatePolicyIsIgnoredWithoutLosingActiveSettings() throws {
-        let old = Data(#"{"packageUpdateMode":{"invalid":true},"classificationEnabled":false,"research":{"enabled":true},"dictionaries":{"creatorMode":"full","creatorCacheSize":27}}"#.utf8)
-        let settings = try JSONDecoder().decode(ClassifierSettings.self, from: old)
-        XCTAssertFalse(settings.classificationEnabled)
-        XCTAssertTrue(settings.research.enabled)
-        XCTAssertEqual(settings.dictionaries.creatorMode, .full)
-        XCTAssertEqual(settings.dictionaries.creatorCacheSize, 27)
-        XCTAssertFalse(String(decoding: try JSONEncoder().encode(settings), as: UTF8.self).contains("packageUpdateMode"))
-    }
 
     // MARK: - ResearchSettings
 
-    func testClassifierSettingsResearchDefaultsOffAndPersists() throws {
-        let legacy = Data(#"{"packageUpdateMode":"automatic"}"#.utf8)
-        let legacySettings = try JSONDecoder().decode(ClassifierSettings.self, from: legacy)
-        XCTAssertFalse(legacySettings.research.enabled)
-
-        let value = ClassifierSettings(research: .init(enabled: true, llmProviderProfileID: "llm", llmModelIdentifier: "model"))
-        let data = try JSONEncoder().encode(value)
-        XCTAssertTrue(String(decoding: data, as: UTF8.self).contains("\"research\""))
-        XCTAssertEqual(try JSONDecoder().decode(ClassifierSettings.self, from: data), value)
-    }
 
     /// Budgets, cooldown, the creator trigger and the knowledge limits are constants
     /// now; every key they once had decodes silently and never re-encodes.
-    func testResearchConstantsAndRetiredKeys() throws {
-        let old = #"{"enabled":true,"llmProviderProfileID":"llm","llmModelIdentifier":"m","requestsPerMinute":99,"dailyTokenLimit":5,"cooldownHours":1,"authorThreshold":{"score":9,"halfLifeDays":1},"knowledgeTTLDays":7,"maxKnowledgePerVideo":1,"trigger":"all","urgencyFloor":4}"#
-        let decoded = try JSONDecoder().decode(ResearchSettings.self, from: Data(old.utf8))
-        XCTAssertEqual(decoded, ResearchSettings(enabled: true, llmProviderProfileID: "llm", llmModelIdentifier: "m"))
-        XCTAssertEqual(decoded.requestsPerMinute, 6); XCTAssertEqual(decoded.dailyTokenLimit, 10_000)
-        XCTAssertEqual(decoded.cooldownHours, 24)
-        XCTAssertEqual(decoded.authorThreshold, AuthorResearchThreshold(score: 3, halfLifeDays: 14))
-        XCTAssertEqual(decoded.knowledgeTTLDays, 0); XCTAssertEqual(decoded.maxKnowledgePerVideo, 8)
-        let reencoded = String(decoding: try JSONEncoder().encode(decoded), as: UTF8.self)
-        for retired in ["requestsPerMinute", "dailyTokenLimit", "cooldownHours", "authorThreshold", "knowledgeTTLDays", "maxKnowledgePerVideo", "\"trigger\"", "urgencyFloor"] {
-            XCTAssertFalse(reencoded.contains(retired), "retired key written back: \(retired)")
-        }
-    }
 
-    func testCreatorRuleClamps() {
-        XCTAssertEqual(AuthorResearchThreshold().score, 3)
-        XCTAssertEqual(AuthorResearchThreshold().halfLifeDays, 14)
-        XCTAssertEqual(AuthorResearchThreshold(score: 0, halfLifeDays: 0), AuthorResearchThreshold(score: 0.5, halfLifeDays: 1))
-        XCTAssertEqual(AuthorResearchThreshold(score: 999, halfLifeDays: 9_999), AuthorResearchThreshold(score: 50, halfLifeDays: 365))
-    }
+
 }
