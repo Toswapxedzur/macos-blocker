@@ -5,7 +5,7 @@ import VaultClassifierCore
 /// editor's store (web-store.json) and its other small files.
 public final class SharedAppGroupStore: @unchecked Sendable {
     public static let webStoreFileName = "web-store.json"
-    public static let webSchema = StorageSchemaPolicy(format: "vault.web-store", currentSchema: 4)
+    public static let webSchema = StorageSchemaPolicy(format: "vault.web-store", currentSchema: 5)
 
     public let baseDirectory: URL
     private let fileManager = FileManager.default

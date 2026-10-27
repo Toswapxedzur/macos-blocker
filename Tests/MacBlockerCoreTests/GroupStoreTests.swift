@@ -380,7 +380,7 @@ final class GroupStoreTests: XCTestCase {
         let store = GroupStore(shared: shared)
         store.save(WebStoreDocument(raw: ["blockedGroups": [], "opaque": ["keep": true], "usageTimersMs": ["one": 123]]))
         let raw = try XCTUnwrap(JSONSerialization.jsonObject(with: XCTUnwrap(shared.readData(SharedAppGroupStore.webStoreFileName))) as? [String: Any])
-        XCTAssertEqual(raw["schemaVersion"] as? Int, 4)
+        XCTAssertEqual(raw["schemaVersion"] as? Int, 5)
         XCTAssertEqual((raw["storageMetadata"] as? [String: Any])?["product"] as? String, "mac")
         XCTAssertEqual((raw["opaque"] as? [String: Bool])?["keep"], true)
         XCTAssertEqual((raw["usageTimersMs"] as? [String: Int])?["one"], 123)
