@@ -1,0 +1,29 @@
+import XCTest
+@testable import MacBlockerCore
+
+final class RuleAIRuntimeTests: XCTestCase {
+    private let source = #"(on,v)=>{on("panel",()=>{v.state.request=v.ai({prompt:"Summarize",input:{text:"fixture"}});});on("ai",({data})=>{v.state.answer=data.text;v.log(data.ok,data.text);});}"#
+    func testActualJSCActionAndReplyFollowTheOriginalRuleInstance() throws {
+        let runtime = try RuleRuntime()
+        XCTAssertTrue(try runtime.load(groupID:"g",source:source,stateJSON:"{}").ok)
+        let request = try XCTUnwrap(runtime.dispatch(type:"panel",data:[String:Any](),groupID:"g").actions.first)
+        XCTAssertEqual(request.kind,"ai");XCTAssertNotNil(request.generation)
+        let reply: [String:Any] = ["requestId":request.requestId!,"generation":request.generation!,"ok":true,"text":"Summary"]
+        XCTAssertEqual(try runtime.dispatch(type:"ai",data:reply,groupID:"g").logs.first?.message,"true Summary")
+        // Running the same text creates a fresh instance and cannot reuse a reply.
+        XCTAssertTrue(try runtime.load(groupID:"g",source:source,stateJSON:"{}").ok)
+        let stale = try runtime.dispatch(type:"ai",data:reply,groupID:"g")
+        XCTAssertTrue(stale.logs.isEmpty);XCTAssertTrue(stale.states.isEmpty)
+        let next = try XCTUnwrap(runtime.dispatch(type:"panel",data:[String:Any](),groupID:"g").actions.first)
+        runtime.suppress(groupID:"g",true);runtime.suppress(groupID:"g",false)
+        let disabled: [String:Any] = ["requestId":next.requestId!,"generation":next.generation!,"ok":true,"text":"Old reply"]
+        XCTAssertTrue(try runtime.dispatch(type:"ai",data:disabled,groupID:"g").logs.isEmpty)
+    }
+    func testRegistrationAndPerCallProviderOverridesAreRefused() throws {
+        let runtime=try RuleRuntime()
+        XCTAssertFalse(try runtime.load(groupID:"g",source:#"(on,v)=>{v.ai({prompt:"run now"});}"#,stateJSON:"{}").ok)
+        XCTAssertTrue(try runtime.load(groupID:"g",source:#"(on,v)=>{on("panel",()=>v.ai({prompt:"x",model:"override"}));}"#,stateJSON:"{}").ok)
+        let result=try runtime.dispatch(type:"panel",data:[String:Any](),groupID:"g")
+        XCTAssertTrue(result.actions.isEmpty);XCTAssertEqual(result.diagnostics.count,1)
+    }
+}

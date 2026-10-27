@@ -32,6 +32,10 @@ public final class MacEnforcementBridge: ObservableObject {
         GroupStore.sharedMutationRefusal = { ConnectionHub.shared.mutationRefusal(before: $0, after: $1) }
         // A tool's snooze of a custom group is the rule's snooze press, as the editor's.
         VaultMCPTools.snoozePress = { id in Task { @MainActor in MacEnforcementBridge.shared.fireSnoozePress(groupID: id) } }
+        VaultMCPTools.ruleAIModels = {
+            let read = { MainActor.assumeIsolated { RuleAIService.shared.modelOptions()["models"] as? [[String: Any]] ?? [] } }
+            return Thread.isMainThread ? read() : DispatchQueue.main.sync(execute: read)
+        }
         // A tool's Run is the editor's Run.
         VaultMCPTools.runRule = { id, source in
             let run = { MainActor.assumeIsolated { MacEnforcementBridge.shared.runRule(groupID: id, source: source) } }

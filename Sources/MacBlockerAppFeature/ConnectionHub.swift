@@ -193,6 +193,12 @@ final class ConnectionHub: ObservableObject {
     /// frames to NWConnection; isolated tests observe delivery without sockets.
     private let outboundDelivery: ((Data) -> Void)?
 
+    /// Broker dependency remains behind authenticated, connection-bound routing.
+    var ruleAIRequest: @MainActor (String, String, String, String) async -> [String: Any] = { operation, program, groupID, payload in
+        let service = RuleAIService.shared
+        return operation == "models" ? service.modelOptions() : await service.request(program: program, groupID: groupID, payload: payload)
+    }
+
     private let registryDefaults: UserDefaults
     private let browserIdentityBudgetPredicate: BrowserIdentityBudgetPredicate
 
@@ -513,6 +519,7 @@ final class ConnectionHub: ObservableObject {
         // Hub-authoritative shared state: the one group definition every
         // member adopts. Scalars and scopes are latest-edit-wins (see applySync).
         var sharedScalars: [String: Any] = [:]
+        var aiEpoch = UUID().uuidString
         var sharedTs: Double = 0
         var sharedScopes: [[String: Any]] = []
         /// Hub-only provenance for stable first-join Website identities; never sent on the wire.
@@ -574,6 +581,7 @@ final class ConnectionHub: ObservableObject {
             copy.contributed = contributed
             copy.originalUsagePending = originalUsagePending
             copy.sharedTs = sharedTs
+            copy.aiEpoch = aiEpoch
             copy.scopeOrigins = scopeOrigins
             copy.sharedUsageMs = sharedUsageMs
             copy.sharedUsageResetAtMs = sharedUsageResetAtMs
@@ -979,9 +987,8 @@ final class ConnectionHub: ObservableObject {
             let payload = obj["payload"] as? String ?? ""
             guard ["models", "generate"].contains(op), payload.utf8.count <= 48_000 else { return }
             Task { @MainActor [weak self] in
-                let service = RuleAIService.shared
-                let body = op == "models" ? service.modelOptions() : await service.request(program: peer.program, groupID: groupID, payload: payload)
                 guard let self else { return }
+                let body = await self.ruleAIRequest(op, peer.program, groupID, payload)
                 let current = self.lock.withLock { self.peers[key]?.id == peer.id && self.peers[key]?.connected == true }
                 if current { self.send(conn, dict: ["kind": "rule-ai-response", "requestID": requestID, "body": body]) }
             }
@@ -1541,11 +1548,17 @@ final class ConnectionHub: ObservableObject {
         lock.lock(); defer { lock.unlock() }
         guard let info = rosters[program]?.first(where: { $0.id == groupID }), info.custom, info.enabled else { return nil }
         let cluster = clusterLocked(program: program, groupId: groupID)
-        let raw = cluster?.sharedScalars["ruleAI"] as? [String: Any] ?? info.ruleAI
+        if let enabled = cluster?.sharedScalars["enabled"] as? Bool, !enabled { return nil }
+        if let type = cluster?.sharedScalars["groupType"] as? String, type != "custom" { return nil }
+        // An explicit shared null removes the connection. Never resurrect a
+        // member's stale pre-link selection while its next roster is in flight.
+        let raw: [String: Any]?
+        if let shared = cluster?.sharedScalars["ruleAI"] { raw = shared as? [String: Any] }
+        else { raw = info.ruleAI }
         guard let raw, let data = try? JSONSerialization.data(withJSONObject: raw),
               let configuration = try? JSONDecoder().decode(RuleAIConfiguration.self, from: data) else { return nil }
         let members = cluster.map { value in value.memberGroupIds.map { $0.key + ":" + $0.value }.sorted() } ?? [program + ":" + groupID]
-        return RuleAIContext(configuration: configuration, members: members, revision: info.aiEpoch)
+        return RuleAIContext(configuration: configuration, members: members, revision: info.aiEpoch + ":" + (cluster.map { $0.id + ":" + $0.aiEpoch } ?? "unlinked"))
     }
 
     private static func rosterInfos(_ groups: [[String: Any]]) -> [GroupInfo] {
@@ -1636,7 +1649,15 @@ final class ConnectionHub: ObservableObject {
     /// Caller must hold `lock`. Takes `program` out of the link; a link left
     /// with one member dissolves. A Mac group that leaves (or is left alone)
     /// is queued to keep only its own lines.
+    private func invalidateRuleAIMembersLocked(_ cluster: ClusterState) {
+        for (program, id) in cluster.memberGroupIds {
+            if let index = rosters[program]?.firstIndex(where: { $0.id == id }) { rosters[program]?[index].aiEpoch = UUID().uuidString }
+        }
+    }
+
     private func removeMemberLocked(_ cluster: ClusterState, program: String) {
+        invalidateRuleAIMembersLocked(cluster)
+        cluster.aiEpoch = UUID().uuidString
         if program == Self.localProgram, let id = cluster.memberGroupIds[program] {
             unlinkedLocal.insert(id)
             // Linked again later, it contributes afresh.
@@ -1926,8 +1947,10 @@ final class ConnectionHub: ObservableObject {
             cluster.originalUsagePending.insert(member)
         }
         cluster.members.formUnion([program, targetProgram])
+        cluster.aiEpoch = UUID().uuidString
         cluster.memberGroupIds[program] = groupId
         cluster.memberGroupIds[targetProgram] = targetGroupId
+        invalidateRuleAIMembersLocked(cluster)
         cluster.sharedRuleTime = timeState
         persistClustersLocked()
         guard clusterStorageWritable else {
@@ -2073,6 +2096,10 @@ final class ConnectionHub: ObservableObject {
                     cluster.sharedScalars = scalars
                     cluster.sharedTs = ts
                 }
+            }
+            let aiFields = ["ruleAI", "enabled", "groupType"]
+            if WebStoreDocument.canonicalJSON(scalarsBefore.filter { aiFields.contains($0.key) }) != WebStoreDocument.canonicalJSON(cluster.sharedScalars.filter { aiFields.contains($0.key) }) {
+                cluster.aiEpoch = UUID().uuidString
             }
             if let name = cluster.sharedScalars["name"] as? String, !name.isEmpty { cluster.groupName = name }
             // A changed budget (the editor's own rule, group-actions.js

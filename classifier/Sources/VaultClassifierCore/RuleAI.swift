@@ -22,6 +22,7 @@ public enum RuleAIError: String, Error, Sendable {
     case invalidConfiguration = "ai-not-configured"
     case invalidInput = "ai-invalid-input"
     case busy = "ai-busy"
+    case timeout = "ai-timeout"
     case usageLimit = "ai-daily-limit"
     case unavailable = "ai-unavailable"
     case failed = "ai-request-failed"
@@ -29,21 +30,17 @@ public enum RuleAIError: String, Error, Sendable {
     case storage = "ai-usage-storage-unavailable"
 }
 
-public struct RuleAIInput: Codable, Sendable {
+public struct RuleAIInput: Sendable {
     public let prompt: String
     public let inputJSON: String?
-    public let maximumOutputTokens: Int
+    public let maximumOutputTokens = 4096
     public init(payload: String) throws {
         guard payload.utf8.count <= 48_000, let data = payload.data(using: .utf8),
-              let object = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-              Set(object.keys).isSubset(of: ["prompt", "input", "maxOutputTokens"]),
+              let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+              Set(object.keys).isSubset(of: ["prompt", "input"]),
               let prompt = object["prompt"] as? String, !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
               prompt.utf8.count <= 20_000 else { throw RuleAIError.invalidInput }
         self.prompt = prompt
-        let tokens = object["maxOutputTokens"] ?? 2048
-        guard let number = tokens as? NSNumber, CFGetTypeID(number) != CFBooleanGetTypeID(),
-              number.doubleValue == Double(number.intValue), (1...4096).contains(number.intValue) else { throw RuleAIError.invalidInput }
-        maximumOutputTokens = number.intValue
         if let input = object["input"], !(input is NSNull) {
             let bytes = try JSONSerialization.data(withJSONObject: input, options: [.fragmentsAllowed, .sortedKeys])
             guard bytes.count <= 20_000 else { throw RuleAIError.invalidInput }

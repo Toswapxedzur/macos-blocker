@@ -14,6 +14,9 @@ public enum VaultMCPTools {
             return .ok(jsonText(key.map { [$0: shown] } ?? shown))
         }
         return [
+            MCPTool(name: "rule_ai_models", description: "The connected AI models available for custom rules: credential-free value, accountID and supported reasoning efforts. Save one selection as ruleAI on a custom group; linked members share the optional UTC daily request cap.", inputSchema: objectSchema([])) { _ in
+                .ok(jsonText(["models": ruleAIModels?() ?? []]))
+            },
             MCPTool(
                 name: "list_groups",
                 description: "List all block groups: id, name, enabled, mode, locked (frozen), and how many apps each lists. Linked groups show the shared state.",
@@ -35,7 +38,7 @@ public enum VaultMCPTools {
 
             MCPTool(
                 name: "set_group",
-                description: "Change a group's fields, as the editor does: name, enabled, mode (instant | after-minutes; a custom group stays instant), allowedMinutes, resetIntervalHours, resetAtMidnight, rollingLimit, activeDays (at least one), timeWindowsText (HH:MM-HH:MM lines, e.g. 09:00-10:00), allowSnooze, snoozeKind (time | budget — a time-limit group's snooze either pauses it for the snooze minutes, or adds them to its allowance until the next budget reset), snoozeMinutes, snoozeActivationDelayMinutes, snoozeCooldownMinutes (≤ 5), snoozeConfirmations, fallbackUrl, pauseSeconds, and scopes — Mac Vault's own lines only (the Apps lines; website and platform lines are a browser's and are refused). A value the editor refuses is refused, never replaced by a default. A frozen group can't be changed; the freeze has its own tools. Returns the group.",
+                description: "Change a group's fields, as the editor does: name, enabled, mode (instant | after-minutes; a custom group stays instant), allowedMinutes, resetIntervalHours, resetAtMidnight, rollingLimit, activeDays (at least one), timeWindowsText (HH:MM-HH:MM lines, e.g. 09:00-10:00), allowSnooze, snoozeKind (time | budget — a time-limit group's snooze either pauses it for the snooze minutes, or adds them to its allowance until the next budget reset), snoozeMinutes, snoozeActivationDelayMinutes, snoozeCooldownMinutes (≤ 5), snoozeConfirmations, fallbackUrl, pauseSeconds, ruleAI (custom groups only: {providerModel, accountID, reasoningEffort: default|low|medium|high, dailyRequestLimit: null or1–100000}; null disables AI), and scopes — Mac Vault's own lines only (the Apps lines; website and platform lines are a browser's and are refused). A value the editor refuses is refused, never replaced by a default. A frozen group can't be changed; the freeze has its own tools. Returns the group.",
                 inputSchema: [
                     "type": "object",
                     "properties": [
@@ -308,7 +311,9 @@ public enum VaultMCPTools {
 
     /// A custom group's snooze press, supplied by Mac Vault's rule engine.
     nonisolated(unsafe) public static var snoozePress: ((String) -> Void)?
-    /// A custom group's Run (id, source) → the load result, supplied by Mac Vault's rule engine.
+    /// Credential-free custom-rule connection choices supplied by the host.
+    nonisolated(unsafe) public static var ruleAIModels: (() -> [[String: Any]])?
+    /// A custom group's Run (id, source) → load result.
     nonisolated(unsafe) public static var runRule: ((String, String) -> [String: Any])?
 
     /// The rule reference the editor's "Let AI Code" gives an AI, for an engine.

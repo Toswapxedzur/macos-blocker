@@ -305,35 +305,35 @@ public actor ChatGPTAccountClient: CloudClassificationEngineResolving {
     }
 
     public func generateForRule(configuration: ChatGPTClassificationSettings, input: RuleAIInput) async throws -> RuleAIReply {
-        let result = try await infer(configuration: configuration, request: RuleAIGeneration.subscription(model: configuration.model, effort: configuration.reasoningEffort, input: input))
+        let result = try await infer(configuration: configuration, request: RuleAIGeneration.subscription(model: configuration.model, effort: configuration.reasoningEffort, input: input), maximumTextBytes: 48000, holdFailures: false)
         return try RuleAIReply(text: result.0, citations: result.1)
     }
     func classify(configuration: ChatGPTClassificationSettings, request: ChatGPTPlanProtocol.Request) async throws -> String {
         try await infer(configuration: configuration, request: request).0
     }
-    private func infer(configuration: ChatGPTClassificationSettings, request: ChatGPTPlanProtocol.Request) async throws -> (String, [RuleAICitation]) {
+    private func infer(configuration: ChatGPTClassificationSettings, request: ChatGPTPlanProtocol.Request, maximumTextBytes: Int = 262144, holdFailures: Bool = true) async throws -> (String, [RuleAICitation]) {
         try await acquireClassification(); defer { classificationsInFlight -= 1; onChange() }
         guard credential?.accountID == configuration.accountID else { throw CloudClassificationError.signInRequired }
-        guard !failureHold else { throw ChatGPTPlanError.failedResponse }
+        guard !holdFailures || !failureHold else { throw ChatGPTPlanError.failedResponse }
         let pending = generation
         let token: String
         do { token = try await accessToken() }
         catch {
             if pending != generation, !isShuttingDown { throw CloudClassificationError.signInRequired }
-            if !(error is CancellationError) { issue = error.localizedDescription; failureHold = true }
+            if !(error is CancellationError) { issue = error.localizedDescription; failureHold = holdFailures || failureHold }
             throw error
         }
         guard pending == generation, credential?.accountID == configuration.accountID else { throw CancellationError() }
         try Task.checkCancellation()
         // Recheck after token renewal: another batch may have consumed the
         // final slot, failed or reached a new UTC day while we were suspended.
-        guard !failureHold else { throw ChatGPTPlanError.failedResponse }
+        guard !holdFailures || !failureHold else { throw ChatGPTPlanError.failedResponse }
         if usage.day != Self.day() { usage = Usage(schemaVersion: 1, day: Self.day(), requests: 0) }
         if let limit = dailyRequestLimit, usage.requests >= limit { throw CloudClassificationError.usageLimit }
         usage.requests += 1
         try store.write(JSONEncoder().encode(usage), name: "usage.json") // Reserve before dispatch; failures count too.
         let id = UUID()
-        let work = Task { try await http.inference(request, token: token) }
+        let work = Task { try await http.inference(request, token: token, maximumTextBytes: maximumTextBytes) }
         activeRequests[id] = work
         defer { activeRequests[id] = nil }
         do {
@@ -345,7 +345,7 @@ public actor ChatGPTAccountClient: CloudClassificationEngineResolving {
             if pending != generation, !isShuttingDown { throw CloudClassificationError.signInRequired }
             // A sibling may have failed before this request was cancelled.
             // Only explicit Retry/disconnect may clear that failure hold.
-            if !(error is CancellationError) { issue = error.localizedDescription; failureHold = true }
+            if !(error is CancellationError) { issue = error.localizedDescription; failureHold = holdFailures || failureHold }
             throw error
         }
     }

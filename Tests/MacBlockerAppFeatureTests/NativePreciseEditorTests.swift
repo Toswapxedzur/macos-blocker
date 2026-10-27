@@ -173,7 +173,7 @@ final class NativePreciseEditorTests: XCTestCase {
         XCTAssertEqual((saved["lockVersion"] as? NSNumber)?.intValue, 1)
         XCTAssertEqual((saved["lockSyncedVersion"] as? NSNumber)?.intValue, 1)
         let data = try XCTUnwrap(UserDefaults.standard.data(forKey: registryKey))
-        let payload = try StorageSchemaPolicy(format: "hub.clusters").payload(from: data)
+        let payload = try StorageSchemaPolicy(format: "hub.clusters", currentSchema: 3).payload(from: data)
         let cluster = try XCTUnwrap((JSONSerialization.jsonObject(with: payload) as? [[String: Any]])?.first)
         XCTAssertEqual(((cluster["sharedLock"] as? [String: Any])?["lockVersion"] as? NSNumber)?.intValue, 1)
     }
@@ -215,7 +215,7 @@ final class NativePreciseEditorTests: XCTestCase {
         f.queue.sync {}
         func registry() throws -> [String: Any] {
             let data = try XCTUnwrap(UserDefaults.standard.data(forKey: registryKey))
-            let payload = try StorageSchemaPolicy(format: "hub.clusters").payload(from: data)
+            let payload = try StorageSchemaPolicy(format: "hub.clusters", currentSchema: 3).payload(from: data)
             return try XCTUnwrap((JSONSerialization.jsonObject(with: payload) as? [[String: Any]])?.first)
         }
         let before = try registry()

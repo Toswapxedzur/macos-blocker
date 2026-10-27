@@ -1,10 +1,34 @@
 import XCTest
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
 @testable import VaultClassifierCore
 @testable import VaultClassifierResearch
 
 final class RuleAIGenerationTests: XCTestCase {
+    func testRealAPIClientUsesSavedCredentialsAndReturnsGenericResultsForThreeProviders() async throws {
+        let input=try RuleAIInput(payload:#"{"prompt":"Summarize","input":{"text":"fixture"}}"#)
+        for (provider,model,host,header) in [(APIKeyProviderType.openAI,"gpt-5","api.openai.com","Authorization"),(.gemini,"gemini-3-flash-preview","generativelanguage.googleapis.com","x-goog-api-key"),(.xAI,"grok-4.6-fixture","api.x.ai","Authorization")] {
+            let profile=APIKeyProviderProfile(id:"fixture",type:provider,credential:"fixture-only-key")
+            let response: [String:Any] = provider == .gemini ? ["candidates":[["finishReason":"STOP","content":["parts":[["text":"A summary"]]]]]] : ["status":"completed","output":[["type":"message","content":[["type":"output_text","text":"A summary"]]]]]
+            let bytes=try JSONSerialization.data(withJSONObject:response)
+            let http=URLSessionProviderHTTPClient { request in
+                XCTAssertEqual(request.url?.host,host)
+                XCTAssertEqual(request.value(forHTTPHeaderField:header),provider == .gemini ? "fixture-only-key" : "Bearer fixture-only-key")
+                let body=try XCTUnwrap(JSONSerialization.jsonObject(with:XCTUnwrap(request.httpBody)) as? [String:Any])
+                XCTAssertNotNil(body["tools"]);XCTAssertFalse(String(decoding:request.httpBody!,as:UTF8.self).contains("fixture-only-key"))
+                XCTAssertNil(body["text"],"arbitrary rule calls must not inherit the tagging schema")
+                return (bytes,HTTPURLResponse(url:request.url!,statusCode:200,httpVersion:nil,headerFields:nil)!)
+            }
+            let client=APIKeyClassificationClient(profiles:{_ in profile},http:http)
+            let result=try await client.generateForRule(profileID:profile.id,model:model,effort:.low,input:input)
+            XCTAssertEqual(result.text,"A summary")
+            let status=await client.status();XCTAssertEqual(status.requestsToday,1)
+            await client.shutdown()
+        }
+    }
     func testPromptIsGenericAndAllConnectionsEnableSearchAndEffort() throws {
-        let input = try RuleAIInput(payload: #"{"prompt":"Summarize input","input":{"text":"example"},"maxOutputTokens":512}"#)
+        let input = try RuleAIInput(payload: #"{"prompt":"Summarize input","input":{"text":"example"}}"#)
         for (provider, model) in [(APIKeyProviderType.openAI,"gpt-5"),(.gemini,"gemini-3-flash-preview"),(.xAI,"grok-4.6-fixture")] {
             let profile = APIKeyProviderProfile(name: "Fixture", type: provider, credential: "fixture-only-key")
             let request = try RuleAIGeneration.apiKey(profile: profile, model: model, effort: .low, input: input)
@@ -16,7 +40,7 @@ final class RuleAIGenerationTests: XCTestCase {
         }
         let subscription = try RuleAIGeneration.subscription(model: "gpt-5", effort: .low, input: input)
         let root = try XCTUnwrap(JSONSerialization.jsonObject(with: XCTUnwrap(subscription.body)) as? [String: Any])
-        XCTAssertEqual(root["max_output_tokens"] as? Int, 512); XCTAssertNotNil(root["tools"])
+        XCTAssertNil(root["max_output_tokens"]); XCTAssertNotNil(root["tools"])
     }
     func testInputBoundsRejectProviderOverridesAndNonIntegerTokens() throws {
         for payload in [#"{"prompt":"x","model":"override"}"#, #"{"prompt":"x","maxOutputTokens":true}"#, #"{"prompt":"x","maxOutputTokens":1.2}"#, #"{"prompt":"x","maxOutputTokens":4097}"#, #"{"prompt":""}"#] {

@@ -14,7 +14,6 @@ public enum RuleAIGeneration {
         let request = try ChatGPTPlanProtocol.inferenceRequest(model: model, instructions: instructions, input: input.userPrompt)
         var body = try JSONSerialization.jsonObject(with: request.body!) as! [String: Any]
         body["tools"] = [["type": "web_search"]]
-        body["max_output_tokens"] = input.maximumOutputTokens
         if effort != .providerDefault { body["reasoning"] = ["effort": effort.rawValue] }
         return .init(url: request.url, method: request.method, contentType: request.contentType, body: try JSONSerialization.data(withJSONObject: body))
     }

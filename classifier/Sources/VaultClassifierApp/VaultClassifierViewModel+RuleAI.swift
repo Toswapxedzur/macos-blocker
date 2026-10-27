@@ -15,9 +15,9 @@ extension VaultClassifierViewModel {
             for model in chatGPTStatus.models { append("chatgpt:" + model.identifier, chatGPTStatus.accountID, "ChatGPT subscription · " + model.displayName, nil, model.identifier) }
         }
         for profile in localState?.workspaceCatalog.providerProfiles ?? [] where APIKeyClassificationClient.supports(profile.type) && profile.credential?.isEmpty == false {
-            for model in providerModelCatalogs[profile.id] ?? [] { append("api:" + profile.id + ":" + model.identifier, "", profile.name + " · " + model.identifier, profile.type, model.identifier) }
+            for model in providerModelCatalogs[profile.id] ?? [] where model.supportsTools != false && model.supportsNativeWebSearch != false { append("api:" + profile.id + ":" + model.identifier, "", profile.name + " · " + model.identifier, profile.type, model.identifier) }
         }
-        return choices
+        return Array(choices.prefix(512))
     }
     func validateRuleAI(_ configuration: RuleAIConfiguration) -> Bool {
         guard (try? configuration.validate()) != nil else { return false }

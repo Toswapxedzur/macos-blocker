@@ -37,6 +37,9 @@ public enum ExtensionMCPTools {
     public static func tools(bridge: Bridge = .liveHub) -> [MCPTool] {
         let browserProperty: [String: Any] = ["type": "string", "description": "Which connected browser, by program name (chrome, edge, safari); needed only when more than one browser is connected."]
         return [
+            MCPTool(name: "extension_rule_ai_models", description: "Available custom-rule AI connections/models and supported reasoning efforts, through the connected Mac Vault. Credentials are never returned. Save one ruleAI selection with extension_set_group; linked groups share settings and the optional UTC daily request allowance.", inputSchema: ["type":"object","properties":["browser":browserProperty]]) { args in
+                relay(bridge,"settings-rule-ai-models",[:],args)
+            },
             MCPTool(
                 name: "extension_state",
                 description: "The Vault browser extension's settings as JSON: every block group (platform rules with author / subreddit / tag filters, cover-until-tagged, page blocking, schedules, snooze rules, freeze (wait + PIN); site and custom groups), usage timers, active snoozes, the classifier settings (collection on/off, tagging mode) and global settings. Read live from the connected browser.",

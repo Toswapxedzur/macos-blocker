@@ -15,8 +15,8 @@ public struct ChatGPTHTTPClient: Sendable {
         return buffer.value
     }
 
-    func inference(_ plan: ChatGPTPlanProtocol.Request, token: String) async throws -> (String, Int?, [RuleAICitation]) {
-        let stream = LockedStream()
+    func inference(_ plan: ChatGPTPlanProtocol.Request, token: String, maximumTextBytes: Int = 262144) async throws -> (String, Int?, [RuleAICitation]) {
+        let stream = LockedStream(maximumTextBytes: maximumTextBytes)
         try await sender(try request(plan, token: token)) { try stream.append($0) }
         return try stream.finish()
     }
@@ -50,7 +50,9 @@ private final class LockedData: @unchecked Sendable {
 
 private final class LockedStream: @unchecked Sendable {
     private let lock = NSLock(); private var parser = ChatGPTPlanStream()
-    func append(_ bytes: Data) throws { try lock.withLock { try parser.append(bytes) } }
+    private let maximumTextBytes: Int
+    init(maximumTextBytes: Int) { self.maximumTextBytes = maximumTextBytes }
+    func append(_ bytes: Data) throws { try lock.withLock { try parser.append(bytes); if parser.text.utf8.count > maximumTextBytes { throw ChatGPTPlanError.responseTooLarge } } }
     func finish() throws -> (String, Int?, [RuleAICitation]) { try lock.withLock { (try parser.finish(), parser.totalTokens, parser.citations) } }
 }
 

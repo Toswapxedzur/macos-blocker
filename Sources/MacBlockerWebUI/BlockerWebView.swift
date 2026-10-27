@@ -262,7 +262,7 @@ public struct BlockerWebView: NSViewRepresentable {
         private let clustersJSON: (() -> String?)?
         private let onLinkRequest: ((String, [String: Any], @escaping (String?) -> Void) -> Void)?
         private let tagNames: ((String) -> [String])?
-    private let ruleAIModels: (() -> [String: Any])?
+        private let ruleAIModels: (() -> [String: Any])?
         private let scenes: [WebScene]
         private let downloadDirectory: URL
         private var downloadDestinations: [ObjectIdentifier: URL] = [:]
@@ -299,7 +299,7 @@ public struct BlockerWebView: NSViewRepresentable {
             self.clustersJSON = clustersJSON
             self.onLinkRequest = onLinkRequest
             self.tagNames = tagNames
-        self.ruleAIModels = ruleAIModels
+            self.ruleAIModels = ruleAIModels
         }
 
         deinit {
