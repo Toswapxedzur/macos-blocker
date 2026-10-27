@@ -54,6 +54,44 @@ Only the explicit reconciliation command may bootstrap from a reviewed
 standalone controller into the registered canonical checkout. All ordinary
 commands keep the shared-checkout restriction.
 
+## Approved metadata-rewrite recovery
+
+Owner approval on 2026-10-27 permits the exact `metadata-rewrite-20261027` policy.
+An external rewrite changed five preserved refs, the prior delivered commit and the
+last verified commit while retaining their source trees. The pinned table in the
+controller identifies every original/rewritten object and the exact pre-recovery
+receipt digest; it never discovers or adopts arbitrary equal trees.
+
+Run the committed, pushed task controller explicitly:
+
+```sh
+python3 /absolute/reviewed/task/scripts/development/vault-delivery.py recover-metadata-history \
+  --source /absolute/reviewed/task --policy metadata-rewrite-20261027
+```
+
+Only this explicit recovery command may bootstrap from that task into the approved
+shared checkout. It requires the reviewed integration/upstream/actual remote HEAD,
+a clean pushed source descending from the reviewed feature, and only the listed
+controller/docs/tests changes after that feature. It verifies original receipt
+bytes, original and rewritten objects, all changed refs, accepted ancestry and
+excluded old history before mutating anything. Drift, partial preservation or
+unlisted source edits stop the operation.
+
+The command creates new preservation refs for both object histories and an exact
+archive of the current receipt; original history records and their earlier archive
+remain unchanged. It records the explicit adoption through the controller, drops
+old verification and ordinarily merges the reviewed task. It never resets a branch,
+force-pushes, relabels test evidence or launches an app. Normal exact-commit remote
+verification and a normal integration push are required afterward. Future integrate,
+verify and launch operations validate this preserved evidence and mapped ancestry.
+The original five audit refs are kept at their reviewed rewritten objects; new refs
+preserve every original object independently. Do not edit either receipt by hand.
+
+`test-metadata-recovery.py` uses only disposable local Git remotes/receipts on the
+selected test host. It checks preservation, fresh verification/push requirements,
+wrong trees, changed receipts/remotes/source, dirty worktrees, partial recovery and
+audit tampering. It is included in normal controller verification.
+
 When the owner explicitly selects mini2 for a run, use `verify --host mini2`.
 If that host uses a pinned source runtime instead of Homebrew, also pass
 `--runtime-prefix /absolute/remote/runtime/install`. All checks still run on
@@ -97,9 +135,10 @@ Mini1 source exports have no laptop Git setting and can use the build script
 for testing normally. Never use the lower-level script to bypass laptop
 delivery.
 
-Regression checks (mini1 only):
+Regression checks (mini1 by default, or the explicitly owner-selected host):
 `python3 scripts/development/test-vault-delivery.py`,
-`python3 scripts/development/test-history-reconciliation.py`, and
+`python3 scripts/development/test-history-reconciliation.py`,
+`python3 scripts/development/test-metadata-recovery.py`, and
 `bash -n run-mac-vault.sh scripts/development/launch-mac-vault-build.sh`.
 
 Safari pairing additionally requires a current Apple profile selected with

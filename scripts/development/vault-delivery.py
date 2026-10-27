@@ -28,6 +28,161 @@ SUPPORTED_RECONCILIATIONS = {
 }
 
 
+# Owner-approved on 2026-10-27. These are source-identical metadata aliases,
+# never a rule for discovering arbitrary equal trees or replacing app history.
+SUPPORTED_METADATA_RECOVERIES = {
+    "metadata-rewrite-20261027": {
+        "integrationHead": "00c1b790ecc6388a1bac6d803bd58a0473539582",
+        "minimumSource": "c5e7dc027a1e9d2c7ab663c3a15b99b82c15d2d2",
+        "stateSHA256": "08d3b5b9708993b90e45343bee224a6f8bfc3968e237f6405c6e71b5a1d634e3",
+        "reconciliationOld": "dc6548d967596df22b3bf6b451ec471ad7093935",
+        "reconciliationNew": "9de26f1db20fe319b7a85dfef1fc44f29afc3bd9",
+        "delivered": "4012d7a8141af96266c5b02fd9a6c4039ae979f7",
+        "allowedSourcePaths": ["scripts/development/vault-delivery.py", "scripts/development/test-metadata-recovery.py",
+                               "scripts/development/README.md", "scripts/development/package-info.md"],
+        "aliases": {
+            "dc6548d967596df22b3bf6b451ec471ad7093935": "8ed2ec0f2eef05e5b63b94d2bf4c592b5f7f3c04",
+            "9de26f1db20fe319b7a85dfef1fc44f29afc3bd9": "8ed2ec0f2eef05e5b63b94d2bf4c592b5f7f3c04",
+            "ebddc16ad6270ddc8ea56e9b36750715a24a6adf": "3c08e38853d5bc58f934ad592cd5a8aaaea4e94e",
+            "7cc1686ccda9bd787125a3686c7905db689b0d27": "420614f0114d63f80a3ee2cf4cc66f6f436070a4",
+            "83724b9239c55c3e0866230cd8126dec0cf06ed2": "7e8e804a82091d60e4c3d2caaeadbfab28c1394b",
+            "4012d7a8141af96266c5b02fd9a6c4039ae979f7": "02814ad7393bab994e4f54edbaf39f298403bf00",
+            "8b7fee490fa81e10fa58bcdc44ef3b47692e05e5": "00c1b790ecc6388a1bac6d803bd58a0473539582",
+        },
+    },
+}
+
+
+def metadata_archive_path(common, policy_id):
+    return common / "vault-history-reconciliation" / (policy_id + ".before.json")
+
+
+def metadata_ref_prefix(policy_id):
+    return "refs/vault-delivery/metadata-recovery/" + policy_id + "/"
+
+
+def validate_metadata_policy(policy):
+    for old, new in policy["aliases"].items():
+        if not all(isinstance(sha, str) and re.fullmatch(r"[0-9a-f]{40}", sha) for sha in (old, new)):
+            raise RuntimeError("Metadata recovery requires exact reviewed commit IDs.")
+        for sha in (old, new):
+            if git(ROOT, "rev-parse", sha + "^{commit}") != sha:
+                raise RuntimeError("Metadata recovery commit is missing.")
+        if git(ROOT, "rev-parse", old + "^{tree}") != git(ROOT, "rev-parse", new + "^{tree}"):
+            raise RuntimeError("Metadata recovery aliases have different source trees.")
+
+
+def metadata_aliases(common, state):
+    records = state.get("metadataRecoveries", [])
+    if "metadataRecoveries" not in state:
+        return {}
+    if not isinstance(records, list) or len(records) != 1 or not isinstance(records[0], dict):
+        raise RuntimeError("Metadata recovery record is invalid.")
+    record = records[0]
+    policy_id = record.get("policy")
+    policy = SUPPORTED_METADATA_RECOVERIES.get(policy_id)
+    if policy is None or record.get("version") != 1 or record.get("stage") != "adopted":
+        raise RuntimeError("Metadata recovery policy is unsupported or incomplete.")
+    if ROOT != APPROVED_CHECKOUT:
+        raise RuntimeError("Metadata recovery is restricted to the approved checkout.")
+    path = metadata_archive_path(common, policy_id)
+    if path.is_symlink() or not path.is_file() or hashlib.sha256(path.read_bytes()).hexdigest() != policy["stateSHA256"]:
+        raise RuntimeError("Original metadata recovery receipt changed or is missing.")
+    original = json.loads(path.read_bytes())
+    if original.get("historyReconciliations") != state.get("historyReconciliations"):
+        raise RuntimeError("Original history reconciliation record changed.")
+    validate_metadata_policy(policy)
+    prefix = metadata_ref_prefix(policy_id)
+    for old, new in policy["aliases"].items():
+        if git(ROOT, "rev-parse", prefix + "original/" + old) != old or git(ROOT, "rev-parse", prefix + "rewritten/" + old) != new:
+            raise RuntimeError("Metadata preservation ref changed or is missing.")
+    source = record.get("source")
+    if not isinstance(source, str) or not re.fullmatch(r"[0-9a-f]{40}", source) or git(ROOT, "rev-parse", prefix + "source") != source:
+        raise RuntimeError("Reviewed metadata recovery source changed.")
+    if not ancestor(policy["minimumSource"], source):
+        raise RuntimeError("Metadata recovery source omits accepted task history.")
+    return policy["aliases"]
+
+
+def pushed_source_head(source):
+    upstream = git(source, "rev-parse", "--symbolic-full-name", "@{upstream}")
+    prefix = "refs/remotes/origin/"
+    if not upstream.startswith(prefix):
+        raise RuntimeError("Recovery source must track the approved origin.")
+    branch = "refs/heads/" + upstream[len(prefix):]
+    rows = git(source, "ls-remote", "--exit-code", "origin", branch).splitlines()
+    if len(rows) != 1 or len(rows[0].split()) != 2 or rows[0].split()[1] != branch:
+        raise RuntimeError("Cannot validate the recovery source's actual remote ref.")
+    return rows[0].split()[0]
+
+
+def recover_metadata_history(common, source, policy_id):
+    """Explicit approved adoption; preserve both histories without resetting HEAD."""
+    if ROOT != APPROVED_CHECKOUT:
+        raise RuntimeError("Metadata recovery is restricted to the approved checkout.")
+    policy = SUPPORTED_METADATA_RECOVERIES.get(policy_id)
+    if policy is None:
+        raise RuntimeError("Unsupported metadata recovery policy.")
+    source = Path(source).resolve()
+    clean(ROOT); clean(source); remote_identity()
+    if (source / git(source, "rev-parse", "--git-common-dir")).resolve() != common:
+        raise RuntimeError("Metadata recovery source must share the same repository.")
+    head = git(ROOT, "rev-parse", "HEAD")
+    if head != policy["integrationHead"] or git(ROOT, "rev-parse", "@{upstream}") != head or live_remote_commit() != head:
+        raise RuntimeError("Integration or its remote changed since metadata review.")
+    candidate = git(source, "rev-parse", "HEAD")
+    if git(source, "rev-parse", "@{upstream}") != candidate or pushed_source_head(source) != candidate or not ancestor(policy["minimumSource"], candidate):
+        raise RuntimeError("Recovery source must be pushed and include the reviewed task.")
+    changed = set(git(source, "diff", "--name-only", policy["minimumSource"], candidate).splitlines())
+    if not changed or not changed.issubset(policy["allowedSourcePaths"]):
+        raise RuntimeError("Recovery source contains changes outside the reviewed controller scope.")
+    raw = (common / "vault-delivery.json").read_bytes()
+    if hashlib.sha256(raw).hexdigest() != policy["stateSHA256"]:
+        raise RuntimeError("Delivery receipt changed since metadata review.")
+    state = json.loads(raw)
+    if state.get("metadataRecoveries") or state.get("delivered", {}).get("commit") != policy["delivered"]:
+        raise RuntimeError("Metadata recovery already exists or delivery changed.")
+    if len(state.get("historyReconciliations", [])) != 1:
+        raise RuntimeError("Metadata recovery requires the original reconciliation.")
+    record = state["historyReconciliations"][0]
+    if (record.get("oldBase"), record.get("newBase")) != (policy["reconciliationOld"], policy["reconciliationNew"]):
+        raise RuntimeError("Metadata recovery does not match the original reconciliation.")
+    supported_mapping(record["oldBase"], record["newBase"])
+    original = snapshot_path(common, record["oldBase"], record["newBase"])
+    if original.is_symlink() or not original.is_file() or hashlib.sha256(original.read_bytes()).hexdigest() != record["originalReceiptSHA256"]:
+        raise RuntimeError("Original reconciliation receipt changed or is missing.")
+    validate_metadata_policy(policy)
+    prefix = ref_prefix(record["oldBase"], record["newBase"])
+    for name, old in (("old-delivered", record["oldBase"]), ("old-checkout", record["oldCheckout"]),
+                      ("old-source", record["oldSource"]), ("new-base", record["newBase"]), ("candidate", record["candidate"])):
+        if git(ROOT, "rev-parse", prefix + name) != policy["aliases"].get(old):
+            raise RuntimeError("Preserved ref differs from the exact reviewed metadata alias.")
+    mapped_new = policy["aliases"][record["newBase"]]
+    mapped_candidate = policy["aliases"][record["candidate"]]
+    if not ancestor(mapped_new, head) or not ancestor(mapped_candidate, head) or not ancestor(policy["aliases"][policy["delivered"]], head):
+        raise RuntimeError("Rewritten integration omits reviewed accepted history.")
+    old_exclusive = set(git(ROOT, "rev-list", policy["aliases"][record["oldSource"]], "^" + mapped_new).splitlines())
+    if old_exclusive.intersection(git(ROOT, "rev-list", candidate, "^" + mapped_new).splitlines()):
+        raise RuntimeError("Recovery source includes discarded history.")
+    path = metadata_archive_path(common, policy_id); preservation = metadata_ref_prefix(policy_id)
+    if path.exists() or path.is_symlink() or git(ROOT, "for-each-ref", "--format=%(refname)", preservation):
+        raise RuntimeError("Partial metadata preservation exists; inspect it before recovery.")
+    clean(ROOT); clean(source)
+    if (common / "vault-delivery.json").read_bytes() != raw or git(ROOT, "rev-parse", "HEAD") != head or git(source, "rev-parse", "HEAD") != candidate or live_remote_commit() != head or pushed_source_head(source) != candidate:
+        raise RuntimeError("Metadata recovery inputs changed during preflight.")
+    path.parent.mkdir(exist_ok=True)
+    with path.open("xb") as output:
+        output.write(raw); output.flush(); os.fsync(output.fileno())
+    pairs = [("original/" + old, old) for old in policy["aliases"]] + [("rewritten/" + old, new) for old, new in policy["aliases"].items()] + [("source", candidate)]
+    commands = "start\n" + "".join("create " + preservation + name + " " + sha + "\n" for name, sha in pairs) + "prepare\ncommit\n"
+    subprocess.run(["git", "-C", str(ROOT), "update-ref", "--stdin"], input=commands, text=True, check=True)
+    state["metadataRecoveries"] = [{"version": 1, "stage": "adopted", "policy": policy_id, "source": candidate, "at": time.time()}]
+    state.pop("verified", None)  # A metadata alias is never fresh test evidence.
+    write_state(common, state)
+    validate_reconciled_lineage(common, state, head)
+    print("Recovered reviewed metadata mappings; original receipts, both histories and current HEAD preserved. Fresh verification is required.")
+
+
 def ancestor(old, new):
     result = subprocess.run(["git", "-C", str(ROOT), "merge-base", "--is-ancestor", old, new],
                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -105,13 +260,14 @@ def validate_preserved_record(common, record, delivered):
         raise RuntimeError("Original receipt is outside the supported delivered mapping.")
     if delivered.get("commit") == old and original.get("delivered") != delivered:
         raise RuntimeError("Original delivered receipt fields changed.")
+    aliases = metadata_aliases(common, read_state(common))
     prefix = ref_prefix(old, new)
     for key, sha in (("old-delivered", old), ("old-checkout", record.get("oldCheckout")),
                      ("old-source", record.get("oldSource")), ("new-base", new), ("candidate", record.get("candidate"))):
-        if not sha or git(ROOT, "rev-parse", prefix + key) != sha:
+        if not sha or git(ROOT, "rev-parse", prefix + key) != aliases.get(sha, sha):
             raise RuntimeError("A preserved reconciliation ref changed or is missing.")
     remote_identity()
-    return new
+    return aliases.get(new, new)
 
 
 def validate_reconciled_lineage(common, state, sha):
@@ -121,9 +277,10 @@ def validate_reconciled_lineage(common, state, sha):
         raise RuntimeError("History reconciliation is incomplete or unsupported.")
     record = records[0]
     new = validate_preserved_record(common, record, previous)
-    if not ancestor(new, sha) or not ancestor(record["candidate"], sha):
+    aliases = metadata_aliases(common, state)
+    if not ancestor(new, sha) or not ancestor(aliases.get(record["candidate"], record["candidate"]), sha):
         raise RuntimeError("Delivery is outside the reconciled canonical lineage.")
-    old_exclusive = set(git(ROOT, "rev-list", record["oldSource"], "^" + new).splitlines())
+    old_exclusive = set(git(ROOT, "rev-list", aliases.get(record["oldSource"], record["oldSource"]), "^" + new).splitlines())
     if old_exclusive.intersection(git(ROOT, "rev-list", sha, "^" + new).splitlines()):
         raise RuntimeError("Delivery brings discarded old history into the rewritten lineage.")
     return record
@@ -253,7 +410,8 @@ def check_launch(common):
     if records:
         if not reconciliation_allows_launch(common, state, sha):
             raise RuntimeError("Delivery has no valid preserved history reconciliation.")
-    if previous and not mapped_previous and not ancestor(previous, sha):
+    effective_previous = metadata_aliases(common, state).get(previous, previous)
+    if previous and not mapped_previous and not ancestor(effective_previous, sha):
         raise RuntimeError("Delivery would discard previously delivered history. Integrate it first.")
     return sha, state
 
@@ -269,8 +427,10 @@ def integrate(common, source):
     state = read_state(common)
     if state.get("historyReconciliations"):
         record = validate_reconciled_lineage(common, state, git(ROOT, "rev-parse", "HEAD"))
-        old_exclusive = set(git(ROOT, "rev-list", record["oldSource"], "^" + record["newBase"]).splitlines())
-        if old_exclusive.intersection(git(ROOT, "rev-list", sha, "^" + record["newBase"]).splitlines()):
+        aliases = metadata_aliases(common, state)
+        base = aliases.get(record["newBase"], record["newBase"])
+        old_exclusive = set(git(ROOT, "rev-list", aliases.get(record["oldSource"], record["oldSource"]), "^" + base).splitlines())
+        if old_exclusive.intersection(git(ROOT, "rev-list", sha, "^" + base).splitlines()):
             raise RuntimeError("Integration would bring discarded old history into the rewritten lineage.")
     subprocess.run(["git", "-C", str(ROOT), "merge", "--no-edit", sha], check=True)
     print(f"Integrated {sha}; verify the combined delivery commit on mini1 before launch.")
@@ -384,7 +544,7 @@ def verify(common, host="mini1", runtime_prefix=None, account=None, node_executa
             raise RuntimeError("Could not export the delivery commit.")
     node = shlex.quote(identity["uiRuntime"]["node"])
     checks = [
-        "python3 scripts/development/test-vault-delivery.py && python3 scripts/development/test-history-reconciliation.py",
+        "python3 scripts/development/test-vault-delivery.py && python3 scripts/development/test-history-reconciliation.py && python3 scripts/development/test-metadata-recovery.py",
         "bash -n run-mac-vault.sh scripts/development/launch-mac-vault-build.sh",
         "swift build --product MacBlockerPanel",
         node + " classifier/Tests/WebUI/autosave.mjs",
@@ -486,8 +646,11 @@ def main():
     reconciliation.add_argument("--source", required=True)
     reconciliation.add_argument("--old-base", required=True)
     reconciliation.add_argument("--new-base", required=True)
+    recovery = commands.add_parser("recover-metadata-history", help="Adopt only the explicitly owner-approved metadata mapping; then ordinarily integrate its reviewed source")
+    recovery.add_argument("--source", required=True)
+    recovery.add_argument("--policy", choices=SUPPORTED_METADATA_RECOVERIES, required=True)
     args = parser.parse_args()
-    if args.command == "reconcile-history":
+    if args.command in ("reconcile-history", "recover-metadata-history"):
         source = Path(args.source).resolve()
         clean(source)
         checkout = Path(git(source, "config", "--get", "vault.deliveryCheckout")).resolve()
@@ -513,6 +676,9 @@ def main():
             launch(common, args.check)
         elif args.command == "reconcile-history":
             reconcile_history(common, args.source, args.old_base, args.new_base)
+        elif args.command == "recover-metadata-history":
+            recover_metadata_history(common, args.source, args.policy)
+            integrate(common, args.source)
         else:
             print(json.dumps({"checkout": str(ROOT), "branch": BRANCH, "head": git(ROOT, "rev-parse", "HEAD"), **read_state(common)}, indent=2))
 
