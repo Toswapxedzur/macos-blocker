@@ -83,41 +83,7 @@ Settings has four choices: **ChatGPT subscription**, **OpenAI API**, **Gemini AP
 
 **Reasoning effort** controls how much the selected model thinks: Model default, Low, Medium or High where supported. Higher effort can add time and token usage. Web search is always enabled for tagging; the model decides when it needs to search. Choose a model that supports search and structured tagging. Failed or unavailable requests keep valid cached results; new items remain unresolved until you choose **Retry cloud classification**. Vault does not switch providers automatically.
 
-Optional web research, dictionaries and platform-data services are under **Research & data services**.
-
 Correct a content item's tags in the browser extension. Click **+ tag**, search the Classifier's existing tags, and choose one to add it. Use a tag's remove control, or select it and press Delete once, to remove it. **Untagged** means tagging finished with no tags; **Tagging** means a result is pending. Corrections inform future tagging.
-
-## Knowledge and web research
-
-Knowledge stores short descriptions on this Mac and includes relevant descriptions in requests to your selected tagging provider. **Content sources** include creators, accounts, channels, and communities. Source descriptions accompany their content. **Known terms** apply when a term appears in a title.
-
-Add a source or term and its description, or leave the description empty to request research when enabled. Creator suggestions help find a source the Classifier has collected. Lists with six or more entries have search directly above them: Terms and each platform’s Content sources have separate searches for name, identifier, or description. Editing a description affects future tagging; deleting source knowledge does not prevent later research from recreating it.
-
-### Official and personal dictionaries
-
-Open **Settings → Research & data services → Dictionaries** to configure official dictionaries. Knowledge shows their installed versions and a shortcut to these controls. Vault checks for updates at startup; use **Check for updates** and the download buttons to install them. Dictionary downloads do not require your own AI API key.
-
-- **Terms** are downloaded for local lookup.
-- **Creator cache** keeps up to 10,000 entries by default; you can change the limit. A cache miss sends the public, platform-scoped creator ID to the dictionary service.
-- **Full creator download** looks up creators locally once downloaded. Download it after choosing this mode.
-
-Your personal descriptions, including descriptions made with your research provider, take priority over official ones. Under **Personal dictionary import/export**, export your personal entries or import a JSON file; official entries are not personal exports.
-
-**Help improve the creator dictionary** is on by default and explained before the first contribution. Turn it off on this Settings page to stop future contributions and cancel pending requests. When enabled, Vault sends only sampled missing public creator IDs and public follower/subscriber counts, not titles, browsing history or personal descriptions. Read the disclosure for submission limits and retention. Web research has separate consent and provider settings.
-
-### Configure a research provider
-
-1. Open **Settings → API keys & providers**.
-2. Choose a provider type and **Add provider**. This creates a configuration; it does not issue an API key.
-3. Obtain credentials from that provider and enter them. For a compatible custom endpoint, also configure its endpoint and protocol fields.
-4. In **Web research**, choose a provider with built-in web search. Fetch its model list and select a research model. Use the model chooser's search to narrow the list; refresh it to fetch it again.
-5. Read the consent disclosure and enable consent. Choose **On**, **Off**, or **Follow Settings** in each group.
-
-**Set up web research…** takes you to settings when configuration is missing. A group cannot bypass research consent. **Test connection** confirms the test request succeeded, not that every model supports research. A provider's test model is separate from the selected research model.
-
-Keys are stored in the app's support folder on this Mac, not the system Keychain. They authenticate requests to the configured provider; Vault does not upload them to its own server. Research sends sanitized public subjects to the selected provider, not private content bodies or summaries. Read the consent disclosure for the exact fields sent. Provider usage includes connection tests and model-list requests as well as research.
-
-Research status shows queued requests, retry cooldowns, failures, and the day's token usage. **Retry failed subjects now** retries eligible failures; it does not bypass the daily allowance or consent.
 
 ## Activity
 
@@ -141,6 +107,6 @@ Choose the interface language in Settings. Field explanations are available thro
 
 ## Saving and troubleshooting
 
-Routine Vault and Classifier edits save automatically. Activity group editing uses **Save**. Adding, deleting, dictionary downloads, connection tests and model-list fetching remain explicit actions.
+Routine Vault and Classifier edits save automatically. Activity group editing uses **Save**. Adding, deleting, connection tests and model-list fetching remain explicit actions.
 
 If tags are missing, check the browser connection, global tagging switch, group pause state, platform recording, selected connection/model and its credentials. If research does not run, check consent, group choice, provider credentials, research model, and the research status. If a linked group cannot be edited, reconnect its programs or unfreeze it as indicated.

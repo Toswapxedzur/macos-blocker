@@ -10,7 +10,7 @@ async function runLanguageManualTests() {
     document.querySelector(`[data-scene="${scene}"]`).click(); await delay();
     let opener=scope.querySelector(selector); opener.focus();opener.click(); await delay();
     if (scene === 'classifier') {
-      window.VaultClassifier.receive({...classifierState, workspace:"knowledge", presentationRevision:2}); await delay();
+      window.VaultClassifier.receive({...classifierState, issue:"Synthetic visible update", presentationRevision:2}); await delay();
       check(!opener.isConnected, 'Classifier snapshot replaces the original opener');
       opener=scope.querySelector(selector);
     }
@@ -32,9 +32,13 @@ async function runLanguageManualTests() {
   check(copied?.startsWith('# Mac Vault code manual') && copied.includes('v.block(appId'), 'Mac Copy code docs uses the native app API');
   await setLanguage('zh');
   document.querySelector('[data-scene="activity"]').click();await delay();
+  const originalFetch=window.fetch;
+  window.fetch=(resource,...args)=>String(resource).endsWith('manual/zh.md')?Promise.resolve(new Response('',{status:404})):originalFetch(resource,...args);
   activity.querySelector('#activityManualButton').click();await delay();
+  window.fetch=originalFetch;
   const fallback=document.getElementById('manualContent');
   check([...fallback.querySelectorAll('h2')].some(node=>node.textContent==='Classifier'), 'Missing native translation falls back to the current English guide');
+  check(!fallback.textContent.includes('Knowledge and web research') && !fallback.textContent.includes('Research & data services'), 'English fallback guide omits dormant setup instructions');
   check(!fallback.textContent.includes('focusEvent') && !fallback.textContent.includes('setShieldMessage'), 'Fallback manual never teaches the retired native rule API');
   document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}));await delay();
   return results;

@@ -12,7 +12,7 @@ window.runTagBoundsTests=async()=>{
   await poll(()=>q('[data-action="selectType"]'));q('[data-action="selectType"]').click();
   const more='[data-expand="type-more:group-1"]';
   expect(!q(more).open && q(form+' [data-field="houseRules"]').checkVisibility()
-    && q(form+' .strictness-options').checkVisibility() && q('[data-group-research-choice]').nextElementSibling?.checkVisibility(),'core tagging, rules and research settings stay visible outside More');
+    && q(form+' .strictness-options').checkVisibility(),'core tagging and rules stay visible outside More');
   q(more+' summary').click();
   expect(q(minimum).value==='' && q(maximum).value==='' && q(minimum).placeholder==='0' && q(maximum).placeholder==='3','empty bounds display the selected dial defaults');
   input(minimum,'1');await poll(()=>model().minimumTagsOverride===1);
