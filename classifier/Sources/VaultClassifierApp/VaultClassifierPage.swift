@@ -28,6 +28,14 @@ public final class VaultClassifierPage {
     }
 
 
+    public func ruleAIModels() -> [[String: Any]] { start(); return model?.ruleAIModels() ?? [] }
+    public func validateRuleAI(_ configuration: RuleAIConfiguration) -> Bool { start(); return model?.validateRuleAI(configuration) == true }
+    public func generateForRule(configuration: RuleAIConfiguration, input: RuleAIInput) async throws -> RuleAIReply {
+        start()
+        guard !isShuttingDown, let model else { throw RuleAIError.unavailable }
+        return try await model.generateForRule(configuration: configuration, input: input)
+    }
+
     // MARK: The page, as a scene of the host's web view
 
     /// The page's web files (app.js, app.css, strings.js); the host serves

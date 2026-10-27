@@ -149,6 +149,7 @@ open class BlockerAppDelegate: NSObject, NSApplicationDelegate {
                 MacEnforcementBridge.shared.stop()
                 activityRecorder?.stop()
                 ConnectionHub.shared.stop()
+                RuleAIService.shared.shutdown()
                 await VaultClassifierPage.shared.shutdown()
             }, reply: { sender.reply(toApplicationShouldTerminate: true) })
         }

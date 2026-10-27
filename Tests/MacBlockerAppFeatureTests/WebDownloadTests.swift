@@ -39,7 +39,7 @@ final class WebDownloadTests: XCTestCase {
         let store = BlockerWebStore(shared: SharedAppGroupStore(baseDirectory: directory.appendingPathComponent("store")))
         let coordinator = BlockerWebView.Coordinator(store: store, ruleLogJSON: nil, onClearRuleLog: nil,
             onStorePersisted: nil, onRunCustomGroup: nil, onSnoozePress: nil, clustersJSON: nil,
-            onLinkRequest: nil, tagNames: nil, scenes: [], downloadDirectory: directory)
+            onLinkRequest: nil, tagNames: nil, ruleAIModels: nil, scenes: [], downloadDirectory: directory)
         let config = WKWebViewConfiguration()
         config.websiteDataStore = .nonPersistent()
         config.userContentController.add(coordinator, name: "cbBridge")
@@ -74,7 +74,7 @@ final class WebDownloadTests: XCTestCase {
         let store = BlockerWebStore(shared: SharedAppGroupStore(baseDirectory: directory.appendingPathComponent("store")))
         let coordinator = BlockerWebView.Coordinator(store: store, ruleLogJSON: nil, onClearRuleLog: nil,
             onStorePersisted: nil, onRunCustomGroup: nil, onSnoozePress: nil, clustersJSON: nil,
-            onLinkRequest: nil, tagNames: nil, scenes: [], downloadDirectory: directory)
+            onLinkRequest: nil, tagNames: nil, ruleAIModels: nil, scenes: [], downloadDirectory: directory)
         let webView = WKWebView(frame: .zero)
         webView.navigationDelegate = coordinator
         webView.loadHTMLString("""

@@ -1,4 +1,5 @@
 import Foundation
+import VaultClassifierCore
 #if canImport(FoundationNetworking)
 import FoundationNetworking
 #endif
@@ -180,6 +181,7 @@ public enum ChatGPTPlanError: Error, LocalizedError, Equatable, Sendable {
 /// bounded in bytes, including ignored events, before JSON decoding.
 public struct ChatGPTPlanStream: Sendable {
     public private(set) var text = ""
+    public private(set) var citations: [RuleAICitation] = []
     public private(set) var totalTokens: Int?
     public private(set) var completed = false
     private var line = Data()
@@ -248,6 +250,7 @@ public struct ChatGPTPlanStream: Sendable {
                 .filter { $0["type"] as? String == "output_text" }
                 .compactMap { $0["text"] as? String }.joined()
             if !final.isEmpty { text = final }
+            citations = RuleAIReply.citations(in: response)
             let usage = response["usage"] as? [String: Any]
             if let count = usage?["total_tokens"] as? Int, count >= 0 { totalTokens = count }
             completed = true

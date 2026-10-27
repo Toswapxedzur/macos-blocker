@@ -33,6 +33,7 @@ SYNCED_FILES=(
   browser-compat.js
   storage-schema.js
   rule-core.js
+  rule-ai-ui.js
   vault-ui.css
   vault-ui.js
   vault-info.js

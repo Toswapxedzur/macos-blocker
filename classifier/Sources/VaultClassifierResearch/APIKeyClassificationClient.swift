@@ -27,6 +27,7 @@ public actor APIKeyClassificationClient: CloudClassificationEngineResolving {
     private let profiles: ProfileLookup
     private let http: any ProviderHTTPClient
     private var active: [UUID: Task<String, Error>] = [:]
+    private var generationActive: [UUID: Task<RuleAIReply, Error>] = [:]
     private var failed = Set<String>()
     private var stopped = false
     private var today = ""
@@ -37,7 +38,7 @@ public actor APIKeyClassificationClient: CloudClassificationEngineResolving {
     public static func supports(_ type: APIKeyProviderType) -> Bool { [.openAI, .gemini, .xAI].contains(type) }
     public func status() -> APIKeyClassificationStatus { resetDay(); return .init(failedProfileIDs: failed, requestsToday: requests) }
     public func retryFailedRequests() { failed.removeAll() }
-    public func shutdown() async { stopped = true; let jobs = Array(active.values); jobs.forEach { $0.cancel() }; for job in jobs { _ = try? await job.value } }
+    public func shutdown() async { stopped = true; let generations = Array(generationActive.values); generations.forEach { $0.cancel() }; for job in generations { _ = try? await job.value }; let jobs = Array(active.values); jobs.forEach { $0.cancel() }; for job in jobs { _ = try? await job.value } }
     public func resolveCloudEngine(for type: ClassifierTypeAsset) async throws -> any ClassificationEngine {
         guard type.classificationProvider == .apiKey else { throw CloudClassificationError.notConfigured }
         try type.apiKey.validate()
@@ -48,12 +49,30 @@ public actor APIKeyClassificationClient: CloudClassificationEngineResolving {
         guard !failed.contains(profile.id) else { throw CloudClassificationError.invalidOutput }
         return APIKeyClassificationEngine(client: self, profileID: profile.id, configuration: type.apiKey, modelVersion: type.cloudModelVersion)
     }
+    public func generateForRule(profileID: String, model: String, effort: ClassificationReasoningEffort, input: RuleAIInput) async throws -> RuleAIReply {
+        while active.count + generationActive.count >= 2 { try Task.checkCancellation(); try await Task.sleep(nanoseconds: 20_000_000) }
+        try Task.checkCancellation()
+        guard !stopped, let profile = profiles(profileID), Self.supports(profile.type) else { throw RuleAIError.unavailable }
+        let request = try RuleAIGeneration.apiKey(profile: profile, model: model, effort: effort, input: input)
+        let descriptor = ProviderProtocolRegistry.descriptor(for: profile.type)
+        guard let field = descriptor.credentialFields.first, let key = profile.credential, !key.isEmpty else { throw RuleAIError.invalidConfiguration }
+        let credential = ProviderCredentialRecord(values: [field: key]); try credential.validate(for: descriptor)
+        let id = UUID(), http = self.http
+        let task = Task<RuleAIReply, Error> {
+            let result = try await http.send(plan: request.plan, body: request.body, credential: credential, timeout: 60)
+            try Task.checkCancellation()
+            return try RuleAIGeneration.parse(result.data, format: request.plan.bodyFormat)
+        }
+        resetDay(); requests += 1; generationActive[id] = task
+        defer { generationActive.removeValue(forKey: id) }
+        return try await withTaskCancellationHandler(operation: { try await task.value }, onCancel: { task.cancel() })
+    }
     private func resetDay() {
         let day = String(Int(Date().timeIntervalSince1970 / 86400))
         if day != today { today = day; requests = 0 }
     }
     func classify(profileID: String, configuration: APIKeyClassificationSettings, requests batch: [LLMClassificationRequest]) async throws -> [LLMClassificationResult] {
-        while active.count >= 2 { try Task.checkCancellation(); try await Task.sleep(nanoseconds: 20_000_000) }
+        while active.count + generationActive.count >= 2 { try Task.checkCancellation(); try await Task.sleep(nanoseconds: 20_000_000) }
         try Task.checkCancellation()
         guard !stopped else { throw CancellationError() }
         guard !failed.contains(profileID), let profile = profiles(profileID), Self.supports(profile.type) else { throw CloudClassificationError.notConfigured }

@@ -9,3 +9,5 @@ Classifier state schema8 archives retired Knowledge/dictionary fields before dro
 Tests run on owner-selected Mini2. No public installer or Store publication is authorized. Canonical state and next work: `~/Desktop/agentic/memory/vault-classifier.md`; project bootstrap: `../../misc/project-memory/PROJECT-MEMORY.md` in the group root.
 
 Current runtime has cloud tagging only. Knowledge/dictionary/research code and feature-only tests were retired on 2026-10-27; see `../docs/DORMANT-KNOWLEDGE.md`. `Sources/VaultClassifierCore/DormantKnowledgeArchive.swift` provides the bounded private schema migration, not a runtime adapter.
+
+- `RuleAI.swift` defines credential-free custom-rule inputs/configuration/results; `RuleAIGeneration.swift` handles provider wire formats, and the view-model RuleAI extension exposes only safe model choices. Custom rule generation shares connection authentication and usage limits; it does not use the tagging output schema.

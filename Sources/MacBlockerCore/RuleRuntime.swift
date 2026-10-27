@@ -59,6 +59,7 @@ public final class RuleRuntime {
         public var path: String?
         public var payload: String?
         public var requestId: String?
+        public var generation: String?
     }
 
     /// What one event made the rules do: actions, logs, the groups whose

@@ -67,6 +67,7 @@ public struct BlockerMainView: View {
                 } else { completion(connection.unlinkGroup(program: ConnectionHub.localProgram, groupId: groupId)) }
             },
             tagNames: { platform in MainActor.assumeIsolated { VaultClassifierPage.shared.tagNames(platformID: platform) } },
+            ruleAIModels: { MainActor.assumeIsolated { RuleAIService.shared.modelOptions() } },
             scenes: [
                 WebScene(
                     assetsPrefix: "classifier",

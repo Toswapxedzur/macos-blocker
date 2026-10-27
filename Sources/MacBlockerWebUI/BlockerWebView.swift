@@ -44,6 +44,7 @@ public struct BlockerWebView: NSViewRepresentable {
     /// completes with the refusal, or nil, after any authenticated preflight.
     private let onLinkRequest: ((String, [String: Any], @escaping (String?) -> Void) -> Void)?
     private let tagNames: ((String) -> [String])?
+    private let ruleAIModels: (() -> [String: Any])?
 
     public init(
         store: BlockerWebStore = BlockerWebStore(),
@@ -56,6 +57,7 @@ public struct BlockerWebView: NSViewRepresentable {
         clustersJSON: (() -> String?)? = nil,
         onLinkRequest: ((String, [String: Any], @escaping (String?) -> Void) -> Void)? = nil,
         tagNames: ((String) -> [String])? = nil,
+        ruleAIModels: (() -> [String: Any])? = nil,
         scenes: [WebScene] = []
     ) {
         self.store = store
@@ -69,10 +71,11 @@ public struct BlockerWebView: NSViewRepresentable {
         self.clustersJSON = clustersJSON
         self.onLinkRequest = onLinkRequest
         self.tagNames = tagNames
+        self.ruleAIModels = ruleAIModels
     }
 
     public func makeCoordinator() -> Coordinator {
-        Coordinator(store: store, ruleLogJSON: ruleLogJSON, onClearRuleLog: onClearRuleLog, onStorePersisted: onStorePersisted, onRunCustomGroup: onRunCustomGroup, onSnoozePress: onSnoozePress, clustersJSON: clustersJSON, onLinkRequest: onLinkRequest, tagNames: tagNames, scenes: scenes)
+        Coordinator(store: store, ruleLogJSON: ruleLogJSON, onClearRuleLog: onClearRuleLog, onStorePersisted: onStorePersisted, onRunCustomGroup: onRunCustomGroup, onSnoozePress: onSnoozePress, clustersJSON: clustersJSON, onLinkRequest: onLinkRequest, tagNames: tagNames, ruleAIModels: ruleAIModels, scenes: scenes)
     }
 
     @MainActor
@@ -259,6 +262,7 @@ public struct BlockerWebView: NSViewRepresentable {
         private let clustersJSON: (() -> String?)?
         private let onLinkRequest: ((String, [String: Any], @escaping (String?) -> Void) -> Void)?
         private let tagNames: ((String) -> [String])?
+    private let ruleAIModels: (() -> [String: Any])?
         private let scenes: [WebScene]
         private let downloadDirectory: URL
         private var downloadDestinations: [ObjectIdentifier: URL] = [:]
@@ -280,6 +284,7 @@ public struct BlockerWebView: NSViewRepresentable {
             clustersJSON: (() -> String?)?,
             onLinkRequest: ((String, [String: Any], @escaping (String?) -> Void) -> Void)?,
             tagNames: ((String) -> [String])?,
+            ruleAIModels: (() -> [String: Any])? = nil,
             scenes: [WebScene],
             downloadDirectory: URL = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask)[0]
         ) {
@@ -294,6 +299,7 @@ public struct BlockerWebView: NSViewRepresentable {
             self.clustersJSON = clustersJSON
             self.onLinkRequest = onLinkRequest
             self.tagNames = tagNames
+        self.ruleAIModels = ruleAIModels
         }
 
         deinit {
@@ -429,6 +435,9 @@ public struct BlockerWebView: NSViewRepresentable {
                 let loadResult = onRunCustomGroup?(payload["groupId"] as? String ?? "", payload["source"] as? String ?? "")
                     ?? ["ok": false, "error": "rules-not-running"]
                 nativeReply(body, ["ok": true, "loadResult": loadResult])
+            case "rule-ai-models":
+                guard Self.isTrustedEditorFrame(isMainFrame: message.frameInfo.isMainFrame, url: message.frameInfo.request.url) else { return }
+                nativeReply(body, ruleAIModels?() ?? ["ok": false, "models": []])
             case "vault-classifier-tag-names":
                 // The editor's tag suggestions, from Mac Vault's own classifier.
                 let platform = (body["message"] as? [String: Any])?["platform"] as? String ?? ""

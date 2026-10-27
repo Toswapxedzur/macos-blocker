@@ -434,6 +434,14 @@ public final class MacEnforcementBridge: ObservableObject {
             if let app = action.appId, let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: app) {
                 NSWorkspace.shared.openApplication(at: url, configuration: NSWorkspace.OpenConfiguration())
             }
+        case "ai":
+            let groupID = action.groupId, requestID = action.requestId ?? "", generation = action.generation ?? ""
+            guard !generation.isEmpty, let payload = action.payload else { return }
+            Task { [weak self] in
+                var result = await RuleAIService.shared.request(program: ConnectionHub.localProgram, groupID: groupID, payload: payload)
+                result["requestId"] = requestID; result["generation"] = generation
+                self?.dispatchRule(type: "ai", data: result, groupID: groupID)
+            }
         case "file":
             runRuleFile(action)
         default:

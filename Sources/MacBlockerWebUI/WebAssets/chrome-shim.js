@@ -428,6 +428,8 @@
         return nativeRequest("run-custom-group", message, { ok: false, error: "rules-not-running" });
       case "fire-snooze-press":
         return bridgeOrResolve("fire-snooze-press", message, { ok: true });
+      case "rule-ai-models":
+        return nativeRequest("rule-ai-models", message, {ok:false,models:[],error:"ai-unavailable"});
       case "vault-classifier-tag-names":
         return nativeRequest("vault-classifier-tag-names", message, { ok: false, names: [] });
       case "reset-group-runtime":

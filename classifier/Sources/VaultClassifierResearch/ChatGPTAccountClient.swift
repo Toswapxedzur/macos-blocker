@@ -86,7 +86,7 @@ public actor ChatGPTAccountClient: CloudClassificationEngineResolving {
     private var classificationsInFlight = 0
     private var dailyRequestLimit: Int?
     private var failureHold = false
-    private var activeRequests: [UUID: Task<(String, Int?), Error>] = [:]
+    private var activeRequests: [UUID: Task<(String, Int?, [RuleAICitation]), Error>] = [:]
     private struct Usage: Codable { var schemaVersion: Int; var day: String; var requests: Int }
     private var usage: Usage
     private var welcomeAccounts: Set<String>
@@ -304,7 +304,14 @@ public actor ChatGPTAccountClient: CloudClassificationEngineResolving {
         return ChatGPTClassificationEngine(client: self, configuration: type.chatGPT, modelVersion: type.cloudModelVersion)
     }
 
+    public func generateForRule(configuration: ChatGPTClassificationSettings, input: RuleAIInput) async throws -> RuleAIReply {
+        let result = try await infer(configuration: configuration, request: RuleAIGeneration.subscription(model: configuration.model, effort: configuration.reasoningEffort, input: input))
+        return try RuleAIReply(text: result.0, citations: result.1)
+    }
     func classify(configuration: ChatGPTClassificationSettings, request: ChatGPTPlanProtocol.Request) async throws -> String {
+        try await infer(configuration: configuration, request: request).0
+    }
+    private func infer(configuration: ChatGPTClassificationSettings, request: ChatGPTPlanProtocol.Request) async throws -> (String, [RuleAICitation]) {
         try await acquireClassification(); defer { classificationsInFlight -= 1; onChange() }
         guard credential?.accountID == configuration.accountID else { throw CloudClassificationError.signInRequired }
         guard !failureHold else { throw ChatGPTPlanError.failedResponse }
@@ -333,7 +340,7 @@ public actor ChatGPTAccountClient: CloudClassificationEngineResolving {
             let output = try await withTaskCancellationHandler(operation: { try await work.value }, onCancel: { work.cancel() })
             guard pending == generation, !isShuttingDown else { throw CancellationError() }
             if !failureHold { issue = nil }
-            return output.0
+            return (output.0, output.2)
         } catch {
             if pending != generation, !isShuttingDown { throw CloudClassificationError.signInRequired }
             // A sibling may have failed before this request was cancelled.

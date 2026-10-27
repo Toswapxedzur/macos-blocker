@@ -15,6 +15,7 @@ public struct BlockerWebPanel: View {
     private let clustersJSON: (() -> String?)?
     private let onLinkRequest: ((String, [String: Any], @escaping (String?) -> Void) -> Void)?
     private let tagNames: ((String) -> [String])?
+    private let ruleAIModels: (() -> [String: Any])?
     private let scenes: [WebScene]
 
     public init(
@@ -28,6 +29,7 @@ public struct BlockerWebPanel: View {
         clustersJSON: (() -> String?)? = nil,
         onLinkRequest: ((String, [String: Any], @escaping (String?) -> Void) -> Void)? = nil,
         tagNames: ((String) -> [String])? = nil,
+        ruleAIModels: (() -> [String: Any])? = nil,
         scenes: [WebScene] = []
     ) {
         self.store = store
@@ -40,6 +42,7 @@ public struct BlockerWebPanel: View {
         self.clustersJSON = clustersJSON
         self.onLinkRequest = onLinkRequest
         self.tagNames = tagNames
+        self.ruleAIModels = ruleAIModels
         self.scenes = scenes
     }
 
@@ -53,7 +56,7 @@ public struct BlockerWebPanel: View {
             onSnoozePress: onSnoozePress,
             clustersJSON: clustersJSON,
             onLinkRequest: onLinkRequest,
-            tagNames: tagNames,
+            tagNames: tagNames, ruleAIModels: ruleAIModels,
             scenes: scenes
         )
         .ignoresSafeArea()

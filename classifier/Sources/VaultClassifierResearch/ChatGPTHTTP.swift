@@ -15,7 +15,7 @@ public struct ChatGPTHTTPClient: Sendable {
         return buffer.value
     }
 
-    func inference(_ plan: ChatGPTPlanProtocol.Request, token: String) async throws -> (String, Int?) {
+    func inference(_ plan: ChatGPTPlanProtocol.Request, token: String) async throws -> (String, Int?, [RuleAICitation]) {
         let stream = LockedStream()
         try await sender(try request(plan, token: token)) { try stream.append($0) }
         return try stream.finish()
@@ -51,7 +51,7 @@ private final class LockedData: @unchecked Sendable {
 private final class LockedStream: @unchecked Sendable {
     private let lock = NSLock(); private var parser = ChatGPTPlanStream()
     func append(_ bytes: Data) throws { try lock.withLock { try parser.append(bytes) } }
-    func finish() throws -> (String, Int?) { try lock.withLock { (try parser.finish(), parser.totalTokens) } }
+    func finish() throws -> (String, Int?, [RuleAICitation]) { try lock.withLock { (try parser.finish(), parser.totalTokens, parser.citations) } }
 }
 
 /// A fresh ephemeral session for one bounded request. It streams actual network

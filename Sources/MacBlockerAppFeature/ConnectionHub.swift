@@ -2,6 +2,7 @@
 import Foundation
 import CoreFoundation
 import CryptoKit
+import struct VaultClassifierCore.RuleAIConfiguration
 import struct VaultClassifierCore.StorageSchemaPolicy
 import struct VaultClassifierCore.StorageProduct
 import MacBlockerCore
@@ -284,7 +285,7 @@ final class ConnectionHub: ObservableObject {
         enqueueLocked([
             "kind": "welcome", "v": Self.protocolVersion,
             "usageTransferReceipts": true,
-            "ruleTimeVersion": 1,
+            "ruleTimeVersion": 1, "ruleAIVersion": 1,
             "browserIdentityVersion": VaultClassifierBridge.LocalHubAuthentication.browserIdentityVersion,
             "activitySettingsNotifications": activityStoreValue != nil && publishedActivitySnapshot != nil,
             "hubProgram": Self.localProgram, "peers": peerListJSONLocked()
@@ -482,6 +483,10 @@ final class ConnectionHub: ObservableObject {
         let name: String
         let frozen: Bool
         var timeState: [String: Any]? = nil
+        var custom = false
+        var enabled = false
+        var ruleAI: [String: Any]? = nil
+        var aiEpoch = UUID().uuidString
     }
 
     /// A live cluster: the bound programs plus the hub-authoritative shared
@@ -962,6 +967,23 @@ final class ConnectionHub: ObservableObject {
             lock.unlock()
             if let refusal = setRoster(program: prog, groups: (obj["groups"] as? [[String: Any]]) ?? []) {
                 send(conn, dict: ["kind": "group-sync-refused", "reason": refusal])
+            }
+        case "rule-ai-request":
+            lock.lock()
+            let peer = peers[key]
+            lock.unlock()
+            guard let peer, peer.connected, Self.browserPrograms.contains(peer.program),
+                  let requestID = obj["requestID"] as? String, Self.isVisibleBridgeIdentifier(requestID, maximumLength: 128) else { return }
+            let op = obj["operation"] as? String ?? ""
+            let groupID = obj["groupId"] as? String ?? ""
+            let payload = obj["payload"] as? String ?? ""
+            guard ["models", "generate"].contains(op), payload.utf8.count <= 48_000 else { return }
+            Task { @MainActor [weak self] in
+                let service = RuleAIService.shared
+                let body = op == "models" ? service.modelOptions() : await service.request(program: peer.program, groupID: groupID, payload: payload)
+                guard let self else { return }
+                let current = self.lock.withLock { self.peers[key]?.id == peer.id && self.peers[key]?.connected == true }
+                if current { self.send(conn, dict: ["kind": "rule-ai-response", "requestID": requestID, "body": body]) }
             }
         case "rule-time-request":
             lock.lock()
@@ -1515,9 +1537,20 @@ final class ConnectionHub: ObservableObject {
         catch { return "local-storage-unavailable" }
     }
 
+    func ruleAIContext(program: String, groupID: String) -> RuleAIContext? {
+        lock.lock(); defer { lock.unlock() }
+        guard let info = rosters[program]?.first(where: { $0.id == groupID }), info.custom, info.enabled else { return nil }
+        let cluster = clusterLocked(program: program, groupId: groupID)
+        let raw = cluster?.sharedScalars["ruleAI"] as? [String: Any] ?? info.ruleAI
+        guard let raw, let data = try? JSONSerialization.data(withJSONObject: raw),
+              let configuration = try? JSONDecoder().decode(RuleAIConfiguration.self, from: data) else { return nil }
+        let members = cluster.map { value in value.memberGroupIds.map { $0.key + ":" + $0.value }.sorted() } ?? [program + ":" + groupID]
+        return RuleAIContext(configuration: configuration, members: members, revision: info.aiEpoch)
+    }
+
     private static func rosterInfos(_ groups: [[String: Any]]) -> [GroupInfo] {
         groups.map { GroupInfo(id: ($0["id"] as? String) ?? "", name: ($0["name"] as? String) ?? "",
-                               frozen: ($0["frozen"] as? Bool) ?? false, timeState: $0["timeState"] as? [String: Any]) }
+                               frozen: ($0["frozen"] as? Bool) ?? false, timeState: $0["timeState"] as? [String: Any], custom: $0["groupType"] as? String == "custom", enabled: $0["enabled"] as? Bool == true, ruleAI: $0["ruleAI"] as? [String: Any]) }
     }
 
     /// Caller holds the canonical file lock, if one exists, then the hub lock.
@@ -1532,7 +1565,12 @@ final class ConnectionHub: ObservableObject {
             if let refusal = browserIdentityUnlinkRefusalLocked(cluster) { throw GroupStoreError.invalidInput(refusal) }
         }
         try preserveDetachedLocalLocked(affected, removing: program, document: document, save: save)
-        rosters[program] = infos
+        rosters[program] = infos.map { info in
+            var next = info
+            if let previous = rosters[program]?.first(where: { $0.id == info.id }), previous.enabled == info.enabled, previous.custom == info.custom,
+               WebStoreDocument.canonicalJSON(previous.ruleAI ?? [:]) == WebStoreDocument.canonicalJSON(info.ruleAI ?? [:]) { next.aiEpoch = previous.aiEpoch }
+            return next
+        }
         rosterRevisions[program, default: 0] &+= 1
         let prefix = program + "/"
         var discarded = false
@@ -2581,6 +2619,7 @@ final class ConnectionHub: ObservableObject {
             guard let id = group["id"] as? String else { return nil }
             let states = document["cbRuleState"] as? [String: [String: Any]] ?? [:]
             return ["id": id, "name": (group["name"] as? String) ?? "", "frozen": WebStoreDocument.isLocked(group),
+                    "groupType": group["groupType"] ?? "site", "enabled": group["enabled"] ?? false, "ruleAI": group["ruleAI"] ?? NSNull(),
                     "timeState": states[id]?["$vaultTime"] as? [String: Any] ?? ["version": 1, "objects": [:]]]
         }
     }
