@@ -15,6 +15,7 @@ final class ReasoningSearchTests: XCTestCase {
                 if provider == .gemini {
                     let generation = body["generationConfig"] as! [String: Any]
                     XCTAssertEqual((generation["thinkingConfig"] as? [String: String])?["thinkingLevel"], effort == .providerDefault ? nil : effort.rawValue)
+                    XCTAssertEqual(generation["maxOutputTokens"] as? Int, [.medium, .high].contains(effort) ? 8192 : 4096)
                     XCTAssertNil(body["reasoning"])
                 } else { XCTAssertEqual((body["reasoning"] as? [String: String])?["effort"], effort == .providerDefault ? nil : effort.rawValue) }
             }

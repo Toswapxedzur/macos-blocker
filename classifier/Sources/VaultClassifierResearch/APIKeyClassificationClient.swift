@@ -148,9 +148,13 @@ struct APIKeyClassificationEngine: BatchClassificationEngine {
             let input = body["input"] as! [[String: Any]]
             let text = ((input.first?["content"] as? [[String: Any]])?.first?["text"] as? String) ?? (input.first?["content"] as? String) ?? ""
             guard !text.isEmpty else { throw CloudClassificationError.invalidOutput }
+            // Medium/High thinking spends part of the response budget before
+            // emitting JSON. A 16-item batch with correction examples can
+            // otherwise end at MAX_TOKENS without a complete tag set.
+            let outputTokens = [ClassificationReasoningEffort.medium, .high].contains(configuration.reasoningEffort) ? 8192 : 4096
             body = ["systemInstruction": ["parts": [["text": instructions]]],
                 "contents": [["role": "user", "parts": [["text": text]]]],
-                "generationConfig": ["maxOutputTokens": 4096, "responseFormat": ["text": ["mimeType": "APPLICATION_JSON", "schema": Self.geminiSchema(schema)]]]]
+                "generationConfig": ["maxOutputTokens": outputTokens, "responseFormat": ["text": ["mimeType": "APPLICATION_JSON", "schema": Self.geminiSchema(schema)]]]]
             body["tools"] = [["googleSearch": [:]]]
             if configuration.reasoningEffort != .providerDefault {
                 var generation = body["generationConfig"] as! [String: Any]
