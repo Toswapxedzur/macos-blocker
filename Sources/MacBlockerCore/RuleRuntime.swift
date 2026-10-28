@@ -188,9 +188,10 @@ public final class RuleRuntime {
     }
 
     /// One event (`type`, `data`) to one group's rule.
-    public func dispatch(type: String, data: Any, groupID: String, now: Date = Date(), contextRevision: String? = nil) throws -> DispatchResult {
+    public func dispatch(type: String, data: Any, groupID: String, now: Date = Date(), contextRevision: String? = nil, origin: String = "host") throws -> DispatchResult {
         var descriptor: [String: Any] = [
-            "type": type, "now": (now.timeIntervalSince1970 * 1000).rounded(), "data": data, "targetGroupId": groupID
+            "type": type, "now": (now.timeIntervalSince1970 * 1000).rounded(), "data": data, "targetGroupId": groupID,
+            "origin": origin == "user" ? "user" : "host"
         ]
         if let contextRevision { descriptor["contextRevisions"] = [groupID: contextRevision] }
         guard JSONSerialization.isValidJSONObject(descriptor),

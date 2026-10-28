@@ -9,7 +9,7 @@ worker explicitly. A test runner's bundle version is never a product version.
 
 | Family | Current format | Migration |
 | --- | --- | --- |
-| Rules/editor/usage | `vault.web-store`, flat schema 5 | Compatible raw alpha dictionary preserves opaque keys; canonical browser sanitizer converts flat scopes. Native writes remain field-surgical. |
+| Rules/editor/usage | `vault.web-store`, flat schema 6 | Compatible raw alpha dictionary preserves opaque keys; canonical browser sanitizer converts flat scopes. Native writes remain field-surgical. |
 | Classifier | `classifier.state`, flat schema 8 | Older compatible alpha states reconcile cloud groups and archive retired Knowledge/dictionary fields before dropping them from active state. |
 | Collected entries | `classifier.collected`, envelope schema 1 | Compatible day arrays wrap; dataset/platform/day partitioning remains. |
 | Activity | `activity.settings`, `web-icons`, `colors`, `groups`, `watched-facts`, `records.<category>`, envelope schema 1 | Decode compatible alpha settings/maps/arrays fully before atomic wrapping. |
@@ -58,4 +58,11 @@ Schema 8 makes official dictionaries, personal Knowledge and their separate rese
 
 Custom groups may store credential-free `ruleAI` connection/model, account identity, reasoning effort and optional daily cap. Compatible older web stores retain groups/state/usage and initialize AI as unconfigured. The separate `rule-ai-usage.json` ledger is schema 1, UTC-day scoped; atomic private reservations contain linked member IDs only. Link/unlink and restart do not reset counted requests. Corrupt/newer ledgers refuse calls without resetting usage. Pending AI requests and responses are not persisted or replayed.
 
-Web schema5 accepts the browser attachment document as opaque web state; native Mac application rules have no browser content surface. Browser/Safari attachment ownership and format are documented in canonical browser `docs/STORAGE-SCHEMAS.md`.
+Web schema6 adds a group-owned `cbRuleRecords` version1 document. Mac Vault
+transacts it under the existing web-store lock using the canonical browser
+record module; malformed/future record versions are preserved and refused
+without stopping ordinary rules. Group deletion prunes its namespace. Web
+schema6 also accepts the browser attachment document version2 as opaque web
+state; native Mac application rules have no browser content surface. Browser
+and Safari attachment ownership and format are documented in canonical browser
+`docs/STORAGE-SCHEMAS.md`.

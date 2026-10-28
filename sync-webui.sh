@@ -17,6 +17,8 @@ DEST="$ROOT/Sources/MacBlockerWebUI/WebAssets"
 if [[ "${1:-}" == "--rule-core-only" && $# -eq 1 ]]; then
   cp "$SRC/rule-core.js" "$DEST/rule-core.js"
   cp "$SRC/rule-core.js" "$ROOT/Sources/MacBlockerCore/Resources/rule-core.js"
+  cp "$SRC/rule-records.js" "$DEST/rule-records.js"
+  cp "$SRC/rule-records.js" "$ROOT/Sources/MacBlockerCore/Resources/rule-records.js"
   exit 0
 fi
 

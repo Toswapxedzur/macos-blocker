@@ -10,7 +10,7 @@ Source: one function expression `(on, v) => { ... }`. Only synchronous JavaScrip
 - Successful Run replaces handlers/panels and clears this group's app-block set, preserving `v.state`. Compilation/registration failure keeps the previous rule; a timeout can stop it. Restart registers the last activated source again; closure variables and app-block sets reset.
 - Registration may initialize state, register handlers, show panels and log. App/file actions and emits belong in handlers; their registration-time queue is discarded.
 - Disable suppresses handlers and lifts panels/app blocks. Enable resumes the loaded rule and its retained panels/blocks. Delete removes its handlers/state/effects. Previously quit apps are not reopened; file writes are not undone.
-- Events are not restricted by ordinary group targets; select apps in the rule. Actions are queued, then applied after dispatch. Exceptions stop that handler without rolling back its state/actions; later handlers may still run. Only file actions have result events.
+- Events are not restricted by ordinary group targets; select apps in the rule. Actions are queued, then applied after dispatch. Exceptions stop that handler without rolling back its state/actions; later handlers may still run. File, AI and record requests have result events.
 
 ## Managed timers and rolling usage
 
@@ -47,12 +47,13 @@ Named objects survive Run and restart in reserved `v.state.$vaultTime`; do not e
 
 ## API
 
-- `on(type, handler)` → boolean. Registers `handler(ev)`; multiple handlers run in registration order. False means invalid arguments or handler limit reached. `ev = { type: string, now: number, data }`; `now` is Unix milliseconds.
+- `on(type, handler)` → boolean. Registers `handler(ev)`; multiple handlers run in registration order. False means invalid arguments or handler limit reached. `ev = { type: string, now: number, origin: "host" | "user" | "rule", data }`; `now` is Unix milliseconds. Native panel input has `origin: "user"`; `v.emit` has `origin: "rule"`.
 - `v.state`: mutable JSON object, persisted after event dispatch. Initialize missing fields rather than overwriting existing state. Assigning a non-object or array resets it to `{}`; nonserializable/oversized updates are not persisted.
 - `v.log(...values)`: appends to this group's Log. Execution and delivery failures appear as explicit error entries in the same feed. Logs/Clear are independent per group. Load errors also appear in Run status; partially executed events are not replayed automatically.
 - `v.emit(type, data)`: queues a JSON copy of `data` for this group's handlers after the current event, with a fresh `now`; not a synchronous call.
 - `v.panel(id, spec)`: replaces this group's named floating panel; null `spec` removes it. See Panels.
 - `v.file(op, path, payload?)` → request ID string. See Files.
+- `v.store(request)` → request ID string. See Group records.
 - `v.block(appId, on)`: true maintains an app block, false removes this group's block. Blocks combine across enabled groups; this call cannot unblock another group's target. Blocking requests a normal quit and retries at the Settings interval; it does not prevent process launch or guarantee an app accepts Quit.
 - `v.quit(appId)`: one normal quit request, subject to the same protection/retry policy; no ongoing block.
 - `v.open(appId)`: asks macOS to open an installed app; no success callback.
@@ -71,13 +72,16 @@ snooze: {}
 panel: { panelId: string, controlId: string, eventName: string,
          value: string, values: { [controlId: string]: string } }
 file: see Files
+record: { requestId: string, ok: boolean, op?: string, key?: string,
+          record?: Record | null, entries?: Header[], next?: string | null,
+          deleted?: number, error?: string }
 App = { appId: string, name: string }
 ```
 
 - `tick` is approximate; use timestamps, not tick counts. Running includes foreground, menu-bar and background `.app` processes with bundle IDs; not every Unix process. Frontmost can be null or have an empty app ID.
 - `app` reports observed lifecycle changes before that tick's `tick` event. Only focus includes `previousAppId` (null if unknown). Names are display names, not stable IDs.
 - `snooze` means the group's Snooze button was pressed. It applies no pause by itself.
-- File replies target the requesting group. Correlate `requestId`, check `ok`, and set a deadline using ticks: replies can be lost if the rule reloads/is disabled. Request IDs can repeat after Run; pending requests are not durable work.
+- File and record replies target the requesting group. Correlate `requestId`, check `ok`, and set a deadline using ticks: replies can be lost if the rule reloads/is disabled. Request IDs can repeat after Run; pending requests are not durable work.
 
 ## Panels
 
@@ -123,6 +127,41 @@ file.data = { requestId: string, op: string, path: string, ok: boolean,
 ```
 
 Unused result fields are null; success has empty error. Failures include invalid-path, unsupported-file-type, folder unavailable, missing file and file-too-large. Treat error as a string, not a fixed exhaustive enum. No transaction API; serialize read-modify-write operations per path.
+
+## Group records
+
+`v.store(request)` starts an asynchronous JSON record operation inside a handler.
+Records are private to this group, persist across Run and restart, and are
+removed with the group. Linked groups have separate records. The rule chooses
+keys, values, version strings, cache invalidation and feedback precedence.
+Mac and browser rules use the same API, but each app/browser store is separate.
+
+| Request | Result |
+| --- | --- |
+| `{op:"get", key}` | `record` or `null` |
+| `{op:"put", key, value, version?, ifRevision?}` | saved `record` |
+| `{op:"delete", key, ifRevision?}` | `record: null` |
+| `{op:"list", prefix?, after?, limit?}` | sorted `entries` of headers and `next` cursor |
+| `{op:"clear", prefix?}` | `deleted` count |
+
+Each record has `{value, revision, version, updatedAt}`. The opaque revision
+changes on a real write. `version` is caller-owned metadata. `list` returns
+headers without values; use `get` to read one. Use `after: next` for the next
+page. For `put`/`delete`, omitted `ifRevision` means unconditional. `null`
+requires an absent key; a revision string requires an exact match. A mismatch
+returns `ok:false`, `error:"store-conflict"` and the current `record`. Use
+this to prevent delayed automatic replies from overwriting user feedback.
+`v.context.revision` is an opaque rule-configuration marker that a rule may
+include in its own version. The framework does not impose cache policy.
+
+Limits: key1–2048 characters, version≤128, JSON value≤64KiB, depth≤32,
+10000 keys per group,16MiB whole record document. `list` returns at most100
+headers and96KiB per page. At most32 requests per group and128 total requests
+start per second; overload reports one `store-busy` error per group per second
+and drops further requests that second. Storage errors return `ok:false`; a
+future or malformed record document is preserved and reported as
+`store-unavailable`. There is no automatic retry or eviction. Use ticks for
+deadlines when a reply matters.
 
 ## Limits
 

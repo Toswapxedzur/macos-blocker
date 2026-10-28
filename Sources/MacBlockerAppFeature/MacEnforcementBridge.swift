@@ -386,7 +386,8 @@ public final class MacEnforcementBridge: ObservableObject {
         guard group.enabled, ruleTypes[group.id]?.contains(type) == true, let runtime = ruleRuntime else { return }
         do {
             try configureRuleTime(runtime, groupID: group.id, type: type, data: data)
-            apply(try runtime.dispatch(type: type, data: data, groupID: group.id, contextRevision: webStore.ruleContextRevision(groupID: group.id)), group: group)
+            let origin = (type == "panel" || type == "snooze") ? "user" : "host"
+            apply(try runtime.dispatch(type: type, data: data, groupID: group.id, contextRevision: webStore.ruleContextRevision(groupID: group.id), origin: origin), group: group)
             refreshRuleTime(groupID: group.id)
         } catch RuleRuntime.RuleRuntimeError.terminated {
             appendLog(groupId: group.id, group: group.name, message: "Execution deadline exceeded; rule stopped.", level: "error")
@@ -449,9 +450,12 @@ public final class MacEnforcementBridge: ObservableObject {
         case "store":
             let groupID = action.groupId, generation = action.generation ?? ""
             guard let payload = action.payload, ruleRuntime?.acceptsRequest(groupID: groupID, generation: generation) == true else { return }
+            let admission = GroupActionsRuntime.shared.call("admit", [groupID, floor(Date().timeIntervalSince1970 * 1000)], module: "VaultRuleRecords") as? String
+            if admission == "drop" { return }
             var reply: [String: Any]
-            do { reply = try webStore.ruleRecordRequest(groupID: groupID, payload: payload) }
-            catch { reply = ["ok": false, "error": String(describing: error)] }
+            do { reply = admission == "busy" ? ["ok": false, "error": "store-busy"] : try webStore.ruleRecordRequest(groupID: groupID, payload: payload) }
+            catch GroupStoreError.invalidInput(let reason) { reply = ["ok": false, "error": reason] }
+            catch { reply = ["ok": false, "error": "store-unavailable"] }
             reply["requestId"] = action.requestId ?? ""; reply["generation"] = generation
             let answer = reply
             Task { @MainActor [weak self] in

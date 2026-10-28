@@ -492,7 +492,9 @@ public final class BlockerWebStore: @unchecked Sendable {
 
     public func ruleContextRevision(groupID: String) -> String {
         let group = (loadStoreObject()?["blockedGroups"] as? [[String: Any]])?.first { $0["id"] as? String == groupID }
-        return String(WebStoreDocument.canonicalJSON(group?["ruleAI"]).hashValue)
+        let canonical = WebStoreDocument.canonicalJSON(group?["ruleAI"])
+        let hash = canonical.utf8.reduce(UInt64(14_695_981_039_346_656_037)) { ($0 ^ UInt64($1)) &* 1_099_511_628_211 }
+        return String(hash, radix: 16)
     }
 
     /// Generic records use the same canonical transaction implementation as
