@@ -114,17 +114,16 @@ window.runAutosaveTests=async()=>{
   const count=action=>commands.filter(c=>c.action===action).length;
   const name='[data-form-id="classifier-type-group-1"] [data-field="name"]';
   await poll(()=>q('[data-action="selectType"]'));q('[data-action="selectType"]').click();
-  const more='[data-expand="type-more:group-1"]';
   expect(!q('[data-workspace="knowledge"]'), 'Knowledge navigation is dormant');
-  expect(!q(more).open && q(more+' summary').textContent.includes('follow Strict') && q('[data-field="houseRules"]').checkVisibility() && !q('[data-field="houseRules"]').closest('details'),'core group settings are visible and only advanced tag counts start collapsed');
-  q(more+' summary').click();await poll(()=>q(more).open);await new Promise(r=>setTimeout(r,0));
+  await poll(()=>q('[data-field="minimumConfidence"]') && q('[data-field="houseRules"]'));
+  expect(q('[data-field="minimumConfidence"]') && q('[data-field="houseRules"]').checkVisibility() && !q('[data-expand^="type-more:"]'),'confidence and instructions are present without advanced tag counts');
   expect(!q('[data-action="configureClassifierType"], [data-action="saveClassifierTypeTagging"], [data-action="saveClassifierTypeResearch"]'),'group has no Save buttons');
   ackDelay=450;
   input(name,'First name');await poll(()=>count('configureClassifierType')===1);
   const text=input(name,'Latest name');text.setSelectionRange(3,7);
   pushSnapshot();
   expect(q(name).value==='Latest name' && scope.activeElement===q(name) && q(name).selectionStart===3 && q(name).selectionEnd===7,'snapshot preserves pending text, focus and caret');
-  expect(q(more).open,'incoming snapshot keeps group More expanded');
+  expect(q('[data-field="minimumConfidence"]'),'incoming snapshot keeps group controls present');
   await poll(()=>count('configureClassifierType')===2);
   await poll(()=>scope.querySelector('.sidebar-name')?.textContent==='Latest name');
   expect(q(name).value==='Latest name','older save response cannot overwrite newer text');
@@ -136,7 +135,6 @@ window.runAutosaveTests=async()=>{
   await poll(()=>testState.assets.classifierTypes[0].tagging.minimumConfidence===5);
   testState.assets.classifierTypes.push({id:'group-2',name:'Other group',treeID:'tree-1',applicablePlatformIDs:['reddit'],tagging:{minimumConfidence:4,houseRules:'Other rules'},researchEnabled:null,order:1});pushSnapshot();
   q('[data-action="selectType"][data-type-id="group-2"]').click();
-  q('[data-expand="type-more:group-2"] summary').click();
   const other=q('[data-form-id="classifier-tagging-form-group-2"] [data-field="minimumConfidence"]');
   other.value='2';other.dispatchEvent(new Event('change',{bubbles:true}));
   await poll(()=>testState.assets.classifierTypes[1].tagging.minimumConfidence===2);
@@ -144,9 +142,8 @@ window.runAutosaveTests=async()=>{
   q('[data-action="selectType"][data-type-id="group-1"]').click();
   testState.assets.classifierTypes.pop();pushSnapshot();
 
-  q(more+' summary').click();await new Promise(r=>setTimeout(r,0));pushSnapshot();
-  expect(!q(more).open && q(more+' summary').getClientRects().length,'advanced More stays collapsed across snapshots while core settings remain visible');
-  q(more+' summary').click();await new Promise(r=>setTimeout(r,0));
+  pushSnapshot();
+  expect(q('[data-field="minimumConfidence"]'),'confidence remains present across snapshots');
   q('[data-action="openUtilityPanel"]').click();
   expect(!q('[data-form-id="utility-llm-form"]') && !q('.utility-settings-modal [data-field="minimumConfidence"]'), 'Settings contains no global confidence controls');
   expect(!q('.utility-research-section, .utility-dictionary-section, [data-expand="classifier-services"]'), 'retired services have no Settings controls');

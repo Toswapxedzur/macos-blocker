@@ -54,9 +54,9 @@ struct ChatGPTClassificationEngine: BatchClassificationEngine {
         clear titles. When search is unavailable, use the supplied evidence.
         Return {"items":[{"index":0,"tags":[{"name":"exact taxonomy name","confidence":4}]}]}.
         Include every input index exactly once. No prose or invented tags.
-        Confidence is your assessment, NOT token probability: 5 explicit clear
-        evidence, 4 strong evidence, 3 plausible inference, 2 weak guess, 1 little
-        basis. When the rules set a minimum confidence, include all and only
+        Confidence is an evidence grade, NOT token probability: 5 explicit or
+        decisive support, 4 strong support, 3 plausible inference, 2 weak clue,
+        1 guess. When the rules set a minimum confidence, include all and only
         taxonomy tags that meet it, including the first tag. Return an empty
         tags array when none qualify. Do not aim for a particular tag count.
         """

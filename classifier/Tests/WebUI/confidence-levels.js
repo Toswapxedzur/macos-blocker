@@ -9,9 +9,12 @@ window.runConfidenceLevelTests=async()=>{
   expect(!q(form+' [data-field="strictness"]')&&!q(form+' [data-field="minimumTagsOverride"]')&&!q(form+' [data-field="maximumTagsOverride"]'),'retired controls are absent');
   const model=()=>testState.assets.classifierTypes[0].tagging;
   for(const level of ['1','2','3','4','5']){
-    select.value=level;select.dispatchEvent(new Event('change',{bubbles:true}));
-    await poll(()=>model().minimumConfidence===Number(level));
-    expect(select.value===level,'confidence '+level+' autosaves');
+    const current=q(form+' [data-field="minimumConfidence"]');
+    current.value=level;current.dispatchEvent(new Event('change',{bubbles:true}));
+    try { await poll(()=>model().minimumConfidence===Number(level)); }
+    catch { throw Error('confidence '+level+' did not save: '+JSON.stringify({model:model(),commands:commands.slice(-2)})); }
+    await new Promise(r=>setTimeout(r,90));
+    expect(q(form+' [data-field="minimumConfidence"]').value===level,'confidence '+level+' autosaves');
   }
   const rules=q(form+' [data-field="houseRules"]');
   rules.value='Keep my words';rules.dispatchEvent(new InputEvent('input',{bubbles:true}));

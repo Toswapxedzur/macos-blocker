@@ -67,7 +67,7 @@ final class DormantKnowledgeTests: XCTestCase {
             platformID: "youtube", classifierType: group, tree: tree, catalog: state.workspaceCatalog)
         XCTAssertFalse(parts.dynamicSuffix.contains("A private saved definition")); XCTAssertFalse(parts.dynamicSuffix.contains("SENTINEL-DORMANT-CREATOR"))
         var row = VideoClassification(classifierTypeID: group.id, platformID: "youtube", entryID: "video", creatorID: "creator", treeID: tree.id,
-            treeRevision: tree.revision, tags: [], source: .model, modelVersion: group.cloudModelVersion + "+p6")
+            treeRevision: tree.revision, tags: [], source: .model, modelVersion: group.cloudModelVersion + "+p4")
         XCTAssertFalse(LocalClassifierCoordinator.isClassificationCurrent(row, forType: group, servingModelVersion: row.modelVersion))
         row.source = .humanCorrected
         XCTAssertTrue(LocalClassifierCoordinator.isClassificationCurrent(row, forType: group, servingModelVersion: row.modelVersion))

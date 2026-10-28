@@ -103,6 +103,43 @@ final class VideoClassificationPipelineTests: XCTestCase {
     }
 
 
+    func testConfidenceCutoffAppliesToFirstAndEveryAdditionalTag() async throws {
+        let recorder = RequestRecorder()
+        let llm = ScriptedClassificationEngine(
+            modelVersion: "scripted/v10",
+            result: .init(tags: [
+                .init(name: "Games", confidence: 3),
+                .init(name: "Minecraft", confidence: 4),
+                .init(name: "Politics", confidence: 5)
+            ]),
+            recorder: recorder
+        )
+        let pipeline = VideoClassificationPipeline(llm: llm, maximumTags: 32, minimumConfidence: 4, promptVersion: "p6")
+        let result = try await pipeline.classify(
+            title: "Mixed title", entryID: "v1", creatorID: "c1", platformID: "youtube",
+            classifierType: makeType(), tree: makeTree(), catalog: WorkspaceCatalog()
+        )
+        XCTAssertEqual(result.tags.map(\.tagID), ["p", "m"])
+        XCTAssertEqual(recorder.last?.minimumConfidence, 4)
+        XCTAssertEqual(recorder.last?.minimumTags, 0)
+        XCTAssertTrue(recorder.last?.staticPrefix.contains("zero is valid") == true)
+
+        let strict = VideoClassificationPipeline(llm: llm, maximumTags: 32, minimumConfidence: 5, promptVersion: "p6")
+        let strictResult = try await strict.classify(
+            title: "Mixed title", entryID: "v2", creatorID: "c1", platformID: "youtube",
+            classifierType: makeType(), tree: makeTree(), catalog: WorkspaceCatalog()
+        )
+        XCTAssertEqual(strictResult.tags.map(\.tagID), ["p"])
+
+        let below = ScriptedClassificationEngine(modelVersion: "scripted/v11",
+            result: .init(tags: [.init(name: "Games", confidence: 3)]), recorder: recorder)
+        let empty = try await VideoClassificationPipeline(llm: below, minimumConfidence: 4, promptVersion: "p6").classify(
+            title: "Ambiguous title", entryID: "v3", creatorID: "c1", platformID: "youtube",
+            classifierType: makeType(), tree: makeTree(), catalog: WorkspaceCatalog()
+        )
+        XCTAssertTrue(empty.tags.isEmpty, "even the first suggestion must clear the cutoff")
+    }
+
     func testPipelineFeedsDerivedCreatorPriorIntoPrompt() async throws {
         let recorder = RequestRecorder()
         let llm = ScriptedClassificationEngine(
