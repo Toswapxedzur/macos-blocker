@@ -268,7 +268,7 @@ final class VideoClassificationCoordinatorTests: XCTestCase {
 
 
 
-    func testCorrectionsAreAuthoritativeAndNeverShownToTheModel() async throws {
+    func testCorrectionsRemainAuthoritativeAndSelectedExamplesReachNewRequests() async throws {
         let (coordinator, root) = try makeCoordinatorWithYouTubeType()
         defer { LocalStateFile.flushAllPendingWrites(); try? FileManager.default.removeItem(at: root) }
         var catalog = coordinator.snapshot().workspaceCatalog
@@ -321,21 +321,19 @@ final class VideoClassificationCoordinatorTests: XCTestCase {
         XCTAssertEqual(correctedProjection.tags.map(\.id), ["g"])
         XCTAssertTrue(recorder.requests.isEmpty, "live and research refreshes preserve human-corrected rows")
 
-        // Classifying a FRESH video: the manual type house rule is in the cached
-        // prefix; the stored
-        // corrections appear NOWHERE in the prompt — not as a block, not as
-        // exemplars, not as distilled rules (all measured 2026-09-22/23 as no gain).
+        // A fresh video sees a few relevant final-tag examples. The correction
+        // notes are excluded, and the manual rule remains independently authored.
         _ = try await coordinator.classifyVideo(
             platformID: "youtube", entryID: "fresh",
             creatorID: "youtube:handle:@creator", title: "Games episode preview"
         )
         let request = try XCTUnwrap(recorder.requests.first)
         XCTAssertTrue(request.staticPrefix.contains("Manual type rule."), "manual house rule reaches the cached prefix")
-        for haystack in [request.staticPrefix, request.dynamicSuffix] {
-            XCTAssertFalse(haystack.contains("Learned preferences"))
-            XCTAssertFalse(haystack.contains("past corrections"))
-            XCTAssertFalse(haystack.contains("Games episode 0"), "corrected titles never enter the prompt")
-        }
+        XCTAssertTrue(request.dynamicSuffix.contains("Past human corrections"))
+        XCTAssertTrue(request.dynamicSuffix.contains(#""tagNames":["Games"]"#))
+        XCTAssertTrue(request.dynamicSuffix.contains("Games episode"))
+        XCTAssertFalse(request.dynamicSuffix.contains("Keep games together."), "notes are not prompt instructions")
+        XCTAssertFalse(request.staticPrefix.contains("Games episode"), "examples remain in per-item data")
     }
 
     /// Research is driven by the model's own uncertainty; a human correction is

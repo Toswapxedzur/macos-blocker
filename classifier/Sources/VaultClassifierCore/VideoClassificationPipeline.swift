@@ -26,6 +26,8 @@ public struct VideoClassificationPipeline: Sendable {
     /// Count controls above remain only for dormant local-model fixtures.
     public let minimumConfidence: Int?
     public let promptVersion: String
+    /// Evaluation control; normal classification uses relevant corrections.
+    public let useCorrectionExamples: Bool
 
     public init(
         llm: any ClassificationEngine,
@@ -36,7 +38,8 @@ public struct VideoClassificationPipeline: Sendable {
         // p2 = bare tag-name reply, confidence derived from token odds (2026-09-21).
         // Cached p1 rows stay valid: the currency check matches the model file only.
         // p4 = researched creator sentence on the creator line, single pass (2026-09-22).
-        promptVersion: String = "p5"
+        promptVersion: String = "p5",
+        useCorrectionExamples: Bool = true
     ) {
         self.llm = llm
         self.maximumTags = maximumTags
@@ -44,6 +47,7 @@ public struct VideoClassificationPipeline: Sendable {
         self.secondaryConfidenceFloor = secondaryConfidenceFloor
         self.minimumConfidence = minimumConfidence.flatMap { (1...5).contains($0) ? $0 : nil }
         self.promptVersion = promptVersion
+        self.useCorrectionExamples = useCorrectionExamples
     }
 
     /// One video's evidence for a batched classification.
@@ -101,14 +105,15 @@ public struct VideoClassificationPipeline: Sendable {
         guard !inputs.isEmpty else { return [] }
         let timing = ProcessInfo.processInfo.environment["VAULT_DECODE_TIMING"] == "1"
         let tStart = DispatchTime.now()
-        // Evidence gathering (creator prior + matched knowledge + correction
-        // exemplars) is shared with `primaryPromptParts`, so the calibration eval
-        // drives the model on the exact same prompt this path builds.
+        // Evidence gathering is shared with `primaryPromptParts`, so the
+        // evaluation harness sees the same prompt as live classification.
+        let corrections = useCorrectionExamples ? CorrectionExampleSelector(
+            catalog: catalog, classifierType: classifierType, platformID: platformID, tree: tree) : nil
         let evidence = inputs.map { input in
             gatherEvidence(
                 title: input.title, entryID: input.entryID, creatorID: input.creatorID, platformID: platformID,
                 classifierType: classifierType, tree: tree,
-                catalog: catalog
+                catalog: catalog, corrections: corrections
             )
         }
         func parts(_ index: Int) -> ClassificationPromptParts {
@@ -116,7 +121,8 @@ public struct VideoClassificationPipeline: Sendable {
                 tree: tree, houseRules: houseRules, maximumTags: maximumTags, minimumTags: minimumTags,
                 minimumConfidence: minimumConfidence,
                 title: inputs[index].title, summary: inputs[index].summary, text: inputs[index].text,
-                creatorPrior: evidence[index].creatorPrior, creatorVideoCount: evidence[index].creatorVideoCount
+                creatorPrior: evidence[index].creatorPrior, creatorVideoCount: evidence[index].creatorVideoCount,
+                correctionExamples: evidence[index].correctionExamples
             )
         }
         func request(_ index: Int, _ parts: ClassificationPromptParts) -> LLMClassificationRequest {
@@ -164,9 +170,8 @@ public struct VideoClassificationPipeline: Sendable {
         }
     }
 
-    /// The creator prior + matched term knowledge + creator sentence for one
-    /// video — the evidence that `classify`'s primary decode and `primaryPromptParts`
-    /// both build on. Extracted so the two paths can never drift apart.
+    /// The creator prior and relevant human corrections for one video. Both
+    /// decode and the prompt preview use this path.
     private func gatherEvidence(
         title: String,
         entryID: String,
@@ -174,8 +179,9 @@ public struct VideoClassificationPipeline: Sendable {
         platformID: String,
         classifierType: ClassifierTypeAsset,
         tree: TagTreeAsset,
-        catalog: WorkspaceCatalog
-    ) -> (creatorPrior: [CreatorPriorTag], creatorVideoCount: Int) {
+        catalog: WorkspaceCatalog,
+        corrections: CorrectionExampleSelector?
+    ) -> (creatorPrior: [CreatorPriorTag], creatorVideoCount: Int, correctionExamples: [CorrectionPromptExample]) {
         let nameByID = Dictionary(tree.nodes.map { ($0.id, $0.name) }, uniquingKeysWith: { first, _ in first })
 
         // Derived creator prior: how often THIS creator's already-classified
@@ -194,7 +200,8 @@ public struct VideoClassificationPipeline: Sendable {
                 .sorted { $0.share == $1.share ? $0.tagName < $1.tagName : $0.share > $1.share }
         }
 
-        return (creatorPrior, creatorVideoCount)
+        return (creatorPrior, creatorVideoCount,
+                corrections?.select(title: title, creatorID: creatorID, excluding: entryID) ?? [])
     }
 
     /// The exact prompt parts `classify`'s primary decode would build for one
@@ -213,9 +220,11 @@ public struct VideoClassificationPipeline: Sendable {
         catalog: WorkspaceCatalog,
         houseRules: String? = nil
     ) -> ClassificationPromptParts {
+        let corrections = useCorrectionExamples ? CorrectionExampleSelector(
+            catalog: catalog, classifierType: classifierType, platformID: platformID, tree: tree) : nil
         let evidence = gatherEvidence(
             title: title, entryID: entryID, creatorID: creatorID, platformID: platformID,
-            classifierType: classifierType, tree: tree, catalog: catalog
+            classifierType: classifierType, tree: tree, catalog: catalog, corrections: corrections
         )
         return ClassificationPromptAssembler.assemble(
             tree: tree,
@@ -227,7 +236,8 @@ public struct VideoClassificationPipeline: Sendable {
             summary: summary,
             text: text,
             creatorPrior: evidence.creatorPrior,
-            creatorVideoCount: evidence.creatorVideoCount
+            creatorVideoCount: evidence.creatorVideoCount,
+            correctionExamples: evidence.correctionExamples
         )
     }
 

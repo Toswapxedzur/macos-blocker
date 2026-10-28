@@ -76,12 +76,10 @@ extension LocalClassifierCoordinator {
                 note: note
             )
             state.workspaceCatalog.appendCorrectionExample(example)
-            // The correction is now stored as this video's authoritative tags (never
-            // re-tagged by the model; it counts in the creator's tag counts). It is
-            // NOT shown to the model: every way of teaching from corrections
-            // (per-video retrieval, a verbatim prefix block, a counts line, an LLM
-            // rule summary) measured as noise or worse on 2026-09-22/23. Manual
-            // house rules stay untouched in tagging.
+            // This video's correction remains authoritative. For future uncached
+            // items in the same group, the prompt may include a few relevant
+            // corrected titles and final tags as examples. Notes stay private,
+            // and manual house rules are unchanged.
 
             let previous = state.workspaceCatalog.videoClassification(
                 classifierTypeID: classifierTypeID,

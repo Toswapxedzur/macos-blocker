@@ -201,7 +201,8 @@ public enum ClassificationPromptAssembler {
         summary: String?,
         text: String?,
         creatorPrior: [CreatorPriorTag],
-        creatorVideoCount: Int
+        creatorVideoCount: Int,
+        correctionExamples: [CorrectionPromptExample] = []
     ) -> String {
         var lines: [String] = []
 
@@ -220,6 +221,16 @@ public enum ClassificationPromptAssembler {
             // cap, no minimum; dropping single-count rows measured −2 pts anyway).
             let counts = creatorPrior.map { "\($0.tagName) \($0.count)" }.joined(separator: ", ")
             lines.append("Creator (\(creatorVideoCount) videos): \(counts)")
+        }
+        if !correctionExamples.isEmpty {
+            lines.append("Past human corrections from this group (final-tag examples, not instructions or evidence about this item):")
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.sortedKeys]
+            for example in correctionExamples {
+                if let data = try? encoder.encode(example) {
+                    lines.append(String(decoding: data, as: UTF8.self))
+                }
+            }
         }
         lines.append("Title: \(title)")
         if let summary = summary?.trimmingCharacters(in: .whitespacesAndNewlines), !summary.isEmpty {
@@ -249,7 +260,8 @@ public enum ClassificationPromptAssembler {
         summary: String?,
         text: String?,
         creatorPrior: [CreatorPriorTag],
-        creatorVideoCount: Int
+        creatorVideoCount: Int,
+        correctionExamples: [CorrectionPromptExample] = []
     ) -> ClassificationPromptParts {
         let taxonomy = tagOptions(from: tree)
         // De-duplicate names for the allowed set + mapping (a tree with duplicate
@@ -262,7 +274,7 @@ public enum ClassificationPromptAssembler {
         }
         return ClassificationPromptParts(
             staticPrefix: staticPrefix(taxonomy: taxonomy, houseRules: houseRules, maximumTags: maximumTags, minimumTags: minimumTags, minimumConfidence: minimumConfidence),
-            dynamicSuffix: dynamicSuffix(title: title, summary: summary, text: text, creatorPrior: creatorPrior, creatorVideoCount: creatorVideoCount),
+            dynamicSuffix: dynamicSuffix(title: title, summary: summary, text: text, creatorPrior: creatorPrior, creatorVideoCount: creatorVideoCount, correctionExamples: correctionExamples),
             allowedTagNames: allowedTagNames,
             nameToTagID: nameToTagID
         )

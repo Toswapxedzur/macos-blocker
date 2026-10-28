@@ -177,6 +177,29 @@ final class VideoClassificationPipelineTests: XCTestCase {
         XCTAssertTrue(suffix.contains("Creator (1 videos): Games 1"))
     }
 
+    func testPipelineSendsRelevantCorrectionsAndEvaluationControlOmitsThem() async throws {
+        let recorder = RequestRecorder()
+        let llm = ScriptedClassificationEngine(modelVersion: "fixture", result: .init(tags: []), recorder: recorder)
+        var catalog = WorkspaceCatalog()
+        catalog.correctionExamples = [.init(id: "example", classifierTypeID: "type", platformID: "youtube",
+            entryID: "old", creatorID: "other", title: "Minecraft base tutorial",
+            correctTagIDs: ["m"], note: "Private note")]
+        catalog.videoClassifications = [.init(classifierTypeID: "type", platformID: "youtube",
+            entryID: "old", creatorID: "other", treeID: "tree", treeRevision: 1,
+            tags: [.init(tagID: "m", confidence: 5)], source: .humanCorrected, modelVersion: "human")]
+        _ = try await VideoClassificationPipeline(llm: llm).classify(
+            title: "Minecraft base guide", entryID: "new", creatorID: "different", platformID: "youtube",
+            classifierType: makeType(), tree: makeTree(), catalog: catalog)
+        XCTAssertTrue(recorder.last?.dynamicSuffix.contains("Minecraft base tutorial") == true)
+        XCTAssertTrue(recorder.last?.dynamicSuffix.contains(#""tagNames":["Minecraft"]"#) == true)
+        XCTAssertFalse(recorder.last?.dynamicSuffix.contains("Private note") == true)
+
+        _ = try await VideoClassificationPipeline(llm: llm, useCorrectionExamples: false).classify(
+            title: "Minecraft base guide", entryID: "new", creatorID: "different", platformID: "youtube",
+            classifierType: makeType(), tree: makeTree(), catalog: catalog)
+        XCTAssertFalse(recorder.last?.dynamicSuffix.contains("Past human corrections") == true)
+    }
+
     func testPipelineCarriesPerTypeRequestOverrides() async throws {
         let recorder = RequestRecorder()
         let llm = ScriptedClassificationEngine(
