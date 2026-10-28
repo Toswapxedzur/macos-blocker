@@ -40,9 +40,11 @@ final class WebShellLiveWorkspaceTests: XCTestCase {
         let script = try String(contentsOf: appURL, encoding: .utf8)
         let strings = try String(contentsOf: stringsURL, encoding: .utf8)
 
-        // The API-keys workspace renders the local-only disclosure.
+        // The direct key field keeps the storage/billing disclosure in its Info.
         XCTAssertTrue(script.contains("llm.localOnlyDisclosure"))
-        XCTAssertTrue(script.contains("provider-local-only"))
+        XCTAssertTrue(script.contains("connections.apiBilling"))
+        XCTAssertTrue(script.contains("data-tagging-key-fields"))
+        XCTAssertFalse(script.contains("provider-local-only"))
         // The copy distinguishes local storage from authentication requests sent to the provider.
         XCTAssertTrue(strings.contains("stored in this app’s support folder on this device"))
         XCTAssertTrue(strings.contains("Keys are sent to the configured provider to authenticate requests"))

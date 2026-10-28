@@ -233,7 +233,7 @@
     }
     const edit = { key, formID: form.dataset.formId, action: form.dataset.autosaveAction,
       values, identity: {} };
-    for (const [attribute, field] of [["typeId", "typeID"], ["providerId", "profileID"],
+    for (const [attribute, field] of [["typeId", "typeID"], ["providerId", "profileID"], ["connectionType", "type"],
       ["treeId", "treeID"], ["nodeId", "nodeID"], ["id", "id"]]) {
       if (form.dataset[attribute]) edit.identity[field] = form.dataset[attribute];
     }
@@ -263,6 +263,10 @@
 
       case "updateTag": return (assets.trees || []).find((tree) => tree.id === edit.identity.treeID)
         ?.nodes.find((node) => node.id === edit.identity.nodeID);
+      case "saveTaggingConnection": {
+        const profiles = (assets.providerProfiles || []).filter(item => item.type === edit.identity.type);
+        return profiles.length <= 1 ? { credential: profiles[0]?.credential || "" } : null;
+      }
       case "updateProviderConnection": {
         const profile = (assets.providerProfiles || []).find((item) => item.id === edit.identity.profileID);
         if (!profile) return null;
@@ -414,10 +418,11 @@
     "tree.tagName": "The name of the tag to add to this Classifier group’s taxonomy."
   });
   function infoAttrs(labelKey, hintKey = "") {
-    const text = languageMessages["classifierInfo." + labelKey] || fieldInfo[labelKey] || (hintKey ? t(hintKey) : "");
+    let text = languageMessages["classifierInfo." + labelKey] || fieldInfo[labelKey] || (hintKey ? t(hintKey) : "");
+    if (labelKey === "llm.apiKeyOrToken") text += ` ${t("connections.apiBilling")} ${t("llm.localOnlyDisclosure")}`;
     if (!text) return "";
     const target = labelKey === "bridge.typeName" ? ".classifier-name-row .field"
-      : labelKey === "llm.providerType" ? ".provider-create .field" : "";
+      : "";
     return `data-info-label="${esc(t(labelKey))}" data-info-key="${esc(labelKey)}" data-info-copy="${esc(text)}"${target ? ` data-info-target="${target}"` : ""}`;
   }
 
@@ -446,10 +451,6 @@
   function multiValueSelectField(labelKey, hintKey, key, values, options, extra = "") {
     const selectedValues = new Set(values || []);
     return `<label class="field"><span class="field-label" ${infoAttrs(labelKey, hintKey)}>${tx(labelKey)}${hintKey ? `<span class="field-hint" data-info> · ${tx(hintKey)}</span>` : ""}</span><select class="select-control multi-select-control" data-field="${esc(key)}" multiple ${extra}>${options.map(([id, label]) => `<option value="${esc(id)}"${selectedValues.has(id) ? " selected" : ""}>${esc(label)}</option>`).join("")}</select></label>`;
-  }
-
-  function groupedValueSelectField(labelKey, hintKey, key, value, groups, extra = "") {
-    return `<label class="field"><span class="field-label" ${infoAttrs(labelKey, hintKey)}>${tx(labelKey)}${hintKey ? `<span class="field-hint" data-info> · ${tx(hintKey)}</span>` : ""}</span><select class="select-control" data-field="${esc(key)}" ${extra}><option value=""${selected(value, "")}>${tx("llm.chooseProviderType")}</option>${groups.map(([groupKey, options]) => `<optgroup label="${tx(groupKey)}">${options.map(([id, label]) => `<option value="${esc(id)}"${selected(value, id)}>${esc(label)}</option>`).join("")}</optgroup>`).join("")}</select></label>`;
   }
 
   function toggle(labelKey, key, value, extra = "") {
@@ -516,7 +517,7 @@
   function chatGPTAccountSection() {
     const account = state.assets?.chatGPT || {};
     const busy = account.signingIn === true;
-    return `<section class="utility-settings-section" data-chatgpt-account><h3>${tx("cloud.title")}</h3><p class="small-copy">${account.connected ? esc(account.email || t("cloud.connected")) : tx("cloud.disconnected")}</p><p class="small-copy" data-info>${tx("cloud.disclosure")}</p><div class="action-row">${busy ? `<span role="status">${tx("cloud.signingIn")}</span><button type="button" class="secondary" data-action="cancelChatGPTSignIn">${tx("cloud.cancel")}</button>` : `<button type="button" class="secondary" data-action="connectChatGPT">${tx("cloud.connect")}</button>`}${account.connected ? `<button type="button" class="secondary" data-action="refreshChatGPTModels">${tx("cloud.refreshModels")}</button><button type="button" class="secondary" data-action="disconnectChatGPT">${tx("cloud.disconnect")}</button>` : ""}</div>${account.connected && !account.planUsageEnabled ? `<p role="alert">${tx("cloud.planRequired")}</p>` : ""}${notice(account.issue, "red")}<div data-form-id="chatgpt-limit-form" data-autosave-action="saveChatGPTUsageLimit">${field("cloud.dailyLimit", "cloud.dailyLimitHint", "dailyRequestLimit", account.dailyRequestLimit ?? "", "number", 'min="1" max="100000" step="1"')}</div><p class="small-copy">${tx("cloud.requestsToday", {count: account.requestsToday || 0})}</p>${account.connected ? `<button type="button" class="${account.needsRetry ? "primary" : "secondary"}" data-action="openChatGPTUsage">${tx("cloud.manageUsage")}</button>` : ""}${account.needsRetry || account.failedItems ? `<button type="button" class="secondary" data-action="retryChatGPTClassifications">${tx("cloud.retry")}</button>` : ""}</section>`;
+    return `<section class="utility-settings-section" data-chatgpt-account><p class="small-copy">${account.connected ? esc(account.email || t("cloud.connected")) : tx("cloud.disconnected")}</p><p class="small-copy" data-info>${tx("cloud.disclosure")}</p><div class="action-row">${busy ? `<span role="status">${tx("cloud.signingIn")}</span><button type="button" class="secondary" data-action="cancelChatGPTSignIn">${tx("cloud.cancel")}</button>` : `<button type="button" class="secondary" data-action="connectChatGPT">${tx("cloud.connect")}</button>`}${account.connected ? `<button type="button" class="secondary" data-action="refreshChatGPTModels">${tx("cloud.refreshModels")}</button><button type="button" class="secondary" data-action="disconnectChatGPT">${tx("cloud.disconnect")}</button>` : ""}</div>${account.connected && !account.planUsageEnabled ? `<p role="alert">${tx("cloud.planRequired")}</p>` : ""}${notice(account.issue, "red")}<div data-form-id="chatgpt-limit-form" data-autosave-action="saveChatGPTUsageLimit">${field("cloud.dailyLimit", "cloud.dailyLimitHint", "dailyRequestLimit", account.dailyRequestLimit ?? "", "number", 'min="1" max="100000" step="1"')}</div><p class="small-copy">${tx("cloud.requestsToday", {count: account.requestsToday || 0})}</p>${account.connected ? `<button type="button" class="${account.needsRetry ? "primary" : "secondary"}" data-action="openChatGPTUsage">${tx("cloud.manageUsage")}</button>` : ""}${account.needsRetry || account.failedItems ? `<button type="button" class="secondary" data-action="retryChatGPTClassifications">${tx("cloud.retry")}</button>` : ""}</section>`;
   }
 
   function reasoningChoices(model) {
@@ -817,46 +818,6 @@
     });
   }
 
-  function providerTypeLabelKey(type) {
-    const keys = {
-      openAI: "llm.provider.openAI",
-      xAI: "connections.grok",
-      openAICompatible: "llm.provider.openAICompatible",
-      deepSeek: "llm.provider.deepSeek",
-      gemini: "llm.provider.gemini",
-      anthropic: "llm.provider.anthropic",
-      mistral: "llm.provider.mistral",
-      cohere: "llm.provider.cohere",
-      groq: "llm.provider.groq",
-      openRouter: "llm.provider.openRouter",
-      youtubeData: "llm.provider.youtubeData",
-      twitch: "llm.provider.twitch",
-      reddit: "llm.provider.reddit",
-      xPlatform: "llm.provider.xPlatform",
-      instagramGraph: "llm.provider.instagramGraph",
-      facebookGraph: "llm.provider.facebookGraph",
-      serper: "llm.provider.serper",
-      youSearch: "llm.provider.youSearch",
-      custom: "llm.provider.custom",
-    };
-    return keys[type] || "llm.provider.openAICompatible";
-  }
-
-  function protocolFieldLabelKey(fieldName) {
-    const keys = {
-      accountID: "llm.protocol.accountID",
-      apiVersion: "llm.protocol.apiVersion",
-      clientID: "llm.protocol.clientID",
-      location: "llm.protocol.location",
-      projectID: "llm.protocol.projectID",
-      region: "llm.protocol.region",
-      userAgent: "llm.protocol.userAgent",
-      searchEngineID: "llm.protocol.searchEngineID",
-      protocolFamily: "llm.protocol.protocolFamily",
-    };
-    return keys[fieldName] || "llm.protocol.protocolFamily";
-  }
-
   let pendingLists = [];
   function listPlaceholder(key, items, render, text, pageSize = 12) {
     pendingLists.push({ key, items, render, text, pageSize });
@@ -874,64 +835,15 @@
     }
   }
 
-  function apiKeySettings(connectionType = null) {
-    const profiles = (state.assets.providerProfiles || []).filter(profile => connectionType ? profile.type === connectionType : !KEY_CONNECTIONS.includes(profile.type) && profile.type !== "ollama");
-    const requestRecords = state.assets.providerRequestRecords || [];
-    const protocols = state.assets.providerProtocols || {};
-    const recordsByProfile = new Map();
-    for (const record of requestRecords) {
-      let records = recordsByProfile.get(record.profileID);
-      if (!records) { records = []; recordsByProfile.set(record.profileID, records); }
-      records.push(record);
-    }
-    const profileTypeGroups = [["llm.providerGroup.platform", ["youtubeData", "twitch", "reddit", "xPlatform", "instagramGraph", "facebookGraph"].map(type => [type,t(providerTypeLabelKey(type))])]];
-    const panel = (profile) => {
-      const formID = `provider-profile-${profile.id}`;
-      const protocol = protocols[profile.type] || {};
-      const supportsLLM = Boolean(protocol.supportsLLMConfiguration);
-      const supportsPlatformData = Boolean(protocol.supportsPlatformData);
-      // Serper / You.com fed the removed raw-search mode: kept readable, never testable or used.
-      const retiredSearchProvider = Boolean(protocol.retiredSearchProvider);
-      const profileRecords = (recordsByProfile.get(profile.id) || []);
-      const summary = state.assets.providerRequestSummaries?.[profile.id];
-      const latestResponseDiagnostic = summary ? (summary.responseShape ? { responseShape: summary.responseShape } : null) : profileRecords
-        .filter((record) => typeof record.responseShape === "string" && record.responseShape.length > 0)
-        .sort((left, right) => Number(right.createdAtMilliseconds) - Number(left.createdAtMilliseconds))[0];
-      const tokenTotal = summary ? summary.tokenTotal : profileRecords.reduce(
-        (total, record) => total + (Number(record.tokenCount) || 0),
-        0
-      );
-      const credentialField = protocol.credentialRequired ? field("llm.apiKeyOrToken", "", "credential", profile.credential || "", "password", "data-provider-connection autocapitalize=\"off\" spellcheck=\"false\"") : "";
-      const endpointField = protocol.allowsEndpointOverride ? field("llm.apiEndpoint", "", "customEndpoint", profile.customEndpoint || "", "text", "data-provider-connection") : "";
-      const testModelField = !connectionType && supportsLLM && (protocol.allowsEndpointOverride || !profile.defaultModelIdentifier)
-        ? field("llm.testModel", "", "testModelIdentifier", profile.testModelIdentifier || "", "text", `data-provider-connection placeholder=\"${esc(profile.defaultModelIdentifier || "model-name")}\"`)
-        : "";
-      const protocolFields = (protocol.configurationRequirements || []).map((requirement) => field(
-        protocolFieldLabelKey(requirement.field),
-        "",
-        `protocol.${requirement.field}`,
-        profile.protocolConfiguration?.[requirement.field] ?? requirement.defaultValue ?? "",
-        "text",
-        "data-provider-connection"
-      )).join("");
-      const connectionFields = [credentialField, endpointField, testModelField, protocolFields].filter(Boolean).join("");
-      const modelError = state.assets.providerModelCatalogErrors?.[profile.id];
-      const modelLoading = (state.assets.loadingProviderModelProfileIDs || []).includes(profile.id);
-      const modelCount = (state.assets.providerModelCatalogs?.[profile.id] || []).length;
-      const models = connectionType ? `<div class="action-row"><button type="button" class="secondary" data-action="probeProviderModelCatalog" data-profile-id="${esc(profile.id)}"${disabled(!profile.hasCredential || modelLoading)}>${tx(modelLoading ? "research.fetchingModels" : modelError ? "research.retryModels" : modelCount ? "research.refreshModels" : "research.fetchModels")}</button>${modelCount ? `<span class="small-copy">${tx("connections.modelCount", {count:modelCount})}</span>` : ""}</div>${notice(modelError,"red")}` : "";
-      const testAvailable = (supportsLLM || supportsPlatformData) && !retiredSearchProvider;
-      const testButton = testAvailable && !connectionType ? `<button class="gold-action" data-action="testProviderProfile" data-form="${esc(formID)}" data-profile-id="${esc(profile.id)}"${disabled(profile.testing)}>${tx(profile.testing ? "llm.testing" : "llm.test")}</button>` : "";
-      const usage = supportsPlatformData || retiredSearchProvider
-        ? `<p class="provider-token-usage"><span>${tx("llm.apiCalls")}</span><strong>${summary ? summary.calls : profileRecords.filter((record) => ["readPublicContent", "searchWeb", "search-creator-web"].includes(record.operation) && Number.isInteger(record.statusCode)).length}</strong></p>`
-        : `<p class="provider-token-usage"><span>${tx("llm.tokenUsage")}</span><strong>${tx("llm.tokenTotal", { total: tokenTotal })}</strong></p>`;
-      const responseDiagnostic = latestResponseDiagnostic
-        ? `<p class="provider-response-shape"><span>${tx("llm.responseShape")}</span><strong>${esc(latestResponseDiagnostic.responseShape)}</strong></p>`
-        : "";
-      return `<section class="provider-panel" data-vui-search-text="${esc(profile.name + " " + t(providerTypeLabelKey(profile.type)))}" data-provider-panel data-provider-id="${esc(profile.id)}" data-form-id="${esc(formID)}" data-autosave-action="updateProviderConnection"><div class="provider-panel-head"><h3>${esc(profile.name)}</h3><div class="provider-panel-actions">${testButton}<button class="danger" data-action="confirmDeleteProviderProfile" data-profile-id="${esc(profile.id)}">${deleteLabel(`provider:${profile.id}`, tx("llm.deleteProfile"))}</button></div></div>${retiredSearchProvider ? `<div class="notice navy">${tx("llm.retiredSearchProvider")}</div>` : ""}<div class="provider-panel-body">${connectionFields ? `<div class="provider-connection-fields">${connectionFields}</div>` : ""}${models}</div>${connectionType ? "" : `<footer class="provider-request-summary">${usage}${responseDiagnostic}</footer>`}${profile.testSucceeded ? notice(t("llm.testSucceeded"), "green") : ""}</section>`;
-    };
-    const create = connectionType ? `<div data-form-id="new-provider-profile-form"><input type="hidden" data-field="type" value="${esc(connectionType)}"><button type="button" class="secondary" data-action="createProviderProfile" data-form="new-provider-profile-form">${tx("connections.addKey")}</button></div>` : `<section class="provider-create" data-form-id="new-provider-profile-form">${groupedValueSelectField("llm.providerType", "", "type", "", profileTypeGroups)}<button class="secondary" data-action="createProviderProfile" data-form="new-provider-profile-form">${tx("llm.createKey")}</button></section>`;
-    return `<section class="utility-settings-section utility-api-keys"><p class="small-copy" data-info>${tx(connectionType ? "connections.apiBilling" : "llm.copy")}</p><p class="provider-local-only small-copy" data-info>${tx("llm.localOnlyDisclosure")}</p><div class="provider-panels vui-list-box" data-vui-search="classifier-providers" data-vui-search-label="Search connections" data-vui-search-items=".provider-panel" data-list-key="providers" tabindex="0" aria-label="${tx("llm.keyLibrary")}">${profiles.length ? listPlaceholder("classifier-providers", profiles, panel, profile => profile.name + " " + t(providerTypeLabelKey(profile.type))) : `<div class="empty">${tx("llm.empty")}</div>`}</div>${create}</section>`;
-
+  function apiKeySettings(connectionType) {
+    const profiles = (state.assets.providerProfiles || []).filter(profile => profile.type === connectionType);
+    const profile = profiles.length === 1 ? profiles[0] : null;
+    const conflict = profiles.length > 1;
+    const id = profile?.id || "";
+    const error = conflict ? t("connections.duplicateKeys") : state.assets.providerModelCatalogErrors?.[id];
+    const loading = (state.assets.loadingProviderModelProfileIDs || []).includes(id);
+    const count = (state.assets.providerModelCatalogs?.[id] || []).length;
+    return `<section class="tagging-key-fields" data-tagging-key-fields data-form-id="tagging-key-${esc(connectionType)}" data-autosave-action="saveTaggingConnection" data-connection-type="${esc(connectionType)}">${field("llm.apiKeyOrToken", "", "credential", profile?.credential || "", "password", `autocapitalize="off" spellcheck="false"${disabled(conflict)}`)}<div class="action-row"><button type="button" class="secondary" data-action="probeProviderModelCatalog" data-profile-id="${esc(id)}"${disabled(!profile?.hasCredential || loading || conflict)}>${tx(loading ? "research.fetchingModels" : error ? "research.retryModels" : count ? "research.refreshModels" : "research.fetchModels")}</button>${count ? `<span class="small-copy">${tx("connections.modelCount", {count})}</span>` : ""}</div>${notice(error,"red")}</section>`;
   }
 
   // The classifiable platforms as a checklist (owner 2026-09-30: a type may take

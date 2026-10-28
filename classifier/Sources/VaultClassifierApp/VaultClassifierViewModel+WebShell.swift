@@ -243,6 +243,11 @@ extension VaultClassifierViewModel {
                 deleteClassifierType(typeID: try webString(data, key: "typeID", limit: 256))
             case "createProviderProfile":
                 createProviderProfile(typeRaw: try webString(data, key: "type", limit: 32))
+            case "saveTaggingConnection":
+                saveTaggingConnection(
+                    typeRaw: try webString(data, key: "type", limit: 32),
+                    rawCredential: try webString(data, key: "credential", limit: ProviderCredentialRecord.maximumCharacters)
+                )
             case "testProviderProfile":
                 testProviderProfile(
                     profileID: try webString(data, key: "profileID", limit: 128),

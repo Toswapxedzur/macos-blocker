@@ -33,6 +33,7 @@ public enum ClassifierWebActionCatalog {
         .init(name: "reorderClassifierTypes", keys: ["orderedIDs"], summary: "Reorder groups (array of group ids)."),
         .init(name: "configureClassifierType", keys: ["typeID", "name"], summary: "Rename a group. Its platforms are fixed at creation."),
         .init(name: "confirmDeleteClassifierType", keys: ["typeID"], summary: "Delete a group."),
+        .init(name: "saveTaggingConnection", keys: ["type", "credential"], summary: "Save or clear the single API key for OpenAI, Gemini or Grok; preserves existing connection IDs."),
         .init(name: "createProviderProfile", keys: ["type"], summary: "Create a provider profile (gemini, openAI, anthropic, …)."),
         .init(name: "testProviderProfile", keys: ["profileID", "credential", "customEndpoint", "testModelIdentifier"], summary: "Test a provider profile's credential (stores it on success)."),
         .init(name: "updateProviderConnection", keys: ["profileID", "credential", "customEndpoint", "testModelIdentifier"], summary: "Update a provider profile's connection fields."),

@@ -69,6 +69,12 @@ window.webkit={messageHandlers:{vaultClassifier:{postMessage(message){
       },modelFetchDelay);
       return;
     }
+    case 'saveTaggingConnection':{
+      let profile=testState.assets.providerProfiles.find(p=>p.type===data.type);
+      if(!profile && data.credential.trim()){profile={id:'saved-'+data.type,name:data.type,type:data.type,protocolConfiguration:{}};testState.assets.providerProfiles.push(profile);}
+      if(profile){profile.credential=data.credential.trim();profile.hasCredential=!!profile.credential;}
+      break;
+    }
     case 'createProviderProfile':testState.assets.providerProfiles.push({id:'provider-created',name:'New provider',type:data.type,credential:'',hasCredential:false,protocolConfiguration:{}});break;
     case 'workspace':testState.workspace=data.workspace;break;
     case 'saveDictionarySettings':Object.assign(testState.settings.dictionaries,data,{creatorCacheSize:Number(data.creatorCacheSize)});break;
@@ -148,16 +154,16 @@ window.runAutosaveTests=async()=>{
   q('[data-action="closeUtilityPanel"]').click();
   q('[data-action="openUtilityPanel"]').click();
   await chooseConnection('openAI');
-  input('[data-provider-id="provider-1"] [data-field="customEndpoint"]','https://example.test/api');
-  await poll(()=>testState.assets.providerProfiles[0].customEndpoint==='https://example.test/api');
+  input('[data-field="credential"]','fixture-first-key');
+  await poll(()=>testState.assets.providerProfiles[0].credential==='fixture-first-key');
   expect(!!q('[data-action="probeProviderModelCatalog"]'),'provider edits autosave and model fetching stays explicit');
   testState.assets.providerProfiles[0].credential='synthetic-old-key';pushSnapshot();
   ackDelay=450;
-  input('[data-provider-id="provider-1"] [data-field="credential"]','synthetic-new-key');
+  input('[data-field="credential"]','synthetic-new-key');
   await poll(()=>commands.at(-1).data.credential==='synthetic-new-key');
   const stale=structuredClone(testState);stale.assets.providerProfiles[0].credential='synthetic-old-key';
   VaultClassifier.receive(stale);pushSnapshot();
-  expect(q('[data-provider-id="provider-1"] [data-field="credential"]').value==='synthetic-new-key','older snapshot cannot acknowledge a different credential');
+  expect(q('[data-field="credential"]').value==='synthetic-new-key','older snapshot cannot acknowledge a different credential');
   await new Promise(r=>setTimeout(r,500));ackDelay=0;
   q('[data-action="closeUtilityPanel"]').click();
   q('[data-action="selectType"]').click();

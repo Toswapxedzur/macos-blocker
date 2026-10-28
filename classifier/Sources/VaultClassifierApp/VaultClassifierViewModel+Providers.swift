@@ -51,6 +51,12 @@ extension VaultClassifierViewModel {
                   var catalog = localState?.workspaceCatalog else {
                 throw WebBridgeInputError.invalidChoice("provider type")
             }
+            // Tagging has one connection per API provider. Repeated setup must
+            // not create another key slot or change existing group references.
+            if APIKeyClassificationClient.supports(type), catalog.providerProfiles.contains(where: { $0.type == type }) {
+                issue = nil
+                return
+            }
             var profile = APIKeyProviderProfile(type: type)
             var number = 2
             while catalog.providerProfiles.contains(where: { $0.name == profile.name }) {
@@ -58,6 +64,43 @@ extension VaultClassifierViewModel {
             }
             catalog.providerProfiles.append(profile)
             try coordinator?.updateWorkspaceCatalog(catalog)
+            refreshLocalState()
+            issue = nil
+        } catch { issue = error.localizedDescription }
+    }
+
+    /// Save the selected provider's single key without a separate Add action.
+    /// Existing IDs, endpoints and group/model references remain unchanged.
+    func saveTaggingConnection(typeRaw: String, rawCredential: String) {
+        do {
+            guard let type = APIKeyProviderType(rawValue: typeRaw),
+                  APIKeyClassificationClient.supports(type),
+                  var catalog = localState?.workspaceCatalog else {
+                throw WebBridgeInputError.invalidChoice("tagging provider")
+            }
+            let matches = catalog.providerProfiles.filter { $0.type == type }
+            guard matches.count <= 1 else {
+                throw WebBridgeInputError.invalidChoice("multiple saved keys for this provider; saved data is unchanged")
+            }
+            var profile = matches.first ?? APIKeyProviderProfile(type: type)
+            let value = rawCredential.trimmingCharacters(in: .whitespacesAndNewlines)
+            // Leaving a never-configured field blank should create no record.
+            if matches.isEmpty && value.isEmpty { issue = nil; return }
+            let descriptor = ProviderProtocolRegistry.descriptor(for: type)
+            guard descriptor.credentialFields.count == 1, let field = descriptor.credentialFields.first else {
+                throw WebBridgeInputError.invalidChoice("provider credential")
+            }
+            if !value.isEmpty { try ProviderCredentialRecord(values: [field: value]).validate(for: descriptor) }
+            profile.credential = value.isEmpty ? nil : value
+            try profile.validate()
+            profile.updatedAtMilliseconds = WorkspaceCatalog.now()
+            if let index = catalog.providerProfiles.firstIndex(where: { $0.id == profile.id }) {
+                catalog.providerProfiles[index] = profile
+            } else {
+                catalog.providerProfiles.append(profile)
+            }
+            try coordinator?.updateWorkspaceCatalog(catalog)
+            successfulProviderTestProfileIDs.remove(profile.id)
             refreshLocalState()
             issue = nil
         } catch { issue = error.localizedDescription }

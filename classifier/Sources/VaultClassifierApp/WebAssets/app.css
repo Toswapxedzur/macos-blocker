@@ -524,107 +524,6 @@ h3 { font-size: 14px; }
 
 .provider-workspace { max-width: none; min-height: 0; }
 
-.provider-create {
-  display: flex;
-  align-items: end;
-  gap: 9px;
-  max-width: 680px;
-  padding: 11px 12px;
-  border: 0;
-  border-radius: 12px;
-  background: color-mix(in srgb, var(--gold-50) 58%, #fff);
-  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.05);
-}
-
-.provider-create .field { flex: 0 1 230px; }
-.provider-create .field-label { display: none; }
-.provider-create select { min-height: 34px; }
-.provider-panels { display: grid; grid-template-columns: minmax(0, 1fr); gap: 14px; align-items: start; align-content: start; }
-
-.provider-panel {
-  position: relative;
-  display: flex;
-  flex-direction: column;
-  gap: 0;
-  padding: 14px 0;
-  overflow: hidden;
-  border: 0;
-  background: #fff;
-  box-shadow: none;
-}
-
-.provider-panel-head,
-.provider-panel-actions,
-.provider-token-usage { display: flex; }
-
-.provider-panel-head { align-items: center; justify-content: space-between; gap: 12px; }
-.provider-panel-head h3 { color: var(--ink); font-size: 14px; }
-.provider-panel-actions { flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
-
-.provider-panel-body {
-  display: block;
-  padding-top: 12px;
-}
-
-.provider-connection-fields {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(230px, 100%), 1fr));
-  gap: 10px 12px;
-}
-
-.provider-connection-fields .field { margin: 0; gap: 5px; }
-.provider-connection-fields input { min-height: 34px; }
-
-.provider-token-usage {
-  align-items: center;
-  gap: 8px;
-  margin: 0;
-  padding: 0;
-  white-space: nowrap;
-}
-.provider-token-usage span { color: var(--muted); font-size: 10px; font-weight: 700; letter-spacing: 0.08em; }
-.provider-token-usage strong { color: var(--ink); font-size: 12px; font-weight: 700; }
-
-.provider-request-summary {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 8px 16px;
-  padding-top: 10px;
-  min-width: 0;
-}
-
-.provider-response-shape {
-  max-width: 360px;
-  margin: 0;
-  color: var(--muted);
-  font-size: 10px;
-  line-height: 1.35;
-  overflow-wrap: anywhere;
-  text-align: start;
-}
-
-.provider-response-shape span {
-  display: block;
-  margin-bottom: 2px;
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-}
-
-.provider-response-shape strong {
-  color: var(--ink);
-  font: inherit;
-  font-weight: 700;
-}
-
-@media (max-width: 620px) {
-  .provider-panel-head { align-items: flex-start; }
-  .provider-connection-fields { grid-template-columns: 1fr; }
-  .provider-response-shape { text-align: start; }
-}
-
 .status-pill { padding: 6px 9px; }
 .status-pill.navy { color: var(--navy-700); background: var(--navy-100); }
 .status-pill.cyan { color: var(--cyan-text); background: var(--cyan-50); }
@@ -1107,10 +1006,9 @@ textarea:focus {
 
 /* Title/provider fields keep their existing hidden label but expose field Info. */
 .classifier-name-row .field:has(> .vui-info-button),
-.provider-create .field:has(> .vui-info-button),
 .header-language:has(> .vui-info-button) { display: flex; flex-direction: row; align-items: center; gap: 2px; }
 .classifier-name-row .field:has(> .vui-info-button) { max-width: 548px; }
-.classifier-name-row .field > input, .provider-create .field > .vui-select { flex: 1; min-width: 0; }
+.classifier-name-row .field > input { flex: 1; min-width: 0; }
 .header-language:has(> .vui-info-button) { width: 153px; }
 .header-language > .vui-select { flex: 1; min-width: 0; }
 
@@ -1128,10 +1026,13 @@ input[data-field="creator"], input[data-model-search] {
 @media (max-width:600px) { }
 @media (max-width: 600px) { }
 
-:host(.native-settings-host) { display: block; height: auto; overflow: visible; }
+:host(.native-settings-host) { display: block; height: auto; overflow: visible; background: transparent; }
 #native-settings { font: 12px/1.4 var(--font-ui); }
 
 [data-tagging-connections] > .utility-settings-section { margin-block:0; }
 [data-expand="classifier-services"] { margin-top:18px; }
 [data-expand="classifier-services"] > summary { cursor:pointer; font-size:12px; font-weight:600; padding-block:8px; }
-.provider-connection-fields > .field:only-child { grid-column:1 / -1; }
+[data-tagging-connections] { display: grid; gap: 12px; }
+.tagging-key-fields { display: grid; gap: 8px; }
+.tagging-key-fields .field { margin: 0; }
+.tagging-key-fields .action-row { gap: 8px; }

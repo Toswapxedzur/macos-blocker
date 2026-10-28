@@ -6,7 +6,7 @@ window.VaultClassifierStrings = Object.freeze({
   "connections.grok": "Grok API",
   "connections.manage": "Manage connections",
   "connections.apiBilling": "Uses your provider’s API billing and usage limits.",
-  "connections.addKey": "Add key",
+  "connections.duplicateKeys": "Multiple saved keys exist for this provider. They have been preserved; resolve them before editing this connection.",
   "connections.modelCount": "{count} models available",
   "connections.advanced": "Research & data services",
   "cloud.chooseModel": "Choose a connection and model",

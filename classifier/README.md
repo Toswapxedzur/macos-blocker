@@ -2,7 +2,9 @@
 
 The Classifier is the cloud tagging component of Mac Vault. Four connection choices:
 ChatGPT subscription, OpenAI API, Gemini API and Grok API. Each group selects one
-provider/model and supported reasoning effort. Search is enabled on every uncached
+provider/model and supported reasoning effort. Connections uses Vault’s shared
+dropdown and one directly editable API key per provider; edits autosave, and clearing
+a field clears its key. Model-list fetching remains explicit. Search is enabled on every uncached
 request; the selected model chooses whether to invoke it. Failures preserve valid
 caches and offer Retry, with no automatic provider fallback.
 

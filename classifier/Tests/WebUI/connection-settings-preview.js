@@ -24,5 +24,9 @@ window.runConnectionSettingsPreview = async () => {
   await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));
   if(body.scrollWidth>body.clientWidth+1)throw Error('Settings overflow');
   if(settings.querySelector('[data-field="credential"]').type!=='password'||settings.querySelector('[data-field="credential"]').value!=='fixture-not-a-real-key')throw Error('Stored key must be masked and retained');
-  return ['PASS real desktop Settings: four connections, masked key, bounded layout'];
+  if(settings.querySelector('.provider-panel, .provider-panels, [data-action="createProviderProfile"], [data-action="confirmDeleteProviderProfile"]'))throw Error('Retired key-manager UI remains');
+  if(settings.querySelectorAll('[data-field="credential"]').length!==1)throw Error('Expected one key field');
+  const color=getComputedStyle(settings.host);
+  if(color.backgroundImage!=='none'||color.backgroundColor!=='rgba(0, 0, 0, 0)')throw Error('Settings host must inherit its surrounding neutral surface');
+  return ['PASS integrated Settings: shared selector, direct single key field, neutral surface, masked key, bounded layout'];
 };
