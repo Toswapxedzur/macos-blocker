@@ -45,6 +45,7 @@ window.webkit={messageHandlers:{vaultClassifier:{postMessage(message){
     case 'saveClassificationSettings':testState.settings.classificationEnabled=data.classificationEnabled;break;
     case 'saveClassificationProvider':if(data.providerModel.startsWith('api:')){const parts=data.providerModel.slice(4).split(':');type.classificationProvider='apiKey';type.apiKey={profileID:parts.shift(),model:parts.join(':'),reasoningEffort:data.reasoningEffort};}else{type.classificationProvider='chatGPT';type.chatGPT={accountID:testState.assets.chatGPT?.accountID||'',model:data.providerModel.startsWith('chatgpt:')?data.providerModel.slice(8):type.chatGPT?.model||'',reasoningEffort:data.reasoningEffort};}break;
     case 'saveChatGPTUsageLimit':testState.assets.chatGPT.dailyRequestLimit=data.dailyRequestLimit===''?null:Number(data.dailyRequestLimit);break;
+    case 'saveChatGPTRetryPolicy':testState.assets.chatGPT.retryIntervalSeconds=Number(data.retryIntervalSeconds);testState.assets.chatGPT.retryMaximumAttempts=Number(data.retryMaximumAttempts);break;
     case 'connectChatGPT':testState.assets.chatGPT={...(testState.assets.chatGPT||{}),signingIn:true};break;
     case 'cancelChatGPTSignIn':testState.assets.chatGPT.signingIn=false;break;
     case 'acknowledgeChatGPTPlan':testState.assets.chatGPT.needsWelcome=false;break;
@@ -75,6 +76,11 @@ window.webkit={messageHandlers:{vaultClassifier:{postMessage(message){
       if(!profile && data.credential.trim()){profile={id:'saved-'+data.type,name:data.type,type:data.type,protocolConfiguration:{}};testState.assets.providerProfiles.push(profile);}
       if(profile){profile.credential=data.credential.trim();profile.hasCredential=!!profile.credential;}
       break;
+    }
+    case 'saveTaggingRetryPolicy':{
+      let profile=testState.assets.providerProfiles.find(p=>p.type===data.type);
+      if(!profile){profile={id:'saved-'+data.type,name:data.type,type:data.type,credential:'',hasCredential:false,protocolConfiguration:{}};testState.assets.providerProfiles.push(profile);}
+      profile.retryIntervalSeconds=Number(data.retryIntervalSeconds);profile.retryMaximumAttempts=Number(data.retryMaximumAttempts);break;
     }
     case 'createProviderProfile':testState.assets.providerProfiles.push({id:'provider-created',name:'New provider',type:data.type,credential:'',hasCredential:false,protocolConfiguration:{}});break;
     case 'workspace':testState.workspace=data.workspace;break;

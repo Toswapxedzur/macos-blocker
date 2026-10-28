@@ -3,10 +3,18 @@
 Current behavior (2026-10-28): tagging groups choose exactly one explicit
 connection and model from ChatGPT subscription, OpenAI API, Gemini API, or Grok
 API. Search is enabled for every request. A group's confidence cutoff defaults
-to 4; there is no tag-count target. For a new uncached item, Vault may include
-up to three related, current human-corrected titles and their final tag names
-from the same group and platform. Correction notes are excluded. The correction
-itself remains authoritative and existing cached results are kept. The
+to 4; there is no tag-count target. The correction-example prompt path can
+include up to three related, current human-corrected titles and their final tag
+names from the same group and platform, but remains dormant after a mixed
+100-title comparison. Correction notes are excluded. The correction itself
+remains authoritative and existing cached results are kept. The
+tagging request has no fixed app deadline. Each of the four AI connections has
+its own retry interval and total attempt count (defaults: 60 seconds and three
+attempts). Only temporary network errors and HTTP 408/5xx are retried
+automatically; quota/authentication errors, malformed replies and exhausted
+attempts leave new items unresolved for manual Retry. Every dispatched attempt
+counts against applicable usage limits. These controls do not change the
+separate model-list, sign-in or custom-rule request limits. The
 historical implementation notes below describe the initial ChatGPT rollout;
 retired Local, search-switch, strictness and count controls are not current UI.
 

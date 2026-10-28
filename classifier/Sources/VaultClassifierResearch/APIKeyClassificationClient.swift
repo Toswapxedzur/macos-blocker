@@ -71,6 +71,7 @@ public actor APIKeyClassificationClient: CloudClassificationEngineResolving {
         let day = String(Int(Date().timeIntervalSince1970 / 86400))
         if day != today { today = day; requests = 0 }
     }
+    private func recordAttempt() { resetDay(); requests += 1 }
     func classify(profileID: String, configuration: APIKeyClassificationSettings, requests batch: [LLMClassificationRequest]) async throws -> [LLMClassificationResult] {
         while active.count + generationActive.count >= 2 { try Task.checkCancellation(); try await Task.sleep(nanoseconds: 20_000_000) }
         try Task.checkCancellation()
@@ -80,22 +81,33 @@ public actor APIKeyClassificationClient: CloudClassificationEngineResolving {
         let descriptor = ProviderProtocolRegistry.descriptor(for: profile.type)
         guard let field = descriptor.credentialFields.first, let key = profile.credential, !key.isEmpty else { throw ProviderTestProtocolError.missingCredential }
         let credential = ProviderCredentialRecord(values: [field: key]); try credential.validate(for: descriptor)
-        let id = UUID(), http = self.http
+        let id = UUID(), http = self.http, policy = profile.taggingRetryPolicy
         let task = Task<String, Error> {
-            let result = try await http.send(plan: request.plan, body: request.body, credential: credential, timeout: 60)
-            try Task.checkCancellation()
-            guard result.data.count <= 2_097_152 else { throw CloudClassificationError.invalidOutput }
-            let root = try JSONSerialization.jsonObject(with: result.data) as? [String: Any]
-            if request.plan.bodyFormat == .geminiGenerateContent {
-                guard let candidates = root?["candidates"] as? [[String: Any]], candidates.count == 1,
-                      candidates[0]["finishReason"] as? String == "STOP" else { throw CloudClassificationError.invalidOutput }
-            } else { guard root?["status"] as? String == "completed" else { throw CloudClassificationError.invalidOutput } }
-            let parsed = try ProviderGenerationProtocol.parseGeneratedText(result.data, format: request.plan.bodyFormat)
-            let text = parsed.content
-            guard !text.isEmpty else { throw CloudClassificationError.invalidOutput }
-            return text
+            var attempt = 1
+            while true {
+                do {
+                    let result = try await http.send(plan: request.plan, body: request.body, credential: credential, timeout: .infinity)
+                    try Task.checkCancellation()
+                    guard result.data.count <= 2_097_152 else { throw CloudClassificationError.invalidOutput }
+                    let root = try JSONSerialization.jsonObject(with: result.data) as? [String: Any]
+                    if request.plan.bodyFormat == .geminiGenerateContent {
+                        guard let candidates = root?["candidates"] as? [[String: Any]], candidates.count == 1,
+                              candidates[0]["finishReason"] as? String == "STOP" else { throw CloudClassificationError.invalidOutput }
+                    } else { guard root?["status"] as? String == "completed" else { throw CloudClassificationError.invalidOutput } }
+                    let parsed = try ProviderGenerationProtocol.parseGeneratedText(result.data, format: request.plan.bodyFormat)
+                    let text = parsed.content
+                    guard !text.isEmpty else { throw CloudClassificationError.invalidOutput }
+                    return text
+                } catch {
+                    guard attempt < policy.maximumAttempts, TaggingRetry.isTransient(error) else { throw error }
+                    try await TaggingRetry.wait(policy)
+                    try Task.checkCancellation()
+                    self.recordAttempt()
+                    attempt += 1
+                }
+            }
         }
-        resetDay(); requests += 1; active[id] = task
+        recordAttempt(); active[id] = task
         defer { active.removeValue(forKey: id) }
         do {
             let text = try await withTaskCancellationHandler(operation: { try await task.value }, onCancel: { task.cancel() })

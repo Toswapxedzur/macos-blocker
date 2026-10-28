@@ -7,6 +7,10 @@ import FoundationNetworking
 #endif
 
 final class APIKeyClassificationTests: XCTestCase {
+    private actor AttemptCounter {
+        var count = 0
+        func next() -> Int { count += 1; return count }
+    }
     private var item: LLMClassificationRequest { .init(staticPrefix: "Tags: Games, Mathematics. " + ClassificationReplyFormat.current.rule,
         dynamicSuffix: "Title: Games tutorial" + ClassificationReplyFormat.current.runway, allowedTagNames: ["Games", "Mathematics"], maximumTags: 3) }
     private let reply = #"{"items":[{"index":0,"tags":[{"name":"Games","confidence":5}]}]}"#
@@ -57,6 +61,27 @@ final class APIKeyClassificationTests: XCTestCase {
         do { _ = try await engine.classify(item); XCTFail("fixture is still unavailable") } catch {}
         let retried = await client.status(); XCTAssertEqual(retried.requestsToday, 2)
         XCTAssertFalse(String(decoding: try JSONEncoder().encode(group), as: UTF8.self).contains("fixture-key"))
+        await client.shutdown()
+    }
+    func testTransientServerFailureRetriesThreeDispatchedAttemptsWithoutRequestDeadline() async throws {
+        let profile = APIKeyProviderProfile(id: "fixture", type: .gemini, credential: "fixture-key-not-real",
+            taggingRetryPolicy: .init(intervalSeconds: 1, maximumAttempts: 3))
+        let counter = AttemptCounter(), success = try response(.gemini)
+        let http = URLSessionProviderHTTPClient { request in
+            XCTAssertTrue(request.timeoutInterval.isInfinite)
+            let attempt = await counter.next()
+            return (attempt < 3 ? Data() : success,
+                HTTPURLResponse(url: request.url!, statusCode: attempt < 3 ? 503 : 200, httpVersion: nil, headerFields: nil)!)
+        }
+        let client = APIKeyClassificationClient(profiles: { _ in profile }, http: http)
+        let group = ClassifierTypeAsset(name: "Fixture", treeID: "t", treeRevision: 1, datasetID: "d", datasetRevision: 1,
+            classificationProvider: .apiKey, apiKey: .init(profileID: profile.id, model: "gemini-3.1-flash-lite"))
+        let engine = try await client.resolveCloudEngine(for: group)
+        let result = try await engine.classify(item)
+        let attempts = await counter.count, status = await client.status()
+        XCTAssertEqual(result.tags.map(\.name), ["Games"])
+        XCTAssertEqual(attempts, 3)
+        XCTAssertEqual(status.requestsToday, 3)
         await client.shutdown()
     }
     func testSearchIsExplicitAndUnsupportedGeminiCombinationIsRefused() throws {

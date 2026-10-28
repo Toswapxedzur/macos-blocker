@@ -268,7 +268,7 @@ final class VideoClassificationCoordinatorTests: XCTestCase {
 
 
 
-    func testCorrectionsRemainAuthoritativeAndSelectedExamplesReachNewRequests() async throws {
+    func testCorrectionsRemainAuthoritativeWhileExamplesAreDormant() async throws {
         let (coordinator, root) = try makeCoordinatorWithYouTubeType()
         defer { LocalStateFile.flushAllPendingWrites(); try? FileManager.default.removeItem(at: root) }
         var catalog = coordinator.snapshot().workspaceCatalog
@@ -321,16 +321,15 @@ final class VideoClassificationCoordinatorTests: XCTestCase {
         XCTAssertEqual(correctedProjection.tags.map(\.id), ["g"])
         XCTAssertTrue(recorder.requests.isEmpty, "live and research refreshes preserve human-corrected rows")
 
-        // A fresh video sees a few relevant final-tag examples. The correction
-        // notes are excluded, and the manual rule remains independently authored.
+        // A fresh video still receives the manual rule, while the evaluated
+        // correction-example path remains dormant in production.
         _ = try await coordinator.classifyVideo(
             platformID: "youtube", entryID: "fresh",
             creatorID: "youtube:handle:@creator", title: "Games episode preview"
         )
         let request = try XCTUnwrap(recorder.requests.first)
         XCTAssertTrue(request.staticPrefix.contains("Manual type rule."), "manual house rule reaches the cached prefix")
-        XCTAssertTrue(request.dynamicSuffix.contains("Past human corrections"))
-        XCTAssertTrue(request.dynamicSuffix.contains(#""tagNames":["Games"]"#))
+        XCTAssertFalse(request.dynamicSuffix.contains("Past human corrections"))
         XCTAssertTrue(request.dynamicSuffix.contains("Games episode"))
         XCTAssertFalse(request.dynamicSuffix.contains("Keep games together."), "notes are not prompt instructions")
         XCTAssertFalse(request.staticPrefix.contains("Games episode"), "examples remain in per-item data")

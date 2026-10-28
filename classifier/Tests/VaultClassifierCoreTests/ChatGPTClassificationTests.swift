@@ -188,6 +188,48 @@ final class ChatGPTClassificationTests: XCTestCase {
         XCTAssertFalse(serialized.contains("test-only-access")); XCTAssertFalse(serialized.contains("test-only-refresh"))
         await client.shutdown()
     }
+    func testTransientSubscriptionFailureRetriesAndCountsEveryAttempt() async throws {
+        let root = try root(); defer { try? FileManager.default.removeItem(at: root) }
+        try credentialFixture(root)
+        let calls = CloudCalls(), stream = successfulStream()
+        let client = try ChatGPTAccountClient(directory: root, taggingRetryPolicy: .init(intervalSeconds: 1, maximumAttempts: 3),
+            http: .init { request, consume in
+                XCTAssertTrue(request.timeoutInterval.isInfinite)
+                calls.record(request)
+                if calls.count < 3 { throw ChatGPTPlanError.transientResponse }
+                try consume(stream)
+            })
+        let account = await client.status()
+        let engine = ChatGPTClassificationEngine(client: client,
+            configuration: .init(accountID: account.accountID, model: "fixture"), modelVersion: "fixture/v1")
+        let result = try await engine.classify(item())
+        let finalStatus = await client.status()
+        XCTAssertEqual(result.tags.map(\.name), ["Games"])
+        XCTAssertEqual(calls.count, 3)
+        XCTAssertEqual(finalStatus.requestsToday, 3)
+        await client.shutdown()
+    }
+    func testShutdownCancelsAnAutomaticRetryWait() async throws {
+        let root = try root(); defer { try? FileManager.default.removeItem(at: root) }
+        try credentialFixture(root)
+        let calls = CloudCalls()
+        let client = try ChatGPTAccountClient(directory: root, taggingRetryPolicy: .init(intervalSeconds: 60, maximumAttempts: 3),
+            http: .init { request, _ in calls.record(request); throw ChatGPTPlanError.transientResponse })
+        let account = await client.status()
+        let engine = ChatGPTClassificationEngine(client: client,
+            configuration: .init(accountID: account.accountID, model: "fixture"), modelVersion: "fixture/v1")
+        let pending = Task { try await engine.classify(item()) }
+        let deadline = ProcessInfo.processInfo.systemUptime + 2
+        while calls.count == 0 && ProcessInfo.processInfo.systemUptime < deadline {
+            try await Task.sleep(nanoseconds: 10_000_000)
+        }
+        XCTAssertEqual(calls.count, 1)
+        let start = ProcessInfo.processInfo.systemUptime
+        await client.shutdown()
+        _ = try? await pending.value
+        XCTAssertLessThan(ProcessInfo.processInfo.systemUptime - start, 1)
+        XCTAssertEqual(calls.count, 1)
+    }
 
     func testIdentityOnlyScopeCannotDispatchInference() async throws {
         let root = try root(); defer { try? FileManager.default.removeItem(at: root) }

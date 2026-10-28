@@ -187,14 +187,14 @@ final class VideoClassificationPipelineTests: XCTestCase {
         catalog.videoClassifications = [.init(classifierTypeID: "type", platformID: "youtube",
             entryID: "old", creatorID: "other", treeID: "tree", treeRevision: 1,
             tags: [.init(tagID: "m", confidence: 5)], source: .humanCorrected, modelVersion: "human")]
-        _ = try await VideoClassificationPipeline(llm: llm).classify(
+        _ = try await VideoClassificationPipeline(llm: llm, useCorrectionExamples: true).classify(
             title: "Minecraft base guide", entryID: "new", creatorID: "different", platformID: "youtube",
             classifierType: makeType(), tree: makeTree(), catalog: catalog)
         XCTAssertTrue(recorder.last?.dynamicSuffix.contains("Minecraft base tutorial") == true)
         XCTAssertTrue(recorder.last?.dynamicSuffix.contains(#""tagNames":["Minecraft"]"#) == true)
         XCTAssertFalse(recorder.last?.dynamicSuffix.contains("Private note") == true)
 
-        _ = try await VideoClassificationPipeline(llm: llm, useCorrectionExamples: false).classify(
+        _ = try await VideoClassificationPipeline(llm: llm).classify(
             title: "Minecraft base guide", entryID: "new", creatorID: "different", platformID: "youtube",
             classifierType: makeType(), tree: makeTree(), catalog: catalog)
         XCTAssertFalse(recorder.last?.dynamicSuffix.contains("Past human corrections") == true)

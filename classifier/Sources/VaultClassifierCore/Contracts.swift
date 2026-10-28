@@ -213,20 +213,37 @@ public struct TaggingSettings: Codable, Equatable, Sendable {
     }
 }
 
+public struct TaggingRetryPolicy: Codable, Equatable, Sendable {
+    public var intervalSeconds: Int
+    public var maximumAttempts: Int
+
+    public init(intervalSeconds: Int = 60, maximumAttempts: Int = 3) {
+        self.intervalSeconds = intervalSeconds
+        self.maximumAttempts = maximumAttempts
+    }
+
+    public var isValid: Bool {
+        (1...3600).contains(intervalSeconds) && (1...10).contains(maximumAttempts)
+    }
+}
+
 public struct ClassifierSettings: Codable, Equatable, Sendable {
     public var chatGPTDailyRequestLimit: Int?
+    public var chatGPTRetryPolicy: TaggingRetryPolicy
     public var classificationEnabled: Bool
 
     public init(
         classificationEnabled: Bool = true,
-        chatGPTDailyRequestLimit: Int? = nil
+        chatGPTDailyRequestLimit: Int? = nil,
+        chatGPTRetryPolicy: TaggingRetryPolicy = .init()
     ) {
         self.classificationEnabled = classificationEnabled
         self.chatGPTDailyRequestLimit = chatGPTDailyRequestLimit
+        self.chatGPTRetryPolicy = chatGPTRetryPolicy
     }
 
     private enum CodingKeys: String, CodingKey {
-        case classificationEnabled, chatGPTDailyRequestLimit
+        case classificationEnabled, chatGPTDailyRequestLimit, chatGPTRetryPolicy
     }
 
 
@@ -235,7 +252,9 @@ public struct ClassifierSettings: Codable, Equatable, Sendable {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         self.init(
             classificationEnabled: (try? container.decodeIfPresent(Bool.self, forKey: .classificationEnabled)) ?? true,
-            chatGPTDailyRequestLimit: try container.decodeIfPresent(Int.self, forKey: .chatGPTDailyRequestLimit)
+            chatGPTDailyRequestLimit: try container.decodeIfPresent(Int.self, forKey: .chatGPTDailyRequestLimit),
+            chatGPTRetryPolicy: (try? container.decodeIfPresent(TaggingRetryPolicy.self, forKey: .chatGPTRetryPolicy)) ?? .init()
         )
+        if !chatGPTRetryPolicy.isValid { chatGPTRetryPolicy = .init() }
     }
 }

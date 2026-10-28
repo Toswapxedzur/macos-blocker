@@ -26,7 +26,8 @@ public struct VideoClassificationPipeline: Sendable {
     /// Count controls above remain only for dormant local-model fixtures.
     public let minimumConfidence: Int?
     public let promptVersion: String
-    /// Evaluation control; normal classification uses relevant corrections.
+    /// Controlled evaluation switch. Correction examples remain dormant until
+    /// they show a clear benefit with real human corrections.
     public let useCorrectionExamples: Bool
 
     public init(
@@ -39,7 +40,7 @@ public struct VideoClassificationPipeline: Sendable {
         // Cached p1 rows stay valid: the currency check matches the model file only.
         // p4 = researched creator sentence on the creator line, single pass (2026-09-22).
         promptVersion: String = "p5",
-        useCorrectionExamples: Bool = true
+        useCorrectionExamples: Bool = false
     ) {
         self.llm = llm
         self.maximumTags = maximumTags

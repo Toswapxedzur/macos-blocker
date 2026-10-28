@@ -15,9 +15,11 @@ public struct ChatGPTHTTPClient: Sendable {
         return buffer.value
     }
 
-    func inference(_ plan: ChatGPTPlanProtocol.Request, token: String, maximumTextBytes: Int = 262144) async throws -> (String, Int?, [RuleAICitation]) {
+    func inference(_ plan: ChatGPTPlanProtocol.Request, token: String, maximumTextBytes: Int = 262144, withoutDeadline: Bool = false) async throws -> (String, Int?, [RuleAICitation]) {
         let stream = LockedStream(maximumTextBytes: maximumTextBytes)
-        try await sender(try request(plan, token: token)) { try stream.append($0) }
+        var prepared = try request(plan, token: token)
+        if withoutDeadline { prepared.timeoutInterval = .infinity }
+        try await sender(prepared) { try stream.append($0) }
         return try stream.finish()
     }
 
@@ -64,6 +66,7 @@ public enum ChatGPTHTTP {
             let status = (response as? HTTPURLResponse)?.statusCode
             if status == 401 { throw CloudClassificationError.signInRequired }
             if status == 429 { throw ChatGPTPlanError.usageUnavailable }
+            if status == 408 || (500...599).contains(status ?? 0) { throw ChatGPTPlanError.transientResponse }
             throw ChatGPTPlanError.failedResponse
         }
         guard streaming else { return }
@@ -98,7 +101,12 @@ private final class ResponseSink: NSObject, URLSessionDataDelegate, @unchecked S
         if cancelled { lock.unlock(); continuation.resume(throwing: CancellationError()); return }
         self.continuation = continuation
         let configuration = URLSessionConfiguration.ephemeral
-        configuration.timeoutIntervalForResource = 60
+        if request.timeoutInterval.isInfinite {
+            configuration.timeoutIntervalForRequest = .infinity
+            configuration.timeoutIntervalForResource = .infinity
+        } else {
+            configuration.timeoutIntervalForResource = 60
+        }
         configuration.httpShouldSetCookies = false
         configuration.urlCache = nil; configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
         let session = URLSession(configuration: configuration, delegate: self, delegateQueue: nil)
@@ -136,7 +144,7 @@ private final class ResponseSink: NSObject, URLSessionDataDelegate, @unchecked S
     }
     func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
         if let error {
-            finish(.failure((error as? URLError)?.code == .cancelled ? CancellationError() : ChatGPTPlanError.failedResponse))
+            finish(.failure((error as? URLError)?.code == .cancelled ? CancellationError() : error))
         } else { finish(.success(())) }
     }
 }

@@ -85,17 +85,20 @@ public actor ChatGPTAccountClient: CloudClassificationEngineResolving {
     private var credentialBusy = false
     private var classificationsInFlight = 0
     private var dailyRequestLimit: Int?
+    private var taggingRetryPolicy: TaggingRetryPolicy
     private var failureHold = false
     private var activeRequests: [UUID: Task<(String, Int?, [RuleAICitation]), Error>] = [:]
+    private var retryWaits: [UUID: Task<Void, Error>] = [:]
     private struct Usage: Codable { var schemaVersion: Int; var day: String; var requests: Int }
     private var usage: Usage
     private var welcomeAccounts: Set<String>
     private struct Welcome: Codable { let schemaVersion: Int; let accounts: Set<String> }
 
-    public init(directory: URL, dailyRequestLimit: Int? = nil, http: ChatGPTHTTPClient = .init(), onChange: @escaping @Sendable () -> Void = {}) throws {
+    public init(directory: URL, dailyRequestLimit: Int? = nil, taggingRetryPolicy: TaggingRetryPolicy = .init(), http: ChatGPTHTTPClient = .init(), onChange: @escaping @Sendable () -> Void = {}) throws {
         let store = ChatGPTAccountStore(directory: directory)
         self.store = store; self.http = http; self.onChange = onChange
         self.dailyRequestLimit = dailyRequestLimit
+        self.taggingRetryPolicy = taggingRetryPolicy.isValid ? taggingRetryPolicy : .init()
         if let data = try store.read("host.json") {
             let id = try JSONDecoder().decode(String.self, from: data)
             guard id.hasPrefix("urn:uuid:"), UUID(uuidString: String(id.dropFirst(9))) != nil else { throw ChatGPTPlanError.invalidAuthorization }
@@ -218,6 +221,7 @@ public actor ChatGPTAccountClient: CloudClassificationEngineResolving {
     public func disconnect() throws {
         generation = UUID(); credentialRevision = UUID(); signInGeneration = UUID(); signInTask?.cancel(); signInTask = nil
         activeRequests.values.forEach { $0.cancel() }
+        retryWaits.values.forEach { $0.cancel() }
         try store.delete("account.json"); try store.delete("registration.json")
         credential = nil; registration = nil; models = []; issue = nil; failureHold = false; onChange()
     }
@@ -236,6 +240,7 @@ public actor ChatGPTAccountClient: CloudClassificationEngineResolving {
     }
     func recordClassificationFailure(_ error: Error) { failureHold = true; issue = error.localizedDescription; onChange() }
     public func setDailyRequestLimit(_ value: Int?) { dailyRequestLimit = value }
+    public func setTaggingRetryPolicy(_ value: TaggingRetryPolicy) { if value.isValid { taggingRetryPolicy = value } }
 
     private func accessToken() async throws -> String {
         while credentialBusy { try await Task.sleep(nanoseconds: 25_000_000) }
@@ -316,37 +321,58 @@ public actor ChatGPTAccountClient: CloudClassificationEngineResolving {
         guard credential?.accountID == configuration.accountID else { throw CloudClassificationError.signInRequired }
         guard !holdFailures || !failureHold else { throw ChatGPTPlanError.failedResponse }
         let pending = generation
-        let token: String
-        do { token = try await accessToken() }
-        catch {
-            if pending != generation, !isShuttingDown { throw CloudClassificationError.signInRequired }
-            if !(error is CancellationError) { issue = error.localizedDescription; failureHold = holdFailures || failureHold }
-            throw error
-        }
-        guard pending == generation, credential?.accountID == configuration.accountID else { throw CancellationError() }
-        try Task.checkCancellation()
-        // Recheck after token renewal: another batch may have consumed the
-        // final slot, failed or reached a new UTC day while we were suspended.
-        guard !holdFailures || !failureHold else { throw ChatGPTPlanError.failedResponse }
-        if usage.day != Self.day() { usage = Usage(schemaVersion: 1, day: Self.day(), requests: 0) }
-        if let limit = dailyRequestLimit, usage.requests >= limit { throw CloudClassificationError.usageLimit }
-        usage.requests += 1
-        try store.write(JSONEncoder().encode(usage), name: "usage.json") // Reserve before dispatch; failures count too.
-        let id = UUID()
-        let work = Task { try await http.inference(request, token: token, maximumTextBytes: maximumTextBytes) }
-        activeRequests[id] = work
-        defer { activeRequests[id] = nil }
-        do {
-            let output = try await withTaskCancellationHandler(operation: { try await work.value }, onCancel: { work.cancel() })
+        let policy = taggingRetryPolicy
+        var attempt = 1
+        while true {
+            try Task.checkCancellation()
             guard pending == generation, !isShuttingDown else { throw CancellationError() }
-            if !failureHold { issue = nil }
-            return (output.0, output.2)
-        } catch {
-            if pending != generation, !isShuttingDown { throw CloudClassificationError.signInRequired }
-            // A sibling may have failed before this request was cancelled.
-            // Only explicit Retry/disconnect may clear that failure hold.
-            if !(error is CancellationError) { issue = error.localizedDescription; failureHold = holdFailures || failureHold }
-            throw error
+            guard !holdFailures || !failureHold else { throw ChatGPTPlanError.failedResponse }
+            let token: String
+            do { token = try await accessToken() }
+            catch {
+                if pending != generation, !isShuttingDown { throw CloudClassificationError.signInRequired }
+                if !(error is CancellationError) { issue = error.localizedDescription; failureHold = holdFailures || failureHold }
+                throw error
+            }
+            // A renewal can suspend this actor; recheck connection, hold and
+            // allowance before reserving this attempt.
+            guard pending == generation, credential?.accountID == configuration.accountID else { throw CancellationError() }
+            guard !holdFailures || !failureHold else { throw ChatGPTPlanError.failedResponse }
+            if usage.day != Self.day() { usage = Usage(schemaVersion: 1, day: Self.day(), requests: 0) }
+            if let limit = dailyRequestLimit, usage.requests >= limit { throw CloudClassificationError.usageLimit }
+            usage.requests += 1
+            try store.write(JSONEncoder().encode(usage), name: "usage.json") // Every dispatched attempt counts.
+            let id = UUID()
+            let work = Task { try await http.inference(request, token: token, maximumTextBytes: maximumTextBytes, withoutDeadline: holdFailures) }
+            activeRequests[id] = work
+            do {
+                let output = try await withTaskCancellationHandler(operation: { try await work.value }, onCancel: { work.cancel() })
+                activeRequests[id] = nil
+                guard pending == generation, !isShuttingDown else { throw CancellationError() }
+                if !failureHold { issue = nil }
+                return (output.0, output.2)
+            } catch {
+                activeRequests[id] = nil
+                if pending != generation, !isShuttingDown { throw CloudClassificationError.signInRequired }
+                if holdFailures && attempt < policy.maximumAttempts && TaggingRetry.isTransient(error) && !Task.isCancelled && !isShuttingDown {
+                    let waitID = UUID()
+                    let wait = Task { try await TaggingRetry.wait(policy) }
+                    retryWaits[waitID] = wait
+                    do {
+                        try await withTaskCancellationHandler(operation: { try await wait.value }, onCancel: { wait.cancel() })
+                    } catch {
+                        retryWaits[waitID] = nil
+                        throw error
+                    }
+                    retryWaits[waitID] = nil
+                    attempt += 1
+                    continue
+                }
+                // A sibling may have failed before this request was cancelled.
+                // Only explicit Retry/disconnect may clear that failure hold.
+                if !(error is CancellationError) { issue = error.localizedDescription; failureHold = holdFailures || failureHold }
+                throw error
+            }
         }
     }
 
@@ -355,8 +381,10 @@ public actor ChatGPTAccountClient: CloudClassificationEngineResolving {
         let signIn = signInTask; signIn?.cancel(); signInTask = nil
         let data = Array(dataRequests.values); data.forEach { $0.cancel() }
         let requests = Array(activeRequests.values); requests.forEach { $0.cancel() }
+        let waits = Array(retryWaits.values); waits.forEach { $0.cancel() }
         await signIn?.value
         for request in requests { _ = try? await request.value }
+        for wait in waits { _ = try? await wait.value }
         for request in data { _ = try? await request.value }
     }
 }

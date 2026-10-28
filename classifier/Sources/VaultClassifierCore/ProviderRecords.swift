@@ -351,6 +351,8 @@ public struct APIKeyProviderProfile: Codable, Equatable, Sendable, Identifiable 
     /// A plain, locally persisted API key or token. This is intentionally shown
     /// and edited as an ordinary text field in the local WebView.
     public var credential: String?
+    /// Automatic retries for transient tagging failures on this connection.
+    public var taggingRetryPolicy: TaggingRetryPolicy
     public var updatedAtMilliseconds: Int64
 
     public init(
@@ -361,6 +363,7 @@ public struct APIKeyProviderProfile: Codable, Equatable, Sendable, Identifiable 
         protocolConfiguration: [String: String]? = nil,
         testModelIdentifier: String? = nil,
         credential: String? = nil,
+        taggingRetryPolicy: TaggingRetryPolicy = .init(),
         updatedAtMilliseconds: Int64 = WorkspaceCatalog.now()
     ) {
         self.id = id
@@ -371,6 +374,7 @@ public struct APIKeyProviderProfile: Codable, Equatable, Sendable, Identifiable 
         self.testModelIdentifier = testModelIdentifier
         let normalizedCredential = credential?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         self.credential = normalizedCredential.isEmpty ? nil : normalizedCredential
+        self.taggingRetryPolicy = taggingRetryPolicy
         self.updatedAtMilliseconds = updatedAtMilliseconds
     }
 
@@ -395,6 +399,7 @@ public struct APIKeyProviderProfile: Codable, Equatable, Sendable, Identifiable 
               normalizedCredential?.unicodeScalars.allSatisfy({ $0.properties.generalCategory != .control }) ?? true else {
             throw APIKeyProviderProfileError.invalidConfiguration
         }
+        guard taggingRetryPolicy.isValid else { throw APIKeyProviderProfileError.invalidConfiguration }
         do {
             try descriptor.validateConfiguration(protocolConfiguration, endpointOverride: normalizedEndpoint, requireDispatchReadiness: false)
         } catch {
@@ -418,7 +423,7 @@ public struct APIKeyProviderProfile: Codable, Equatable, Sendable, Identifiable 
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, name, type, customEndpoint, protocolConfiguration, testModelIdentifier, credential, updatedAtMilliseconds
+        case id, name, type, customEndpoint, protocolConfiguration, testModelIdentifier, credential, taggingRetryPolicy, updatedAtMilliseconds
     }
 
     public init(from decoder: Decoder) throws {
@@ -446,6 +451,8 @@ public struct APIKeyProviderProfile: Codable, Equatable, Sendable, Identifiable 
         } else {
             credential = nil
         }
+        taggingRetryPolicy = (try? container.decodeIfPresent(TaggingRetryPolicy.self, forKey: .taggingRetryPolicy)) ?? .init()
+        if !taggingRetryPolicy.isValid { taggingRetryPolicy = .init() }
         updatedAtMilliseconds = try container.decodeIfPresent(Int64.self, forKey: .updatedAtMilliseconds) ?? WorkspaceCatalog.now()
     }
 
@@ -458,6 +465,7 @@ public struct APIKeyProviderProfile: Codable, Equatable, Sendable, Identifiable 
         try container.encode(protocolConfiguration, forKey: .protocolConfiguration)
         try container.encodeIfPresent(testModelIdentifier, forKey: .testModelIdentifier)
         try container.encodeIfPresent(credential, forKey: .credential)
+        try container.encode(taggingRetryPolicy, forKey: .taggingRetryPolicy)
         try container.encode(updatedAtMilliseconds, forKey: .updatedAtMilliseconds)
     }
 }

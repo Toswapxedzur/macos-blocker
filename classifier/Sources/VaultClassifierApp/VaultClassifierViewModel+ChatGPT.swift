@@ -18,7 +18,8 @@ extension VaultClassifierViewModel {
         coordinator.setCloudEngineResolver(apiKeys)
         do {
             let client = try ChatGPTAccountClient(directory: directory.appendingPathComponent("ChatGPT", isDirectory: true),
-                dailyRequestLimit: coordinator.snapshot().settings.chatGPTDailyRequestLimit) { [weak self] in
+                dailyRequestLimit: coordinator.snapshot().settings.chatGPTDailyRequestLimit,
+                taggingRetryPolicy: coordinator.snapshot().settings.chatGPTRetryPolicy) { [weak self] in
                 Task { @MainActor [weak self] in await self?.refreshChatGPTStatus() }
             }
             chatGPTClient = client
@@ -110,6 +111,15 @@ extension VaultClassifierViewModel {
         try coordinator.updateSettings(settings)
         refreshLocalState(); issue = nil
         Task { await chatGPTClient?.setDailyRequestLimit(value) }
+    }
+
+    func saveChatGPTRetryPolicy(_ policy: TaggingRetryPolicy) throws {
+        guard policy.isValid, let coordinator else { throw WebBridgeInputError.invalidChoice("tagging retry policy") }
+        var settings = coordinator.snapshot().settings
+        settings.chatGPTRetryPolicy = policy
+        try coordinator.updateSettings(settings)
+        refreshLocalState(); issue = nil
+        Task { await chatGPTClient?.setTaggingRetryPolicy(policy) }
     }
 
     func retryChatGPTClassifications() {

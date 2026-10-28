@@ -23,7 +23,15 @@ public struct URLSessionProviderHTTPClient: ProviderHTTPClient {
 
     public init(
         transport: @escaping Transport = { request in
-            try await URLSession.shared.data(for: request)
+            if request.timeoutInterval.isInfinite {
+                let configuration = URLSessionConfiguration.ephemeral
+                configuration.timeoutIntervalForRequest = .infinity
+                configuration.timeoutIntervalForResource = .infinity
+                let session = URLSession(configuration: configuration)
+                defer { session.invalidateAndCancel() }
+                return try await session.data(for: request)
+            }
+            return try await URLSession.shared.data(for: request)
         }
     ) {
         self.transport = transport

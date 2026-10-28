@@ -106,6 +106,30 @@ extension VaultClassifierViewModel {
         } catch { issue = error.localizedDescription }
     }
 
+    func saveTaggingRetryPolicy(typeRaw: String, policy: TaggingRetryPolicy) {
+        do {
+            guard policy.isValid,
+                  let type = APIKeyProviderType(rawValue: typeRaw),
+                  APIKeyClassificationClient.supports(type),
+                  var catalog = localState?.workspaceCatalog else {
+                throw WebBridgeInputError.invalidChoice("tagging retry policy")
+            }
+            let matches = catalog.providerProfiles.filter { $0.type == type }
+            guard matches.count <= 1 else { throw WebBridgeInputError.invalidChoice("multiple saved keys for this provider") }
+            var profile = matches.first ?? APIKeyProviderProfile(type: type)
+            profile.taggingRetryPolicy = policy
+            try profile.validate()
+            profile.updatedAtMilliseconds = WorkspaceCatalog.now()
+            if let index = catalog.providerProfiles.firstIndex(where: { $0.id == profile.id }) {
+                catalog.providerProfiles[index] = profile
+            } else {
+                catalog.providerProfiles.append(profile)
+            }
+            try coordinator?.updateWorkspaceCatalog(catalog)
+            refreshLocalState(); issue = nil
+        } catch { issue = error.localizedDescription }
+    }
+
     /// A provider test is always an explicit user action. It sends either the
     /// fixed harmless language-model prompt or a bounded provider-specific
     /// platform health request or fixed raw-search query, never browser

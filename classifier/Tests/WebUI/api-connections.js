@@ -15,6 +15,9 @@ window.runAPIConnectionTests = async () => {
   expect(q('[data-field="credential"]').type==='password' && q('[data-field="credential"]').value==='fixture-key-not-real','stored API key is masked and retained for connection edits');
   expect(q('[data-tagging-key-fields]') && !q('.provider-panel, .provider-panels, [data-action="createProviderProfile"], [data-action="confirmDeleteProviderProfile"]'),'key fields render directly without cards or Add/Delete controls');
   expect(q('[data-action="probeProviderModelCatalog"]'),'key connection exposes model-list fetch');
+  expect(q('[data-field="retryIntervalSeconds"]').value==='60' && q('[data-field="retryMaximumAttempts"]').value==='3','key connection defaults to 60 seconds and three total attempts');
+  const interval=q('[data-field="retryIntervalSeconds"]');interval.value='90';interval.dispatchEvent(new Event('change',{bubbles:true}));await tick();
+  expect(commands.some(c=>c.action==='saveTaggingRetryPolicy'&&c.data.type==='openAI'&&c.data.retryIntervalSeconds==='90'),'key connection retry policy saves independently');
   q('[data-info-key="llm.apiKeyOrToken"] .vui-info-button').click();await tick();
   const info=q('.vui-info-popover') || document.querySelector('.vui-info-popover');
   expect(info?.textContent.includes('stored in this app’s support folder') && info.textContent.includes('API billing'),'key Info retains storage and billing disclosure');

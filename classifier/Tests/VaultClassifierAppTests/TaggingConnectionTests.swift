@@ -80,4 +80,31 @@ final class TaggingConnectionTests: XCTestCase {
             XCTAssertEqual(vm.localState?.workspaceCatalog.providerProfiles, [first, second])
         }
     }
+    func testRetryPoliciesPersistSeparatelyForEachConnection() throws {
+        let vm = try model()
+        _ = vm.performWebAction("saveChatGPTRetryPolicy", data: ["retryIntervalSeconds": "90", "retryMaximumAttempts": "2"])
+        XCTAssertNil(vm.issue)
+        _ = vm.performWebAction("saveTaggingRetryPolicy", data: ["type": "gemini", "retryIntervalSeconds": "120", "retryMaximumAttempts": "4"])
+        XCTAssertNil(vm.issue)
+        let state = try XCTUnwrap(vm.localState)
+        XCTAssertEqual(state.settings.chatGPTRetryPolicy, .init(intervalSeconds: 90, maximumAttempts: 2))
+        XCTAssertEqual(state.workspaceCatalog.providerProfiles.first { $0.type == .gemini }?.taggingRetryPolicy,
+            .init(intervalSeconds: 120, maximumAttempts: 4))
+        XCTAssertNil(state.workspaceCatalog.providerProfiles.first { $0.type == .openAI })
+        LocalStateFile.flushAllPendingWrites()
+        let reloaded = try model()
+        XCTAssertEqual(reloaded.localState?.settings.chatGPTRetryPolicy, state.settings.chatGPTRetryPolicy)
+        XCTAssertEqual(reloaded.localState?.workspaceCatalog.providerProfiles.first?.taggingRetryPolicy,
+            .init(intervalSeconds: 120, maximumAttempts: 4))
+    }
+    func testInvalidRetryPolicyDoesNotChangeConnections() throws {
+        let vm = try model()
+        let before = try XCTUnwrap(vm.localState)
+        _ = vm.performWebAction("saveTaggingRetryPolicy", data: ["type": "gemini", "retryIntervalSeconds": "0", "retryMaximumAttempts": "3"])
+        XCTAssertNotNil(vm.issue)
+        XCTAssertEqual(vm.localState?.workspaceCatalog.providerProfiles, before.workspaceCatalog.providerProfiles)
+        _ = vm.performWebAction("saveChatGPTRetryPolicy", data: ["retryIntervalSeconds": "60", "retryMaximumAttempts": "11"])
+        XCTAssertNotNil(vm.issue)
+        XCTAssertEqual(vm.localState?.settings.chatGPTRetryPolicy, before.settings.chatGPTRetryPolicy)
+    }
 }

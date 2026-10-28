@@ -71,6 +71,8 @@ extension VaultClassifierViewModel {
             "needsWelcome": chatGPTStatus.needsWelcome,
             "issue": chatGPTStatus.issue ?? NSNull(),
             "dailyRequestLimit": state?.settings.chatGPTDailyRequestLimit.map { $0 as Any } ?? NSNull(),
+            "retryIntervalSeconds": state?.settings.chatGPTRetryPolicy.intervalSeconds ?? 60,
+            "retryMaximumAttempts": state?.settings.chatGPTRetryPolicy.maximumAttempts ?? 3,
             "models": chatGPTStatus.models.map { ["id": $0.identifier, "name": $0.displayName] }] as [String: Any]
         var classificationCapabilities: [String: Any] = [:]
         func capability(_ provider: APIKeyProviderType?, _ model: String) -> [String: Any] {
@@ -94,6 +96,8 @@ extension VaultClassifierViewModel {
                     "protocolConfiguration": profile.protocolConfiguration,
                     "testModelIdentifier": profile.testModelIdentifier ?? NSNull(),
                     "credential": profile.credential ?? "",
+                    "retryIntervalSeconds": profile.taggingRetryPolicy.intervalSeconds,
+                    "retryMaximumAttempts": profile.taggingRetryPolicy.maximumAttempts,
                     "hasCredential": !descriptor.credentialFields.isEmpty && profile.credential?.isEmpty == false,
                     "testing": testingProviderProfileIDs.contains(profile.id),
                     "testSucceeded": successfulProviderTestProfileIDs.contains(profile.id),
@@ -246,6 +250,13 @@ extension VaultClassifierViewModel {
                     typeRaw: try webString(data, key: "type", limit: 32),
                     rawCredential: try webString(data, key: "credential", limit: ProviderCredentialRecord.maximumCharacters)
                 )
+            case "saveTaggingRetryPolicy":
+                guard let interval = Int(try webString(data, key: "retryIntervalSeconds", limit: 8)),
+                      let attempts = Int(try webString(data, key: "retryMaximumAttempts", limit: 3)) else {
+                    throw WebBridgeInputError.invalidChoice("tagging retry policy")
+                }
+                saveTaggingRetryPolicy(typeRaw: try webString(data, key: "type", limit: 32),
+                    policy: .init(intervalSeconds: interval, maximumAttempts: attempts))
             case "testProviderProfile":
                 testProviderProfile(
                     profileID: try webString(data, key: "profileID", limit: 128),
@@ -312,6 +323,12 @@ extension VaultClassifierViewModel {
                 let raw = try webOptionalString(data, key: "dailyRequestLimit", limit: 12)
                 guard raw == nil || Int(raw!) != nil else { throw WebBridgeInputError.invalidChoice("daily request limit") }
                 try saveChatGPTUsageLimit(raw.flatMap(Int.init))
+            case "saveChatGPTRetryPolicy":
+                guard let interval = Int(try webString(data, key: "retryIntervalSeconds", limit: 8)),
+                      let attempts = Int(try webString(data, key: "retryMaximumAttempts", limit: 3)) else {
+                    throw WebBridgeInputError.invalidChoice("tagging retry policy")
+                }
+                try saveChatGPTRetryPolicy(.init(intervalSeconds: interval, maximumAttempts: attempts))
             case "saveClassificationProvider":
                 guard let effort = ClassificationReasoningEffort(rawValue: try webString(data, key: "reasoningEffort", limit: 32)) else { throw WebBridgeInputError.invalidChoice("reasoning effort") }
                 try saveClassificationProvider(typeID: webString(data, key: "typeID", limit: 256),

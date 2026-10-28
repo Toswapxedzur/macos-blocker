@@ -31,6 +31,9 @@ window.runChatGPTTests = async () => {
   expect(testState.assets.chatGPT.dailyRequestLimit===42,'daily cap autosaves from its own settings form');
   change('[data-form-id="chatgpt-limit-form"] [data-field="dailyRequestLimit"]','');await tick();
   expect(testState.assets.chatGPT.dailyRequestLimit===null,'blank daily cap restores provider limits');
+  change('[data-form-id="chatgpt-retry-form"] [data-field="retryIntervalSeconds"]','90');await tick();
+  change('[data-form-id="chatgpt-retry-form"] [data-field="retryMaximumAttempts"]','2');await tick();
+  expect(testState.assets.chatGPT.retryIntervalSeconds===90 && testState.assets.chatGPT.retryMaximumAttempts===2,'subscription retry policy saves per connection');
   testState.assets.chatGPT.needsRetry=true;testState.assets.chatGPT.failedItems=2;pushSnapshot();await tick();
   q('[data-chatgpt-account] [data-action="retryChatGPTClassifications"]').click();
   expect(commands.at(-1).action==='retryChatGPTClassifications','failure recovery is an explicit retry action');

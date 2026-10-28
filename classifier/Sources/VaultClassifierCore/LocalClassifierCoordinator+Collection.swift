@@ -77,9 +77,10 @@ extension LocalClassifierCoordinator {
             )
             state.workspaceCatalog.appendCorrectionExample(example)
             // This video's correction remains authoritative. For future uncached
-            // items in the same group, the prompt may include a few relevant
-            // corrected titles and final tags as examples. Notes stay private,
-            // and manual house rules are unchanged.
+            // items in the same group, the dormant evaluation path can include
+            // corrected titles and final tags as examples. The live prompt does
+            // not currently include them. Notes stay private; house rules are
+            // unchanged.
 
             let previous = state.workspaceCatalog.videoClassification(
                 classifierTypeID: classifierTypeID,

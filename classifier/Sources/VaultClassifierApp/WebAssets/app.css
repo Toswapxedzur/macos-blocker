@@ -1013,3 +1013,5 @@ input[data-field="creator"], input[data-model-search] {
 .tagging-key-fields { display: grid; gap: 8px; }
 .tagging-key-fields .field { margin: 0; }
 .tagging-key-fields .action-row { gap: 8px; }
+.tagging-retry-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+@media (max-width: 600px) { .tagging-retry-fields { grid-template-columns: 1fr; } }
