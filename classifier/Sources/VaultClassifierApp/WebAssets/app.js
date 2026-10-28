@@ -52,8 +52,6 @@
 
   let releaseDialogFocus = null;
   let dialogFocusKind = null;
-  // "More" / "Options" expands the user opened: the page re-renders on every update.
-  const openExpands = new Set();
   // Which classifier type is open in the left-panel list (client-only UI state).
   let selectedTypeID = null;
   // Set to the pre-create set of type ids when "New type" is clicked, so the
@@ -252,10 +250,8 @@
 
       case "configureClassifierType": return type && { name: type.name };
       case "saveClassifierTypeTagging": return type && {
-        strictness: String(type.tagging?.strictness ?? 3),
+        minimumConfidence: String(type.tagging?.minimumConfidence ?? 4),
         houseRules: type.tagging?.houseRules || "",
-        minimumTagsOverride: type.tagging?.minimumTagsOverride == null ? "" : String(type.tagging.minimumTagsOverride),
-        maximumTagsOverride: type.tagging?.maximumTagsOverride == null ? "" : String(type.tagging.maximumTagsOverride),
       };
       case "saveClassificationProvider": return type && { providerModel: selectedTaggingModel(type), reasoningEffort: (type.classificationProvider === "apiKey" ? type.apiKey : type.chatGPT)?.reasoningEffort || (type.classificationProvider === "apiKey" ? "default" : "low") };
       case "saveChatGPTUsageLimit": return { dailyRequestLimit: state.assets?.chatGPT?.dailyRequestLimit == null ? "" : String(state.assets.chatGPT.dailyRequestLimit) };
@@ -293,35 +289,10 @@
     return Object.entries(edit.values).every(([field, value]) => normalized(field, value) === normalized(field, saved[field]));
   }
 
-  function validateTagBounds(form, values = collect(form.dataset.formId)) {
-    const minimumField = form.querySelector('[data-field="minimumTagsOverride"]');
-    const maximumField = form.querySelector('[data-field="maximumTagsOverride"]');
-    if (!minimumField || !maximumField) return true;
-    minimumField.setCustomValidity(""); maximumField.setCustomValidity("");
-    const strictness = Number(values.strictness || 3);
-    const defaultMinimum = strictness === 5 ? 1 : 0, defaultMaximum = strictness === 1 ? 1 : 3;
-    minimumField.placeholder = String(defaultMinimum); maximumField.placeholder = String(defaultMaximum);
-    const defaultsNote = form.querySelector('[data-tag-bounds-defaults]');
-    if (defaultsNote) defaultsNote.textContent = t("bridge.tagBounds.copy", { minimum: defaultMinimum, maximum: defaultMaximum });
-    const minimum = values.minimumTagsOverride === "" ? (strictness === 5 ? 1 : 0) : Number(values.minimumTagsOverride);
-    const maximum = values.maximumTagsOverride === "" ? (strictness === 1 ? 1 : 3) : Number(values.maximumTagsOverride);
-    const valid = minimumField.checkValidity() && maximumField.checkValidity()
-      && Number.isInteger(minimum) && Number.isInteger(maximum) && minimum <= maximum;
-    const error = form.querySelector('[data-tag-bounds-error]');
-    if (error) error.hidden = valid;
-    minimumField.setAttribute("aria-invalid", String(!valid));
-    maximumField.setAttribute("aria-invalid", String(!valid));
-    return valid;
-  }
-
   function flushLiveEdit(edit) {
     window.clearTimeout(edit.timer);
     edit.timer = null;
     if (edit.sent || composingEdit) return;
-    if (edit.action === "saveClassifierTypeTagging") {
-      const form = uiQuery(`[data-form-id="${CSS.escape(edit.formID)}"]`);
-      if (form && !validateTagBounds(form, edit.values)) return;
-    }
     const saved = savedLiveEdit(edit);
     if (!saved || liveEditMatches(edit, saved)) { liveEdits.delete(edit.key); return; }
     edit.sent = true;
@@ -370,7 +341,6 @@
         control.focus({ preventScroll: true });
         if (focused.start != null) control.setSelectionRange(focused.start, focused.end, focused.direction);
       });
-      if (form.dataset.autosaveAction === "saveClassifierTypeTagging") validateTagBounds(form);
     });
   }
 
@@ -413,6 +383,7 @@
     "llm.protocol.protocolFamily": "The API format this endpoint accepts. Choose the format supported by the provider.",
 
     "classification.enabled": "Allow the Classifier to tag content. Individual Classifier groups can still be paused.",
+    "tagging.minimumConfidence": "Apply a predicted tag only when its evidence grade reaches this level, including the first tag. One item may receive any number of supported tags, including none.",
 
     "backup.auto": "Create a local backup after configuration changes, using the configured backup folder.",
 
@@ -481,15 +452,7 @@
     return `<div class="workspace-head"><div><h2>${tx(titleKey)}</h2><p class="section-copy" data-info>${tx(copyKey)}</p></div>${statusPill(badge, tone)}</div>`;
   }
 
-  const STRICTNESS_POSITIONS = [1, 2, 3, 4, 5];
-
-  // Five positions from Strictest to Broadest, each with what it does.
-  function strictnessOptions(selected, groupID) {
-    return `<div class="strictness-options" role="radiogroup" aria-label="${esc(t("localModel.strictness"))}">${STRICTNESS_POSITIONS.map((position) => {
-      const active = Number(selected) === position;
-      return `<label class="strictness-option${active ? " active" : ""}"><input type="radio" name="strictness-${esc(groupID)}" data-field="strictness" value="${position}"${active ? " checked" : ""}><span class="strictness-option-name">${position} · ${tx(`localModel.strictness.${position}.name`)}</span><span class="strictness-option-desc" data-info>${tx(`localModel.strictness.${position}.desc`)}</span></label>`;
-    }).join("")}</div>`;
-  }
+  const CONFIDENCE_CHOICES = [1, 2, 3, 4, 5].map(level => [String(level), `tagging.confidence.${level}`]);
 
   // Read only acknowledged native state: a draft key/model is not ready yet.
 
@@ -894,16 +857,9 @@
         if (binding && !binding.collectionEnabled) notes.push(`${platform.name}: ${t("bridge.recordingOff")}`);
         return notes;
       });
-      const tagging = classifierType.tagging || { strictness: 3, houseRules: "" };
+      const tagging = classifierType.tagging || { minimumConfidence: 4, houseRules: "" };
       const taggingFormID = `classifier-tagging-form-${classifierType.id}`;
-      const defaultMinimum = tagging.strictness === 5 ? 1 : 0;
-      const defaultMaximum = tagging.strictness === 1 ? 1 : 3;
-      const boundsSummary = tagging.minimumTagsOverride != null || tagging.maximumTagsOverride != null
-        ? t("bridge.tagBounds.custom", { minimum: tagging.minimumTagsOverride ?? defaultMinimum, maximum: tagging.maximumTagsOverride ?? defaultMaximum })
-        : t("bridge.tagBounds.default");
-      const expandKey = `type-more:${classifierType.id}`;
-      const taggingSection = `<section class="classifier-type-section classifier-tagging" data-tagging-section><div class="section-header"><div><h3>${tx("cloud.tagging")}</h3></div></div><div class="field wide"><span class="field-label">${tx("localModel.strictness")}<span class="field-hint" data-info> · ${tx("localModel.strictnessHint")}</span></span>${strictnessOptions(tagging.strictness, classifierType.id)}${tagging.minimumTagsOverride != null || tagging.maximumTagsOverride != null ? `<p class="small-copy" data-info="bridge.tagBounds.precedence">${tx("bridge.tagBounds.precedence")}</p>` : ""}</div>${textareaField("bridge.localModelHouseRules", "bridge.localModelHouseRulesCopy", "houseRules", tagging.houseRules, 'rows="4" maxlength="4000"')}</section>`;
-      const tagBoundsSection = `<details class="vui-expand classifier-group-more" data-expand="${esc(expandKey)}"${openExpands.has(expandKey) ? " open" : ""}><summary><span>${tx("navigation.more")}</span><span class="small-copy classifier-override-summary">${esc(boundsSummary)}</span></summary><section class="classifier-type-section"><p class="section-copy" data-info data-tag-bounds-defaults>${tx("bridge.tagBounds.copy", { minimum: defaultMinimum, maximum: defaultMaximum })}</p><div class="utility-settings-fields">${field("bridge.tagBounds.minimum", "bridge.tagBounds.minimumHint", "minimumTagsOverride", tagging.minimumTagsOverride ?? "", "number", `min="0" max="3" step="1" placeholder="${defaultMinimum}"`)}${field("bridge.tagBounds.maximum", "bridge.tagBounds.maximumHint", "maximumTagsOverride", tagging.maximumTagsOverride ?? "", "number", `min="1" max="3" step="1" placeholder="${defaultMaximum}"`)}</div><p class="notice red" data-tag-bounds-error role="status" hidden>${tx("bridge.tagBounds.error")}</p></section></details>`;
+      const taggingSection = `<section class="classifier-type-section classifier-tagging" data-tagging-section><div class="section-header"><div><h3>${tx("cloud.tagging")}</h3></div></div>${selectField("tagging.minimumConfidence", "tagging.minimumConfidenceHint", "minimumConfidence", String(tagging.minimumConfidence), CONFIDENCE_CHOICES)}${textareaField("bridge.localModelHouseRules", "bridge.localModelHouseRulesCopy", "houseRules", tagging.houseRules, 'rows="4" maxlength="4000"')}</section>`;
 
       return `<section class="classifier-type-panel" data-form-id="${esc(formID)}" data-type-id="${esc(classifierType.id)}" data-autosave-action="configureClassifierType">
         <div class="classifier-name-row">${field("bridge.typeName", "", "name", classifierType.name, "text", 'maxlength="128"')}</div>
@@ -913,7 +869,6 @@
         ${cloudProviderSection(classifierType)}
         <div data-form-id="${esc(taggingFormID)}" data-autosave-action="saveClassifierTypeTagging" data-type-id="${esc(classifierType.id)}">
           ${taggingSection}
-          ${tagBoundsSection}
         </div>
 
         <div class="action-row classifier-type-delete"><button class="danger" data-action="confirmDeleteClassifierType" data-type-id="${esc(classifierType.id)}">${deleteLabel(`type:${classifierType.id}`, tx("bridge.deleteType"))}</button></div>
@@ -1391,13 +1346,6 @@
     event.preventDefault();
     dismissClassifierDialog();
   });
-
-  listen("toggle", (event) => {
-    if (!event.target.isConnected) return;
-    const key = event.target.matches?.("details[data-expand]") ? event.target.dataset.expand : null;
-    if (key) event.target.open ? openExpands.add(key) : openExpands.delete(key);
-
-  }, true);
 
   listen("change", (event) => {
     if (event.target.matches('[data-field="connectionType"]')) {

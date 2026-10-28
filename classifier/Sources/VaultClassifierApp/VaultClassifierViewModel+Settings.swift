@@ -39,7 +39,7 @@ extension VaultClassifierViewModel {
         } catch { issue = error.localizedDescription }
     }
 
-    /// Persists a group's independent dial positions and house rules.
+    /// Persists a group's evidence threshold and tagging instructions.
     func saveClassifierTypeTagging(typeID: String, settings: TaggingSettings) {
         do {
             guard var catalog = localState?.workspaceCatalog,
@@ -47,7 +47,7 @@ extension VaultClassifierViewModel {
                   catalog.classifierTypes[index].applicablePlatformIDs.allSatisfy({
                       CollectionPlatformRegistry.definition(for: $0)?.supportsLocalModel == true
                   }) else {
-                throw WebBridgeInputError.invalidChoice("Classifier group local model")
+                throw WebBridgeInputError.invalidChoice("Classifier group")
             }
             catalog.classifierTypes[index].tagging = settings
             catalog.classifierTypes[index].updatedAtMilliseconds = WorkspaceCatalog.now()
@@ -59,42 +59,31 @@ extension VaultClassifierViewModel {
         }
     }
 
-    /// Both dial positions are required; blank house rules means no rules.
+    /// Every tag uses the same required evidence grade; blank instructions add no rules.
     static func parseClassifierTypeTaggingWebInput(
         _ data: [String: Any]
     ) throws -> ClassifierTypeTaggingWebInput {
         guard let typeID = data["typeID"] as? String, !typeID.isEmpty, typeID.count <= 256 else {
             throw WebBridgeInputError.missingValue("typeID")
         }
-        guard let strictness = StrictnessDial.resolve(optionalWebInteger(data["strictness"])) else {
-            throw WebBridgeInputError.invalidChoice("strictness")
-        }
+        let rawConfidence = data["minimumConfidence"]
+        let confidence: Int?
+        if let number = rawConfidence as? NSNumber, !Self.isJSONBoolean(number),
+           (1...5).contains(number.doubleValue), number.doubleValue.rounded() == number.doubleValue {
+            confidence = number.intValue
+        } else if let value = rawConfidence as? String { confidence = Int(value.trimmingCharacters(in: .whitespacesAndNewlines)) }
+        else { confidence = nil }
+        guard let confidence, (1...5).contains(confidence) else { throw WebBridgeInputError.invalidChoice("minimumConfidence") }
         let houseRules = data["houseRules"] as? String ?? ""
         guard houseRules.count <= TaggingSettings.maximumHouseRulesLength else {
             throw WebBridgeInputError.exceedsLimit("houseRules", TaggingSettings.maximumHouseRulesLength)
         }
-        func tagCount(_ key: String, range: ClosedRange<Int>) throws -> Int? {
-            guard let value = data[key], !(value is NSNull) else { return nil }
-            let raw: String
-            if let text = value as? String { raw = text.trimmingCharacters(in: .whitespacesAndNewlines) }
-            else if let number = value as? NSNumber, !Self.isJSONBoolean(number) { raw = number.stringValue }
-            else { throw WebBridgeInputError.invalidChoice(key) }
-            if raw.isEmpty { return nil }
-            guard let count = Int(raw), range.contains(count) else { throw WebBridgeInputError.invalidChoice(key) }
-            return count
-        }
-        let minimum = try tagCount("minimumTagsOverride", range: 0...TaggingSettings.maximumTagCountOverride)
-        let maximum = try tagCount("maximumTagsOverride", range: 1...TaggingSettings.maximumTagCountOverride)
-        guard (minimum ?? strictness.minimumTags) <= (maximum ?? strictness.maximumTags) else {
-            throw WebBridgeInputError.invalidChoice("minimum tags greater than maximum tags")
-        }
-        return .init(typeID: typeID, settings: .init(strictness: strictness,
-            houseRules: houseRules, minimumTagsOverride: minimum, maximumTagsOverride: maximum))
+        return .init(typeID: typeID, settings: .init(minimumConfidence: confidence, houseRules: houseRules))
     }
 
     /// Foundation preserves JSON's boolean/number distinction on every host.
     /// A cast to Bool also accepts numeric 0/1 on Apple platforms, so it cannot
-    /// validate a tag-count field; Windows does not expose CoreFoundation.
+    /// validate a confidence field; Windows does not expose CoreFoundation.
     nonisolated private static func isJSONBoolean(_ value: NSNumber) -> Bool {
         guard let data = try? JSONSerialization.data(withJSONObject: [value]),
               let json = String(data: data, encoding: .utf8) else { return false }

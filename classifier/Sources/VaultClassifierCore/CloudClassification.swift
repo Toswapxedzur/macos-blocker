@@ -102,15 +102,15 @@ extension ClassifierTypeAsset {
     public var cloudModelVersion: String {
         if classificationProvider == .apiKey {
             let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
-            let data = (try? encoder.encode(APIKeyCurrency(connection: apiKey, rules: tagging.houseRules, strictness: tagging.strictness, bounds: tagging.tagBounds))) ?? Data()
-            return "api-key/search-v2/" + SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+            let data = (try? encoder.encode(APIKeyCurrency(connection: apiKey, rules: tagging.houseRules, minimumConfidence: tagging.minimumConfidence))) ?? Data()
+            return "api-key/certainty-v1/" + SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
         }
         let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
         let data = (try? encoder.encode(CloudCurrency(
             account: chatGPT.accountID, model: chatGPT.model,
             effort: chatGPT.reasoningEffort, rules: tagging.houseRules,
-            strictness: tagging.strictness, bounds: tagging.tagBounds))) ?? Data()
-        return "chatgpt/search-v2/" + SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+            minimumConfidence: tagging.minimumConfidence))) ?? Data()
+        return "chatgpt/certainty-v1/" + SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
     }
 }
 
@@ -124,10 +124,10 @@ public enum CloudClassificationCurrency {
 
 private struct CloudCurrency: Encodable {
     let account: String; let model: String; let effort: ClassificationReasoningEffort; let rules: String
-    let strictness: StrictnessDial; let bounds: TagBounds
+    let minimumConfidence: Int
 }
 
 private struct APIKeyCurrency: Encodable {
     let connection: APIKeyClassificationSettings; let rules: String
-    let strictness: StrictnessDial; let bounds: TagBounds
+    let minimumConfidence: Int
 }

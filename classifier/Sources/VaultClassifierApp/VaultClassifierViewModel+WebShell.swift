@@ -60,9 +60,7 @@ extension VaultClassifierViewModel {
                     "chatGPT": ["accountID": classifierType.chatGPT.accountID, "model": classifierType.chatGPT.model, "reasoningEffort": classifierType.chatGPT.reasoningEffort.rawValue] as [String: Any],
                     "tagging": [
                         "houseRules": classifierType.tagging.houseRules,
-                        "strictness": classifierType.tagging.strictness.rawValue,
-                        "minimumTagsOverride": classifierType.tagging.minimumTagsOverride.map { $0 as Any } ?? NSNull(),
-                        "maximumTagsOverride": classifierType.tagging.maximumTagsOverride.map { $0 as Any } ?? NSNull(),
+                        "minimumConfidence": classifierType.tagging.minimumConfidence,
                     ] as [String: Any],
                 ] as [String: Any]
             }

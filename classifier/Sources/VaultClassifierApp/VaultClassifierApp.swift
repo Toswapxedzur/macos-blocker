@@ -295,11 +295,8 @@ enum WebBridgeInputError: Error, LocalizedError {
     private static func label(for field: String) -> String {
         let labels = [
             "name": "the name", "houseRules": "tagging instructions",
-            "strictness": "Strict ↔ Broad",
-            "researchMode": "research for this group", "minimumTags": "minimum tags",
-            "maximumTags": "maximum tags", "minimumTagsOverride": "minimum tags",
-            "maximumTagsOverride": "maximum tags",
-            "minimum tags greater than maximum tags": "tag counts (minimum must not exceed maximum)",
+            "minimumConfidence": "minimum tag confidence",
+            "researchMode": "research for this group",
             "typeID": "the Classifier group",
             "treeID": "the tag tree", "nodeID": "the tag", "parentID": "the parent tag",
             "profileID": "the provider", "platformID": "the platform", "platformIDs": "platforms",

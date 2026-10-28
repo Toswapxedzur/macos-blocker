@@ -41,7 +41,7 @@ struct ChatGPTClassificationEngine: BatchClassificationEngine {
 
     static func prepare(_ requests: [LLMClassificationRequest], configuration: ChatGPTClassificationSettings) throws -> ChatGPTPlanProtocol.Request {
         guard let first = requests.first, requests.count <= 16,
-              requests.allSatisfy({ $0.staticPrefix == first.staticPrefix && $0.allowedTagNames == first.allowedTagNames }),
+              requests.allSatisfy({ $0.staticPrefix == first.staticPrefix && $0.allowedTagNames == first.allowedTagNames && $0.minimumConfidence == first.minimumConfidence }),
               !first.allowedTagNames.isEmpty else { throw CloudClassificationError.invalidOutput }
         let rules = first.staticPrefix.replacingOccurrences(of: ClassificationReplyFormat.current.rule, with: "")
         let instructions = rules + """
@@ -56,16 +56,21 @@ struct ChatGPTClassificationEngine: BatchClassificationEngine {
         Include every input index exactly once. No prose or invented tags.
         Confidence is your assessment, NOT token probability: 5 explicit clear
         evidence, 4 strong evidence, 3 plausible inference, 2 weak guess, 1 little
-        basis. Use an empty tags array when no supported topic is identifiable,
-        unless the tagging rules require a minimum number of tags.
+        basis. When the rules set a minimum confidence, include all and only
+        taxonomy tags that meet it, including the first tag. Return an empty
+        tags array when none qualify. Do not aim for a particular tag count.
         """
         let evidence = requests.enumerated().map { index, request -> [String: Any] in
             let suffix = request.dynamicSuffix
             let runway = ClassificationReplyFormat.current.runway
-            return ["index": index,
+            var item: [String: Any] = ["index": index,
                 "evidence": suffix.hasSuffix(runway) ? String(suffix.dropLast(runway.count)) : suffix,
-                "creator": request.creatorIdentity ?? "",
-                "minimumTags": request.minimumTags, "maximumTags": request.maximumTags]
+                "creator": request.creatorIdentity ?? ""]
+            if request.minimumConfidence == nil {
+                item["minimumTags"] = request.minimumTags
+                item["maximumTags"] = request.maximumTags
+            }
+            return item
         }
         let input = String(decoding: try JSONSerialization.data(withJSONObject: evidence, options: [.sortedKeys]), as: UTF8.self)
         let base = try ChatGPTPlanProtocol.inferenceRequest(model: configuration.model, instructions: instructions, input: input)
@@ -73,9 +78,10 @@ struct ChatGPTClassificationEngine: BatchClassificationEngine {
         if configuration.reasoningEffort != .providerDefault { body["reasoning"] = ["effort": configuration.reasoningEffort.rawValue] }
         let tag: [String: Any] = ["type": "object", "additionalProperties": false, "required": ["name", "confidence"],
             "properties": ["name": ["type": "string", "enum": first.allowedTagNames], "confidence": ["type": "integer", "minimum": 1, "maximum": 5]]]
+        var tags: [String: Any] = ["type": "array", "items": tag]
+        if first.minimumConfidence == nil { tags["maxItems"] = requests.map(\.maximumTags).max() ?? 3 }
         let item: [String: Any] = ["type": "object", "additionalProperties": false, "required": ["index", "tags"],
-            "properties": ["index": ["type": "integer", "enum": Array(requests.indices)],
-                "tags": ["type": "array", "items": tag, "maxItems": requests.map(\.maximumTags).max() ?? 3]]]
+            "properties": ["index": ["type": "integer", "enum": Array(requests.indices)], "tags": tags]]
         body["text"] = ["format": ["type": "json_schema", "name": "vault_classification", "strict": true,
             "schema": ["type": "object", "additionalProperties": false, "required": ["items"],
                 "properties": ["items": ["type": "array", "items": item, "minItems": requests.count, "maxItems": requests.count]]]]]
@@ -95,7 +101,8 @@ struct ChatGPTClassificationEngine: BatchClassificationEngine {
         for item in reply.items {
             guard requests.indices.contains(item.index), results[item.index] == nil else { throw CloudClassificationError.invalidOutput }
             let request = requests[item.index]
-            guard (request.minimumTags...request.maximumTags).contains(item.tags.count),
+            guard item.tags.count <= request.maximumTags,
+                  (request.minimumConfidence != nil || item.tags.count >= request.minimumTags),
                   Set(item.tags.map(\.name)).count == item.tags.count,
                   item.tags.allSatisfy({ request.allowedTagNames.contains($0.name) && (1...5).contains($0.confidence) }) else {
                 throw CloudClassificationError.invalidOutput

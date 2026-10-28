@@ -60,8 +60,6 @@ public struct VideoClassification: Codable, Equatable, Sendable, Identifiable {
     public var source: VideoClassificationSource
     /// Model id + prompt/schema version, so stale results can be recomputed.
     public var modelVersion: String
-    /// Effective bounds used for this automatic result, for cache currency.
-    public var tagBounds: TagBounds?
     public var createdAtMilliseconds: Int64
     public var updatedAtMilliseconds: Int64
 
@@ -77,7 +75,6 @@ public struct VideoClassification: Codable, Equatable, Sendable, Identifiable {
         inputFingerprint: String? = nil,
         source: VideoClassificationSource,
         modelVersion: String,
-        tagBounds: TagBounds? = nil,
         createdAtMilliseconds: Int64 = WorkspaceCatalog.now(),
         updatedAtMilliseconds: Int64 = WorkspaceCatalog.now()
     ) {
@@ -92,7 +89,6 @@ public struct VideoClassification: Codable, Equatable, Sendable, Identifiable {
         self.inputFingerprint = inputFingerprint
         self.source = source
         self.modelVersion = modelVersion
-        self.tagBounds = tagBounds
         self.createdAtMilliseconds = createdAtMilliseconds
         self.updatedAtMilliseconds = updatedAtMilliseconds
     }
@@ -103,7 +99,7 @@ public struct VideoClassification: Codable, Equatable, Sendable, Identifiable {
     private enum CodingKeys: String, CodingKey {
         case id, classifierTypeID, platformID, entryID, creatorID, treeID,
              treeRevision, tags, inputFingerprint, source,
-             modelVersion, tagBounds, createdAtMilliseconds, updatedAtMilliseconds
+             modelVersion, createdAtMilliseconds, updatedAtMilliseconds
     }
 
     public init(from decoder: Decoder) throws {
@@ -120,7 +116,6 @@ public struct VideoClassification: Codable, Equatable, Sendable, Identifiable {
         inputFingerprint = try container.decodeIfPresent(String.self, forKey: .inputFingerprint)
         source = (try? container.decodeIfPresent(VideoClassificationSource.self, forKey: .source)) ?? .model
         modelVersion = try container.decodeIfPresent(String.self, forKey: .modelVersion) ?? ""
-        tagBounds = try? container.decodeIfPresent(TagBounds.self, forKey: .tagBounds)
         createdAtMilliseconds = try container.decode(Int64.self, forKey: .createdAtMilliseconds)
         updatedAtMilliseconds = try container.decode(Int64.self, forKey: .updatedAtMilliseconds)
     }

@@ -757,13 +757,6 @@ textarea:focus {
   gap: 4px;
   min-width: 0;
 }
-.strictness-options { display: grid; gap: 6px; margin-top: 6px; }
-.strictness-option { display: grid; gap: 2px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 10px; cursor: pointer; }
-.strictness-option:hover { border-color: var(--navy-300); }
-.strictness-option.active, .strictness-option:has(input:checked) { border-color: var(--navy-700); background: var(--navy-100); }
-.strictness-option input[type="radio"] { position: absolute; opacity: 0; pointer-events: none; }
-.strictness-option-name { font-size: 12px; font-weight: 600; color: var(--ink); }
-.strictness-option-desc { font-size: 11px; line-height: 1.4; color: var(--muted); }
 
 
 /* ═══ The owner's rules on top of the extension look (2026-09-28) ══════════
@@ -834,22 +827,6 @@ textarea:focus {
 
 .utility-resource-section{
   box-shadow: 0 8px 24px rgba(15, 23, 42, 0.05);
-}
-.strictness-option {
-  border: none;
-  background: #ffffff;
-  box-shadow: 0 3px 10px rgba(15, 23, 42, 0.06);
-}
-.strictness-option:hover {
-  box-shadow: 0 6px 16px rgba(30, 58, 138, 0.12);
-}
-.strictness-option.active,
-.strictness-option:has(input:checked) {
-  background: var(--navy-100);
-  box-shadow: 0 6px 16px rgba(30, 58, 138, 0.16);
-}
-.strictness-option:has(input:checked) .strictness-option-name {
-  color: var(--navy-700);
 }
 
 /* The type's name is its editable title (like a group's name in the editor). */

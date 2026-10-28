@@ -54,6 +54,8 @@ public struct LLMClassificationRequest: Sendable, Equatable {
     public let maximumTags: Int
     /// Fewest tags the grammar must emit (0 = decline allowed). ≥1 forbids "none".
     public let minimumTags: Int
+    /// A threshold applied to every proposed tag in the active AI path.
+    public let minimumConfidence: Int?
     /// How sure the model must be before a second or third tag is kept (the
     /// Strict↔Broad position of the type being classified). Nil falls back to
     /// the app-wide engine configuration.
@@ -66,6 +68,7 @@ public struct LLMClassificationRequest: Sendable, Equatable {
         allowedTagNames: [String],
         maximumTags: Int,
         minimumTags: Int = 0,
+        minimumConfidence: Int? = nil,
         extraTagMinimumOdds: Double? = nil,
         creatorIdentity: String? = nil
     ) {
@@ -74,6 +77,7 @@ public struct LLMClassificationRequest: Sendable, Equatable {
         self.allowedTagNames = allowedTagNames
         self.maximumTags = maximumTags
         self.minimumTags = min(maximumTags, max(0, minimumTags))
+        self.minimumConfidence = minimumConfidence.flatMap { (1...5).contains($0) ? $0 : nil }
         self.extraTagMinimumOdds = extraTagMinimumOdds
         self.creatorIdentity = creatorIdentity
     }

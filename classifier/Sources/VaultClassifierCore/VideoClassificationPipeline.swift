@@ -1,8 +1,8 @@
 import Foundation
 
 // Ties the pieces together for one video: read the derived creator prior +
-// matched knowledge from the catalog, assemble the prompt, run the on-device
-// LLM, map the model's readable tag names back to tag ids, and produce a
+// matched knowledge from the catalog, assemble the prompt, run the selected
+// AI model, map the model's readable tag names back to tag ids, and produce a
 // `VideoClassification`. Storage (upsert + histogram update) is the caller's
 // step, so this stays a pure transform and is easy to test with the stub LLM.
 
@@ -23,6 +23,9 @@ public struct VideoClassificationPipeline: Sendable {
     /// precision collapse. The top tag is always kept (single-tag behavior is
     /// exactly preserved at cap 1, or when no secondary clears the floor).
     public let secondaryConfidenceFloor: Int
+    /// When set, every tag (including the first) must meet this evidence grade.
+    /// Count controls above remain only for dormant local-model fixtures.
+    public let minimumConfidence: Int?
     public let promptVersion: String
 
     public init(
@@ -30,6 +33,7 @@ public struct VideoClassificationPipeline: Sendable {
         maximumTags: Int = 5,
         minimumTags: Int = 0,
         secondaryConfidenceFloor: Int = 4,
+        minimumConfidence: Int? = nil,
         // p2 = bare tag-name reply, confidence derived from token odds (2026-09-21).
         // Cached p1 rows stay valid: the currency check matches the model file only.
         // p4 = researched creator sentence on the creator line, single pass (2026-09-22).
@@ -39,6 +43,7 @@ public struct VideoClassificationPipeline: Sendable {
         self.maximumTags = maximumTags
         self.minimumTags = TagBounds(minimum: minimumTags, maximum: maximumTags).minimum
         self.secondaryConfidenceFloor = secondaryConfidenceFloor
+        self.minimumConfidence = minimumConfidence.flatMap { (1...5).contains($0) ? $0 : nil }
         self.promptVersion = promptVersion
     }
 
@@ -110,6 +115,7 @@ public struct VideoClassificationPipeline: Sendable {
         func parts(_ index: Int) -> ClassificationPromptParts {
             ClassificationPromptAssembler.assemble(
                 tree: tree, houseRules: houseRules, maximumTags: maximumTags, minimumTags: minimumTags,
+                minimumConfidence: minimumConfidence,
                 title: inputs[index].title, summary: inputs[index].summary, text: inputs[index].text,
                 creatorPrior: evidence[index].creatorPrior, creatorVideoCount: evidence[index].creatorVideoCount
             )
@@ -119,6 +125,7 @@ public struct VideoClassificationPipeline: Sendable {
             return LLMClassificationRequest(
                 staticPrefix: parts.staticPrefix, dynamicSuffix: parts.dynamicSuffix,
                 allowedTagNames: parts.allowedTagNames, maximumTags: maximumTags, minimumTags: minimumTags,
+                minimumConfidence: minimumConfidence,
                 extraTagMinimumOdds: extraTagMinimumOdds,
                 creatorIdentity: creator?.creatorName.isEmpty == false ? creator?.creatorName : inputs[index].creatorID
             )
@@ -153,8 +160,7 @@ public struct VideoClassificationPipeline: Sendable {
                     title: inputs[index].title, summary: inputs[index].summary, text: inputs[index].text, creatorID: inputs[index].creatorID,
                     creatorName: catalog.datasets.flatMap(\.collectedEntries).first { $0.platformID == platformID && $0.entryID == inputs[index].entryID }?.creatorName),
                 source: .model,
-                modelVersion: "\(llm.modelVersion)+\(promptVersion)",
-                tagBounds: TagBounds(minimum: minimumTags, maximum: maximumTags)
+                modelVersion: "\(llm.modelVersion)+\(promptVersion)"
             )
         }
     }
@@ -217,6 +223,7 @@ public struct VideoClassificationPipeline: Sendable {
             houseRules: houseRules,
             maximumTags: maximumTags,
             minimumTags: minimumTags,
+            minimumConfidence: minimumConfidence,
             title: title,
             summary: summary,
             text: text,
@@ -226,7 +233,7 @@ public struct VideoClassificationPipeline: Sendable {
     }
 
     /// Maps one engine result's readable tag names back to tree ids and applies
-    /// the top-tag / secondary-floor gate.
+    /// the selected per-tag evidence threshold.
     private func scoredTags(from result: LLMClassificationResult, parts: ClassificationPromptParts) -> [ScoredTag] {
         // Map readable names back to tag ids; silently drop any name not in the
         // tree (a constrained decoder should prevent these, but a stub or a loose
@@ -242,7 +249,10 @@ public struct VideoClassificationPipeline: Sendable {
         scoredTags.sort { lhs, rhs in
             lhs.confidence == rhs.confidence ? lhs.tagID < rhs.tagID : lhs.confidence > rhs.confidence
         }
-        // Keep the top tag unconditionally (the primary decision — identical to
+        if let minimumConfidence {
+            return Array(scoredTags.filter { $0.confidence >= minimumConfidence }.prefix(maximumTags))
+        }
+        // Dormant local-model fixture: keep the top tag unconditionally (the primary decision — identical to
         // the former single-tag behavior); add further tags only when they clear
         // the secondary-confidence floor, so an over-eager multi-tag decode can't
         // flood a single-topic video with low-confidence guesses.

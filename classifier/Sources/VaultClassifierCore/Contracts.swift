@@ -192,36 +192,24 @@ public struct TagBounds: Codable, Equatable, Sendable {
     }
 }
 
-/// Per-group tagging strictness, house rules and optional tag bounds.
+/// Per-group evidence threshold and tagging instructions. Retired tag-count
+/// fields are ignored when an older alpha state is decoded.
 public struct TaggingSettings: Codable, Equatable, Sendable {
-    public var strictness: StrictnessDial
+    public var minimumConfidence: Int
     public var houseRules: String
-    public var minimumTagsOverride: Int?
-    public var maximumTagsOverride: Int?
-    public static let maximumTagCountOverride = 3
+    public static let defaultMinimumConfidence = 4
     public static let maximumHouseRulesLength = 4_000
 
-    public init(strictness: StrictnessDial = .default, houseRules: String = "", minimumTagsOverride: Int? = nil, maximumTagsOverride: Int? = nil) {
-        self.strictness = strictness
+    public init(minimumConfidence: Int = Self.defaultMinimumConfidence, houseRules: String = "") {
+        self.minimumConfidence = (1...5).contains(minimumConfidence) ? minimumConfidence : Self.defaultMinimumConfidence
         self.houseRules = String(houseRules.prefix(Self.maximumHouseRulesLength))
-        self.minimumTagsOverride = minimumTagsOverride.flatMap { (0...Self.maximumTagCountOverride).contains($0) ? $0 : nil }
-        self.maximumTagsOverride = maximumTagsOverride.flatMap { (1...Self.maximumTagCountOverride).contains($0) ? $0 : nil }
-        if (self.minimumTagsOverride ?? strictness.minimumTags) > (self.maximumTagsOverride ?? strictness.maximumTags) {
-            self.minimumTagsOverride = nil; self.maximumTagsOverride = nil
-        }
     }
-    public var tagBounds: TagBounds { .init(minimum: minimumTagsOverride ?? strictness.minimumTags, maximum: maximumTagsOverride ?? strictness.maximumTags) }
-    public var maximumTags: Int { tagBounds.maximum }
-    public var minimumTags: Int { tagBounds.minimum }
-    public var extraTagMinimumOdds: Double { strictness.extraTagMinimumOdds }
 
-    private enum CodingKeys: String, CodingKey { case strictness, houseRules, minimumTagsOverride, maximumTagsOverride }
+    private enum CodingKeys: String, CodingKey { case minimumConfidence, houseRules }
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
-        self.init(strictness: StrictnessDial.resolve(try c.decodeIfPresent(Int.self, forKey: .strictness)) ?? .default,
-            houseRules: try c.decodeIfPresent(String.self, forKey: .houseRules) ?? "",
-            minimumTagsOverride: try? c.decodeIfPresent(Int.self, forKey: .minimumTagsOverride),
-            maximumTagsOverride: try? c.decodeIfPresent(Int.self, forKey: .maximumTagsOverride))
+        self.init(minimumConfidence: (try? c.decodeIfPresent(Int.self, forKey: .minimumConfidence)) ?? Self.defaultMinimumConfidence,
+                  houseRules: (try? c.decodeIfPresent(String.self, forKey: .houseRules)) ?? "")
     }
 }
 

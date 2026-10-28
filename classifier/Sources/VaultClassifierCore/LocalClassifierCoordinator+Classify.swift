@@ -48,8 +48,7 @@ extension LocalClassifierCoordinator {
         servingModelVersion: String
     ) -> Bool {
         if classification.source == .humanCorrected { return true }
-        return classification.modelVersion == type.cloudModelVersion + "+p5"
-            && classification.tagBounds == type.tagging.tagBounds
+        return classification.modelVersion == type.cloudModelVersion + "+p6"
             && classification.treeID == type.treeID
     }
 
@@ -132,12 +131,9 @@ extension LocalClassifierCoordinator {
                 llm = defaultLLM // Explicit injection only; production default throws notConfigured.
             }
             try shutdownSignal.checkCancellation()
-            // Every group owns its Strict↔Broad position.
-            let strictness = settings.strictness
-            let bounds = settings.tagBounds
             let pipeline = VideoClassificationPipeline(
-                llm: llm, maximumTags: bounds.maximum, minimumTags: bounds.minimum,
-                secondaryConfidenceFloor: strictness == .strictest || strictness == .strict ? 5 : strictness == .balanced ? 4 : 3)
+                llm: llm, maximumTags: VideoClassification.maximumTags,
+                minimumConfidence: settings.minimumConfidence, promptVersion: "p6")
             let trimmedRules = settings.houseRules.trimmingCharacters(in: .whitespacesAndNewlines)
             let typeHouseRules = trimmedRules.isEmpty ? nil : trimmedRules
             let results = try await pipeline.classifyBatch(
@@ -146,8 +142,7 @@ extension LocalClassifierCoordinator {
                 classifierType: type,
                 tree: tree,
                 catalog: catalog,
-                houseRules: typeHouseRules,
-                extraTagMinimumOdds: strictness.extraTagMinimumOdds
+                houseRules: typeHouseRules
             )
             try shutdownSignal.checkCancellation()
             classifications.append(contentsOf: results)
