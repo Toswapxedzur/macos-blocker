@@ -1,5 +1,5 @@
 window.VaultClassifierStrings = Object.freeze({
-  "connections.title": "Connections",
+  "connections.title": "AI connections",
   "connections.subscription": "ChatGPT subscription",
   "connections.openAI": "OpenAI API",
   "connections.gemini": "Gemini API",

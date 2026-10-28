@@ -11,8 +11,10 @@
   const strings = window.VaultClassifierStrings || {};
   const settingsScope = window.VaultSettings.scope;
   const settingsRoot = window.VaultSettings.root;
-  const uiScopes = [...new Set([scope, settingsScope])];
-  const uiRoots = [root, settingsRoot];
+  const taggingScope = window.VaultSettings.taggingScope || settingsScope;
+  const taggingRoot = window.VaultSettings.taggingRoot || settingsRoot;
+  const uiScopes = [...new Set([scope, settingsScope, taggingScope])];
+  const uiRoots = [...new Set([root, settingsRoot, taggingRoot])];
   const uiQuery = selector => uiRoots.map(node => node.querySelector(selector)).find(Boolean) || null;
   const uiQueryAll = selector => uiRoots.flatMap(node => [...node.querySelectorAll(selector)]);
   const activeControl = () => uiScopes.map(node => node.activeElement).find(Boolean) || null;
@@ -553,10 +555,15 @@
     return `<div data-tagging-connections>${selectField("connections.title", "", "connectionType", connectionTab, options)}${connectionTab === "chatGPT" ? chatGPTAccountSection() : apiKeySettings(connectionTab)}</div>`;
   }
 
-  function nativeSettingsContent() {
+  function nativeTaggingContent() {
     if (utilityPanel !== "settings" || !state) return "";
     const settings = state.settings;
-    return `${notice(state.issue, "red")}<section class="utility-settings-section" data-form-id="classification-settings-form" data-autosave-action="saveClassificationSettings"><h3 class="utility-settings-section-title">${tx("classification.title")}</h3><div class="utility-toggles">${toggle("classification.enabled", "classificationEnabled", settings.classificationEnabled !== false)}</div><p class="section-copy" data-info>${tx("classification.copy")}</p></section>${connectionsSection()}`;
+    return `<section class="utility-settings-section" data-form-id="classification-settings-form" data-autosave-action="saveClassificationSettings"><h3 class="utility-settings-section-title">${tx("classification.title")}</h3><div class="utility-toggles">${toggle("classification.enabled", "classificationEnabled", settings.classificationEnabled !== false)}</div><p class="section-copy" data-info>${tx("classification.copy")}</p></section>`;
+  }
+
+  function nativeConnectionsContent() {
+    if (utilityPanel !== "settings" || !state) return "";
+    return `${notice(state.issue, "red")}${connectionsSection()}`;
   }
 
   function navButton(workspace, symbol, titleKey, metaKey) {
@@ -1106,9 +1113,10 @@
     }
     pendingLists = []; deferredChoices = new Map();
     const markup = shell(workspace()) + createTypeModal() + chatGPTWelcome();
-    const settingsMarkup = nativeSettingsContent();
+    const settingsMarkup = nativeConnectionsContent();
+    const taggingMarkup = nativeTaggingContent();
     // Nothing changed on the page: keep the DOM (and its scroll) as it is.
-    if (markup === lastRenderedMarkup && settingsMarkup === settingsRoot.__markup && root.firstChild) {
+    if (markup === lastRenderedMarkup && settingsMarkup === settingsRoot.__markup && taggingMarkup === taggingRoot.__markup && root.firstChild) {
       const searchFocus = captureSearch(), focused = captureLiveEditFocus();
       replacingControls = true;
       mountChoices(); mountLists(); mountLargeGraphs();
@@ -1117,10 +1125,10 @@
       restoreSearch(searchFocus);
       return;
     }
-    renderFull(markup, settingsMarkup);
+    renderFull(markup, settingsMarkup, taggingMarkup);
   }
 
-  function renderFull(markup, settingsMarkup) {
+  function renderFull(markup, settingsMarkup, taggingMarkup) {
     rememberTreeViewportPositions();
     rememberEditorViewportPosition();
     uiQueryAll("[data-list-key]").forEach((list) => {
@@ -1143,6 +1151,8 @@
     root.innerHTML = markup;
     settingsRoot.innerHTML = settingsMarkup;
     settingsRoot.__markup = settingsMarkup;
+    taggingRoot.innerHTML = taggingMarkup;
+    taggingRoot.__markup = taggingMarkup;
     mountChoices(); mountLists();
     restoreLiveEdits(focused);
     if (pendingTagFocus) {

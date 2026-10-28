@@ -1284,7 +1284,7 @@
   "link.browserIdentitySyncPending": "This linked budget is still syncing. Try again when syncing finishes.",
   "link.browserIdentityPendingEditsInvalid": "Saved pending edits could not be read. The saved settings and usage have been preserved.",
   "link.browserConnectRequired": "Connect the browser Vault extension before unlinking this budget. Saved settings and usage are preserved.",
-  "classifier.connections.title": "Connections",
+  "classifier.connections.title": "AI connections",
   "classifier.connections.subscription": "ChatGPT subscription",
   "classifier.connections.openAI": "OpenAI API",
   "classifier.connections.gemini": "Gemini API",

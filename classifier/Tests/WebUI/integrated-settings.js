@@ -1,7 +1,7 @@
 async function runIntegratedSettingsTests() {
   const results=[],check=(ok,label)=>{if(!ok)throw Error(label);results.push('PASS '+label)};
   const until=async fn=>{const end=performance.now()+5000;while(!fn()){if(performance.now()>end)throw Error('Timed out');await new Promise(r=>setTimeout(r,20))}};
-  const scene=VaultScenes.scope('classifier'),settings=VaultSettings.scope;
+  const scene=VaultScenes.scope('classifier'),settings=VaultSettings.scope,tagging=VaultSettings.taggingScope;
   const snapshot={presentationRevision:8000,workspace:'knowledge',settings:{classificationEnabled:true,research:{enabled:true},dictionaries:{contributionEnabled:true}},assets:{classifierTypes:[],trees:[],datasets:[],bindings:[],collectionPlatforms:[],knowledge:{creators:[],terms:[]},providerProfiles:[],providerProtocols:{},providerModelCatalogs:{}},notices:{}};
   const commands=[];window.webkit ||= {messageHandlers:{}};window.webkit.messageHandlers.vaultClassifier ||= {postMessage(){}};
   const send=webkit.messageHandlers.vaultClassifier.postMessage;
@@ -22,12 +22,13 @@ async function runIntegratedSettingsTests() {
     for(const name of ['vault','classifier','activity']){
       document.querySelector(`[data-scene="${name}"]`).click();
       const opener=name==='vault'?document.getElementById('settingsButton'):name==='classifier'?scene.querySelector('[data-action="openUtilityPanel"]'):VaultScenes.scope('activity').getElementById('activitySettingsButton');
-      opener.focus();opener.click();await until(()=>!!settings.querySelector('[data-field="classificationEnabled"]'));
+      opener.focus();opener.click();await until(()=>!!tagging.querySelector('[data-field="classificationEnabled"]'));
       check(!modal.classList.contains('hidden')&&document.body.dataset.scene===name,name+': opens shared Settings without switching scenes');
       check(settings.querySelector('[data-field="connectionType"]').options.length===4,name+': four connection choices');
+      check(settings.host.closest('.ai-connections-col') && tagging.host.closest('.settings-col:not(.ai-connections-col)') && !tagging.querySelector('[data-tagging-connections]'),name+': AI connections have their own Vault Settings column');
       check(!settings.querySelector('.utility-dictionary-section, .utility-research-section')&&!!document.getElementById('settingsQuitRetryMinutes'),name+': current classifier and app preferences coexist');
       const body=modal.querySelector('.settings-body');check(body.scrollWidth<=body.clientWidth+1,name+': Settings fits viewport');
-      VaultSettings.close();await until(()=>!settings.querySelector('[data-field="classificationEnabled"]'));
+      VaultSettings.close();await until(()=>!tagging.querySelector('[data-field="classificationEnabled"]'));
       const focusRoot=name==='vault'?document:VaultScenes.scope(name);check(focusRoot.activeElement?.matches(name==='classifier'?'[data-action="openUtilityPanel"]':name==='activity'?'#activitySettingsButton':'#settingsButton'),name+': closing restores its current opener');
     }
     check(!commands.some(x=>/Dictionary|Knowledge|Research/.test(x.action)),'stale fields never dispatch dormant actions');

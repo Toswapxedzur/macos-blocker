@@ -26,6 +26,7 @@ window.runConnectionSettingsPreview = async () => {
   if(settings.querySelector('[data-field="credential"]').type!=='password'||settings.querySelector('[data-field="credential"]').value!=='fixture-not-a-real-key')throw Error('Stored key must be masked and retained');
   if(settings.querySelector('.provider-panel, .provider-panels, [data-action="createProviderProfile"], [data-action="confirmDeleteProviderProfile"]'))throw Error('Retired key-manager UI remains');
   if(settings.querySelectorAll('[data-field="credential"]').length!==1)throw Error('Expected one key field');
+  if(!settings.host.closest('.ai-connections-col') || VaultSettings.taggingScope.querySelector('[data-field="connectionType"]'))throw Error('Connections must be separate from Content tagging');
   const color=getComputedStyle(settings.host);
   if(color.backgroundImage!=='none'||color.backgroundColor!=='rgba(0, 0, 0, 0)')throw Error('Settings host must inherit its surrounding neutral surface');
   return ['PASS integrated Settings: shared selector, direct single key field, neutral surface, masked key, bounded layout'];

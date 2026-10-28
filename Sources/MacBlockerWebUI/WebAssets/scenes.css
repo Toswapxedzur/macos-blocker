@@ -17,9 +17,18 @@ body[data-scene="activity"] > main.popup {
 }
 
 /* Native services share the app Settings dialog, independent of active page. */
-.native-settings-host { display: block; height: auto; margin-top: 24px; }
+.native-settings-host { display: block; height: auto; margin-top: 18px; }
+.ai-connections-col .native-settings-host { margin-top: 0; }
 
 /* The shared dialog owns the scroll, so native fields cannot be clipped. */
 #settingsModal .settings-body { display: block; overflow-y: auto; }
-#settingsModal .settings-cols { min-height: auto; }
+#settingsModal .settings-cols { min-height: auto; grid-template-columns: repeat(3, minmax(0, 1fr)); }
 #settingsModal .settings-col { overflow: visible; }
+@media (max-width: 900px) {
+  #settingsModal .settings-cols { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  #settingsModal .ai-connections-col { grid-column: 1 / -1; }
+}
+@media (max-width: 600px) {
+  #settingsModal .settings-cols { grid-template-columns: minmax(0, 1fr); }
+  #settingsModal .ai-connections-col { grid-column: auto; }
+}
