@@ -21,5 +21,15 @@ window.runReasoningGroupPreview = async () => {
   if(!high)throw Error('High effort is not reachable through the visible picker');high.click();
   await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));
   if(effort.value!=='high'||!button.textContent.includes('High'))throw Error('Visible effort choice did not take effect');
-  return ['PASS actual desktop group: model picker, four reasoning choices and always-enabled search'];
+  const confidence=scope.querySelector('[data-form-id="classifier-tagging-form-group-preview"] [data-field="minimumConfidence"]');
+  if(!confidence||confidence.value!=='4'||confidence.options.length!==5)throw Error('Default confidence and all five evidence levels missing');
+  if(scope.querySelector('[data-field="strictness"],[data-field="minimumTagsOverride"],[data-field="maximumTagsOverride"]'))throw Error('Retired tag-count controls remain');
+  const confidenceButton=confidence.closest('label').querySelector('.vui-select-button');
+  if(!confidenceButton)throw Error('Shared native confidence selector missing');
+  confidenceButton.click();await new Promise(r=>requestAnimationFrame(r));
+  const strongest=[...document.querySelectorAll('.vui-menu-item')].find(node=>node.textContent.includes('5 · Explicit'));
+  if(!strongest)throw Error('Confidence level 5 is unreachable');
+  strongest.click();await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));
+  if(confidence.value!=='5')throw Error('Visible confidence choice did not take effect');
+  return ['PASS actual desktop group: model, reasoning, search and native confidence selector'];
 };
