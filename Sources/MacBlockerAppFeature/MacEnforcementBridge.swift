@@ -386,7 +386,7 @@ public final class MacEnforcementBridge: ObservableObject {
         guard group.enabled, ruleTypes[group.id]?.contains(type) == true, let runtime = ruleRuntime else { return }
         do {
             try configureRuleTime(runtime, groupID: group.id, type: type, data: data)
-            apply(try runtime.dispatch(type: type, data: data, groupID: group.id), group: group)
+            apply(try runtime.dispatch(type: type, data: data, groupID: group.id, contextRevision: webStore.ruleContextRevision(groupID: group.id)), group: group)
             refreshRuleTime(groupID: group.id)
         } catch RuleRuntime.RuleRuntimeError.terminated {
             appendLog(groupId: group.id, group: group.name, message: "Execution deadline exceeded; rule stopped.", level: "error")
@@ -445,6 +445,18 @@ public final class MacEnforcementBridge: ObservableObject {
                 var result = await RuleAIService.shared.request(program: ConnectionHub.localProgram, groupID: groupID, payload: payload)
                 result["requestId"] = requestID; result["generation"] = generation
                 self?.dispatchRule(type: "ai", data: result, groupID: groupID)
+            }
+        case "store":
+            let groupID = action.groupId, generation = action.generation ?? ""
+            guard let payload = action.payload, ruleRuntime?.acceptsRequest(groupID: groupID, generation: generation) == true else { return }
+            var reply: [String: Any]
+            do { reply = try webStore.ruleRecordRequest(groupID: groupID, payload: payload) }
+            catch { reply = ["ok": false, "error": String(describing: error)] }
+            reply["requestId"] = action.requestId ?? ""; reply["generation"] = generation
+            let answer = reply
+            Task { @MainActor [weak self] in
+                guard self?.ruleRuntime?.acceptsRequest(groupID: groupID, generation: generation) == true else { return }
+                self?.dispatchRule(type: "record", data: answer, groupID: groupID)
             }
         case "file":
             runRuleFile(action)

@@ -87,7 +87,7 @@ public final class GroupActionsRuntime: @unchecked Sendable {
           } };
         }
         """#)
-        for name in ["platform-profiles", "group-scopes", "parental-pin", "group-actions", "rule-core"] {
+        for name in ["platform-profiles", "group-scopes", "parental-pin", "group-actions", "rule-core", "rule-records"] {
             guard let url = RuntimeResources.url(name: name, ext: "js"),
                   let source = try? String(contentsOf: url, encoding: .utf8) else {
                 NSLog("[GroupActionsRuntime] missing bundled %@.js", name)

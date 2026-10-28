@@ -100,6 +100,9 @@ public final class BlockerWebStore: @unchecked Sendable {
             var anchors = next["usageResetAtMs"] as? [String: Any] ?? [:]; anchors[id] = nowMs; next["usageResetAtMs"] = anchors
             var buckets = next["usageBucketsMs"] as? [String: Any] ?? [:]; buckets.removeValue(forKey: id); next["usageBucketsMs"] = buckets
         }
+        if let records = next["cbRuleRecords"], let pruned = try? GroupActionsRuntime.shared.callThrowing("prune", [records, (next["blockedGroups"] as? [[String: Any]] ?? []).filter { $0["groupType"] as? String == "custom" }.compactMap { $0["id"] as? String }], module: "VaultRuleRecords") as? [String: Any] {
+            next["cbRuleRecords"] = pruned["document"]
+        }
         return tidied(next, nowMs: nowMs, linkedGroupIds: linkedGroupIds) ?? next
     }
 
@@ -484,6 +487,24 @@ public final class BlockerWebStore: @unchecked Sendable {
             if source == nil && states.isEmpty { return false }
             try write(updated)
             return true
+        }
+    }
+
+    public func ruleContextRevision(groupID: String) -> String {
+        let group = (loadStoreObject()?["blockedGroups"] as? [[String: Any]])?.first { $0["id"] as? String == groupID }
+        return String(WebStoreDocument.canonicalJSON(group?["ruleAI"]).hashValue)
+    }
+
+    /// Generic records use the same canonical transaction implementation as
+    /// browser rules, inside the native document's existing file lock.
+    public func ruleRecordRequest(groupID: String, payload: String) throws -> [String: Any] {
+        guard let request = try JSONSerialization.jsonObject(with: Data(payload.utf8)) as? [String: Any] else { throw GroupStoreError.invalidInput("store-invalid-request") }
+        return try withLockedDocument(notify: false) { raw, save in
+            guard var raw, (raw["blockedGroups"] as? [[String: Any]] ?? []).contains(where: { $0["id"] as? String == groupID && $0["groupType"] as? String == "custom" && $0["enabled"] as? Bool == true }) else { throw GroupStoreError.invalidInput("store-unavailable") }
+            let document = raw["cbRuleRecords"] ?? ["version": 1, "groups": [String: Any]()]
+            guard let result = try GroupActionsRuntime.shared.callThrowing("transact", [document, groupID, request, floor(Date().timeIntervalSince1970 * 1000), UUID().uuidString], module: "VaultRuleRecords") as? [String: Any], let reply = result["reply"] as? [String: Any] else { throw GroupStoreError.invalidInput("store-unavailable") }
+            if result["changed"] as? Bool == true { raw["cbRuleRecords"] = result["document"]; try save(raw) }
+            return reply
         }
     }
 

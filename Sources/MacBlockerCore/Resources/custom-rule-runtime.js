@@ -87,6 +87,7 @@ var MacBlockerRuntime = (function () {
     suppress(groupId, on) {
       engine.suppress(String(groupId), on === true);
     },
+    acceptsRequest(groupId, token) { return engine.acceptsRequest(String(groupId), String(token)); },
     dispatch(descriptorJSON) {
       const descriptor = JSON.parse(descriptorJSON);
       if (descriptor.timeContext) engine.setTimeContext(String(descriptor.targetGroupId), descriptor.timeContext);

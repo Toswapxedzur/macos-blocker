@@ -179,11 +179,20 @@ public final class RuleRuntime {
         if !result.ok { throw RuleRuntimeError.failed(result.error ?? "custom-time-context-refused") }
     }
 
+    public func acceptsRequest(groupID: String, generation: String) -> Bool {
+        #if canImport(JavaScriptCore)
+        return context.objectForKeyedSubscript("MacBlockerRuntime")?.invokeMethod("acceptsRequest", withArguments: [groupID, generation])?.toBool() == true
+        #else
+        return false
+        #endif
+    }
+
     /// One event (`type`, `data`) to one group's rule.
-    public func dispatch(type: String, data: Any, groupID: String, now: Date = Date()) throws -> DispatchResult {
-        let descriptor: [String: Any] = [
+    public func dispatch(type: String, data: Any, groupID: String, now: Date = Date(), contextRevision: String? = nil) throws -> DispatchResult {
+        var descriptor: [String: Any] = [
             "type": type, "now": (now.timeIntervalSince1970 * 1000).rounded(), "data": data, "targetGroupId": groupID
         ]
+        if let contextRevision { descriptor["contextRevisions"] = [groupID: contextRevision] }
         guard JSONSerialization.isValidJSONObject(descriptor),
               let json = String(data: try JSONSerialization.data(withJSONObject: descriptor), encoding: .utf8) else {
             throw RuleRuntimeError.failed("the event is not JSON")

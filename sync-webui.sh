@@ -33,6 +33,7 @@ SYNCED_FILES=(
   browser-compat.js
   storage-schema.js
   rule-core.js
+  rule-records.js
   rule-ai-ui.js
   vault-ui.css
   vault-ui.js
@@ -81,6 +82,6 @@ echo "[sync-webui] synced ${#SYNCED_FILES[@]} files + popup.html + translation/ 
 
 # JavaScriptCore runs the editor's group policies and Mac Vault's native rules.
 # Safari's browser-rule engine belongs to its separate containing app.
-for file in platform-profiles.js group-scopes.js parental-pin.js group-actions.js rule-core.js; do
+for file in platform-profiles.js group-scopes.js parental-pin.js group-actions.js rule-core.js rule-records.js; do
   cp "$SRC/$file" "$ROOT/Sources/MacBlockerCore/Resources/$file"
 done

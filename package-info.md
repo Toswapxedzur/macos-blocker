@@ -62,3 +62,5 @@
 - Runtime custom-rule AI: `RuleAIService.swift` routes native/authenticated browser requests through saved classifier connections; `RuleAIUsage.swift` persists linked allowance reservations. Native/provider contract, lifecycle, limits and editor checks run privately on Mini2. The public apps remain unchanged; see `artifacts/custom-rule-ai-20261027/` for evidence. New English UI/manual text belongs in the normal pre-release translation batch.
 
 - Shared custom-rule core and web schema5 match the browser attachment contract. Saved content pills belong to browser/Safari content surfaces; native Mac rules still act on applications.
+
+Generic rule records use the shared `rule-records.js` transaction module through the native document lock; RuleRuntime forwards store requests/replies without classification or Activity semantics. Browser HTML views remain browser-scoped.
