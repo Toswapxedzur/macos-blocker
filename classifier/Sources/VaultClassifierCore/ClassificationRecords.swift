@@ -44,8 +44,6 @@ public enum VideoClassificationSource: String, Codable, Sendable, CaseIterable {
 /// tags are *derived* from these (see `CreatorTagHistogram`); there is no creator
 /// classification record in the new model.
 public struct VideoClassification: Codable, Equatable, Sendable, Identifiable {
-    public static let maximumTags = 32
-
     public var id: String
     public var classifierTypeID: String
     public var platformID: String
@@ -85,7 +83,7 @@ public struct VideoClassification: Codable, Equatable, Sendable, Identifiable {
         self.creatorID = creatorID
         self.treeID = treeID
         self.treeRevision = treeRevision
-        self.tags = Array(tags.prefix(Self.maximumTags))
+        self.tags = tags
         self.inputFingerprint = inputFingerprint
         self.source = source
         self.modelVersion = modelVersion
@@ -111,7 +109,7 @@ public struct VideoClassification: Codable, Equatable, Sendable, Identifiable {
         creatorID = try container.decode(String.self, forKey: .creatorID)
         treeID = try container.decode(String.self, forKey: .treeID)
         treeRevision = try container.decode(Int.self, forKey: .treeRevision)
-        tags = Array((try container.decodeIfPresent([ScoredTag].self, forKey: .tags) ?? []).prefix(Self.maximumTags))
+        tags = try container.decodeIfPresent([ScoredTag].self, forKey: .tags) ?? []
         // (Legacy `unknownTerms` key is intentionally ignored on decode — dropped in Phase 1.)
         inputFingerprint = try container.decodeIfPresent(String.self, forKey: .inputFingerprint)
         source = (try? container.decodeIfPresent(VideoClassificationSource.self, forKey: .source)) ?? .model
@@ -411,7 +409,6 @@ public extension WorkspaceCatalog {
         for classification in videoClassifications {
             guard !classification.id.isEmpty, !classification.entryID.isEmpty,
                   !classification.classifierTypeID.isEmpty, !classification.platformID.isEmpty,
-                  classification.tags.count <= VideoClassification.maximumTags,
                   classification.tags.allSatisfy({ (ScoredTag.minConfidence...ScoredTag.maxConfidence).contains($0.confidence) }) else {
                 throw WorkspaceCatalogError.invalidCollectedEntry(classification.id)
             }

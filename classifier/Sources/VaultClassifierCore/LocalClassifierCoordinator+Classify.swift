@@ -132,7 +132,7 @@ extension LocalClassifierCoordinator {
             }
             try shutdownSignal.checkCancellation()
             let pipeline = VideoClassificationPipeline(
-                llm: llm, maximumTags: VideoClassification.maximumTags,
+                llm: llm, maximumTags: tree.nodes.filter { !$0.isRetired }.count,
                 minimumConfidence: settings.minimumConfidence, promptVersion: "p6")
             let trimmedRules = settings.houseRules.trimmingCharacters(in: .whitespacesAndNewlines)
             let typeHouseRules = trimmedRules.isEmpty ? nil : trimmedRules

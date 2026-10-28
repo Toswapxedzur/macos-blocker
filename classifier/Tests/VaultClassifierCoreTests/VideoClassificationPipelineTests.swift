@@ -140,6 +140,20 @@ final class VideoClassificationPipelineTests: XCTestCase {
         XCTAssertTrue(empty.tags.isEmpty, "even the first suggestion must clear the cutoff")
     }
 
+    func testSupportedTagsAreNotTruncatedAtFormerCountCap() async throws {
+        let nodes = (0..<40).map { TagTreeNode(id: "tag-\($0)", name: "Topic \($0)") }
+        let tree = TagTreeAsset(id: "tree", name: "Topics", nodes: nodes)
+        let llm = ScriptedClassificationEngine(modelVersion: "fixture",
+            result: .init(tags: nodes.map { .init(name: $0.name, confidence: 5) }),
+            recorder: RequestRecorder())
+        let result = try await VideoClassificationPipeline(
+            llm: llm, maximumTags: nodes.count, minimumConfidence: 4, promptVersion: "p6"
+        ).classify(title: "All topics", entryID: "v", creatorID: "c", platformID: "youtube",
+                   classifierType: makeType(), tree: tree, catalog: WorkspaceCatalog())
+        XCTAssertEqual(result.tags.count, 40)
+        XCTAssertEqual(try JSONDecoder().decode(VideoClassification.self, from: JSONEncoder().encode(result)).tags.count, 40)
+    }
+
     func testPipelineFeedsDerivedCreatorPriorIntoPrompt() async throws {
         let recorder = RequestRecorder()
         let llm = ScriptedClassificationEngine(
