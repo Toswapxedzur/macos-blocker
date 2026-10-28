@@ -28,7 +28,7 @@ final class DormantKnowledgeTests: XCTestCase {
         let file = root.appendingPathComponent("state.json"); try oldDocument().write(to: file)
         let stateFile = LocalStateFile(url: file)
         let state = try stateFile.load(); stateFile.flushSynchronously()
-        XCTAssertEqual(state.schemaVersion, 8)
+        XCTAssertEqual(state.schemaVersion, 9)
         let encoded = String(decoding: try Data(contentsOf: file), as: UTF8.self)
         for retired in ["knowledgeEntries", "creatorKnowledge", "researchAttempts", "creatorResearchAccumulators", "\"research\"", "\"dictionaries\""] { XCTAssertFalse(encoded.contains(retired), retired) }
         let archives = try FileManager.default.contentsOfDirectory(at: root.appendingPathComponent("dormant"), includingPropertiesForKeys: nil)
@@ -67,7 +67,7 @@ final class DormantKnowledgeTests: XCTestCase {
             platformID: "youtube", classifierType: group, tree: tree, catalog: state.workspaceCatalog)
         XCTAssertFalse(parts.dynamicSuffix.contains("A private saved definition")); XCTAssertFalse(parts.dynamicSuffix.contains("SENTINEL-DORMANT-CREATOR"))
         var row = VideoClassification(classifierTypeID: group.id, platformID: "youtube", entryID: "video", creatorID: "creator", treeID: tree.id,
-            treeRevision: tree.revision, tags: [], source: .model, modelVersion: group.cloudModelVersion + "+p4", tagBounds: group.tagging.tagBounds)
+            treeRevision: tree.revision, tags: [], source: .model, modelVersion: group.cloudModelVersion + "+p6")
         XCTAssertFalse(LocalClassifierCoordinator.isClassificationCurrent(row, forType: group, servingModelVersion: row.modelVersion))
         row.source = .humanCorrected
         XCTAssertTrue(LocalClassifierCoordinator.isClassificationCurrent(row, forType: group, servingModelVersion: row.modelVersion))

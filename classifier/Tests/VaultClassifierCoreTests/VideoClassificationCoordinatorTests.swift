@@ -79,38 +79,36 @@ final class VideoClassificationCoordinatorTests: XCTestCase {
         XCTAssertEqual(recorder.requests.count, 1)
     }
 
-    func testGroupTagBoundsReachRequestsAndPersistWithClassification() async throws {
+    func testGroupMinimumConfidenceReachesRequestsAndPersistsWithClassification() async throws {
         let (coordinator, root) = try makeCoordinatorWithYouTubeType()
         defer { LocalStateFile.flushAllPendingWrites(); try? FileManager.default.removeItem(at: root) }
         let recorder = CoordinatorRequestRecorder()
         coordinator.setFixtureEngine(CoordinatorRecordingLLM(recorder: recorder))
         var catalog = coordinator.snapshot().workspaceCatalog
         let index = try XCTUnwrap(catalog.classifierTypes.firstIndex { $0.applicablePlatformIDs.contains("youtube") })
-        catalog.classifierTypes[index].tagging = .init(strictness: .strict, minimumTagsOverride: 2, maximumTagsOverride: 2)
+        catalog.classifierTypes[index].tagging = .init(minimumConfidence: 5)
         try coordinator.updateWorkspaceCatalog(catalog)
         _ = try await coordinator.classifyVideo(platformID: "youtube", entryID: "bounded", creatorID: "creator", title: "Title")
         let request = try XCTUnwrap(recorder.requests.last)
-        XCTAssertEqual(request.minimumTags, 2)
-        XCTAssertEqual(request.maximumTags, 2)
-        XCTAssertEqual(request.extraTagMinimumOdds, StrictnessDial.strict.extraTagMinimumOdds)
+        XCTAssertEqual(request.minimumConfidence, 5)
+        XCTAssertEqual(request.minimumTags, 0)
         let row = try XCTUnwrap(coordinator.snapshot().workspaceCatalog.videoClassifications.first { $0.entryID == "bounded" })
-        XCTAssertEqual(row.tagBounds, TagBounds(minimum: 2, maximum: 2))
+        XCTAssertEqual(row.modelVersion, catalog.classifierTypes[index].cloudModelVersion + "+p6")
     }
 
-    func testChangingBoundsInvalidatesAutomaticCacheButKeepsHumanCorrections() {
+    func testChangingConfidenceInvalidatesAutomaticCacheButKeepsHumanCorrections() {
         var type = ClassifierTypeAsset(id: "type", name: "Group", treeID: "tree", treeRevision: 1,
             datasetID: "dataset", datasetRevision: 1)
-        let serving = type.cloudModelVersion + "+p5"
+        let serving = type.cloudModelVersion + "+p6"
         var row = VideoClassification(classifierTypeID: type.id, platformID: "youtube", entryID: "entry",
             creatorID: "creator", treeID: type.treeID, treeRevision: 1, tags: [], source: .model,
-            modelVersion: serving, tagBounds: type.tagging.tagBounds)
+            modelVersion: serving)
         XCTAssertTrue(LocalClassifierCoordinator.isClassificationCurrent(row, forType: type, servingModelVersion: serving))
-        type.tagging.maximumTagsOverride = 2
+        type.tagging.minimumConfidence = 5
         XCTAssertFalse(LocalClassifierCoordinator.isClassificationCurrent(row, forType: type, servingModelVersion: serving))
-        row.tagBounds = type.tagging.tagBounds
-        row.modelVersion = type.cloudModelVersion + "+p5"
+        row.modelVersion = type.cloudModelVersion + "+p6"
         XCTAssertTrue(LocalClassifierCoordinator.isClassificationCurrent(row, forType: type, servingModelVersion: serving))
-        type.tagging.maximumTagsOverride = nil
+        type.tagging.minimumConfidence = 4
         XCTAssertFalse(LocalClassifierCoordinator.isClassificationCurrent(row, forType: type, servingModelVersion: serving))
         row.source = .humanCorrected
         XCTAssertTrue(LocalClassifierCoordinator.isClassificationCurrent(row, forType: type, servingModelVersion: serving))
@@ -238,7 +236,7 @@ final class VideoClassificationCoordinatorTests: XCTestCase {
                 id: "a", name: "A", treeID: treeA.id, treeRevision: treeA.revision,
                 datasetID: dataset.id, datasetRevision: dataset.revision,
                 applicablePlatformIDs: ["youtube"],
-                tagging: .init(strictness: .strictest, houseRules: "Type A rule."), chatGPT: .init(accountID: "fixture", model: "fixture"), order: 0
+                tagging: .init(minimumConfidence: 5, houseRules: "Type A rule."), chatGPT: .init(accountID: "fixture", model: "fixture"), order: 0
             ),
             // A platform belongs to at most one classifier type, so the second
             // type lives on its own platform (same shared dataset).
@@ -265,8 +263,7 @@ final class VideoClassificationCoordinatorTests: XCTestCase {
         XCTAssertFalse(recorder.requests[0].staticPrefix.contains("Global rule."))
         XCTAssertFalse(recorder.requests[1].staticPrefix.contains("Type A rule."))
         XCTAssertFalse(recorder.requests[1].staticPrefix.contains("Global rule."))
-        XCTAssertEqual(recorder.requests.map(\.maximumTags), [1, 3], "type A holds the Strictest position (one tag); type B owns its Balanced dial (three)")
-        XCTAssertEqual(recorder.requests.map(\.extraTagMinimumOdds), [0.90, 0.90])
+        XCTAssertEqual(recorder.requests.map(\.minimumConfidence), [5, 4], "each group owns its evidence cutoff")
     }
 
 

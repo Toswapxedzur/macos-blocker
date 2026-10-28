@@ -4,56 +4,22 @@ import VaultClassifierCore
 
 @MainActor
 final class ClassifierTypeTaggingWebInputTests: XCTestCase {
-    func testTagBoundInputsRejectInvalidPairsAndAllowIndependentBlankDefaults() throws {
-        let base: [String: Any] = ["typeID": "type", "speedQuality": "balanced", "strictness": "5"]
-        func parse(_ values: [String: Any]) throws -> TaggingSettings {
-            try VaultClassifierViewModel.parseClassifierTypeTaggingWebInput(base.merging(values) { _, new in new }).settings
+    func testConfidenceLevelsAndInstructions() throws {
+        for level in 1...5 {
+            let input = try VaultClassifierViewModel.parseClassifierTypeTaggingWebInput([
+                "typeID": "type", "minimumConfidence": String(level), "houseRules": "Keep my vocabulary"
+            ])
+            XCTAssertEqual(input.settings, TaggingSettings(minimumConfidence: level, houseRules: "Keep my vocabulary"))
         }
-        XCTAssertEqual(try parse(["minimumTagsOverride": "", "maximumTagsOverride": NSNull()]).tagBounds,
-                       TagBounds(minimum: 1, maximum: 3))
-        XCTAssertEqual(try parse(["minimumTagsOverride": "0", "maximumTagsOverride": "2"]).tagBounds,
-                       TagBounds(minimum: 0, maximum: 2))
-        XCTAssertEqual(try parse(["minimumTagsOverride": 2, "maximumTagsOverride": 3]).tagBounds,
-                       TagBounds(minimum: 2, maximum: 3))
-        for invalid: [String: Any] in [
-            ["minimumTagsOverride": "2", "maximumTagsOverride": "1"],
-            ["strictness": "1", "minimumTagsOverride": "2", "maximumTagsOverride": ""],
-            ["minimumTagsOverride": "-1"], ["maximumTagsOverride": "0"],
-            ["maximumTagsOverride": "4"], ["minimumTagsOverride": "1.5"],
-            ["maximumTagsOverride": 1.5], ["minimumTagsOverride": true],
-            ["maximumTagsOverride": "oops"]
-        ] { XCTAssertThrowsError(try parse(invalid), "invalid tag counts must not become defaults: \(invalid)") }
     }
 
-    func testStrictnessIsRequiredAndEmptyRulesAreIndependent() throws {
-        XCTAssertThrowsError(try VaultClassifierViewModel.parseClassifierTypeTaggingWebInput([
-            "typeID": "type", "speedQuality": "", "strictness": ""
-        ]))
-        XCTAssertThrowsError(try VaultClassifierViewModel.parseClassifierTypeTaggingWebInput([
-            "typeID": "type", "speedQuality": "fast"
-        ]))
-        let input = try VaultClassifierViewModel.parseClassifierTypeTaggingWebInput([
-            "typeID": "type", "speedQuality": "best", "strictness": "2", "houseRules": ""
-        ])
-        XCTAssertEqual(input.settings, TaggingSettings(strictness: .strict))
+    func testMissingOrInvalidConfidenceIsRejected() {
+        for value: Any in ["", "0", "6", "1.5", "strong", 2.5, true, NSNull()] {
+            XCTAssertThrowsError(try VaultClassifierViewModel.parseClassifierTypeTaggingWebInput([
+                "typeID": "type", "minimumConfidence": value
+            ]))
+        }
+        XCTAssertThrowsError(try VaultClassifierViewModel.parseClassifierTypeTaggingWebInput(["typeID": "type"]))
+        XCTAssertThrowsError(try VaultClassifierViewModel.parseClassifierTypeTaggingWebInput(["typeID": "", "minimumConfidence": "4"]))
     }
-
-    func testUnknownPositionsAreRefused() {
-        XCTAssertThrowsError(try VaultClassifierViewModel.parseClassifierTypeTaggingWebInput([
-            "typeID": "type", "speedQuality": "turbo",
-        ]))
-        XCTAssertThrowsError(try VaultClassifierViewModel.parseClassifierTypeTaggingWebInput([
-            "typeID": "type", "strictness": "9",
-        ]))
-        XCTAssertThrowsError(try VaultClassifierViewModel.parseClassifierTypeTaggingWebInput([
-            "typeID": "type", "strictness": "not-a-number",
-        ]))
-        XCTAssertThrowsError(try VaultClassifierViewModel.parseClassifierTypeTaggingWebInput([
-            "typeID": "", "strictness": "3",
-        ]))
-    }
-
-    // MARK: - Per-type research switch
-
-
 }

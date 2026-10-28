@@ -13,7 +13,7 @@ final class LocalTaggingRetirementTests: XCTestCase {
         state.workspaceCatalog.classifierTypes = [localTree, cloudTree].map { tree in
             .init(id: tree.id, name: tree.name, treeID: tree.id, treeRevision: 1,
                   datasetID: dataset.id, datasetRevision: dataset.revision, applicablePlatformIDs: ["youtube"],
-                  tagging: .init(strictness: .strict, houseRules: "Keep my rules", maximumTagsOverride: 2),
+                  tagging: .init(minimumConfidence: 4, houseRules: "Keep my rules"),
                   chatGPT: .init(accountID: "account", model: "selected"))
         }
         state.workspaceCatalog.videoClassifications = [localTree, cloudTree].map { tree in

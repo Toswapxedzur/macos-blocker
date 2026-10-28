@@ -14,7 +14,7 @@ window.runChatGPTTests = async () => {
   expect(selected?.data.typeID==='group-1' && selected.data.reasoningEffort==='low' && !('searchEnabled' in selected.data),'provider selection sends group identity and explicit reasoning without a retired search switch');
   expect(testState.assets.classifierTypes[0].classificationProvider==='chatGPT','selecting an account model persists the optional provider');
   expect(!q('[data-tagging-section] .dial-card-grid') && !q('[data-tagging-section] [data-action="downloadModel"]'),'cloud group hides local downloads and model tiers');
-  expect(scope.querySelectorAll('[data-tagging-section] [data-field="strictness"]').length===5 && q('[data-tagging-section] [data-field="houseRules"]'),'cloud group retains strictness and house rules');
+  expect(q('[data-tagging-section] [data-field="minimumConfidence"]').value==='4' && q('[data-tagging-section] [data-field="houseRules"]'),'cloud group retains confidence and house rules');
   expect(!q(provider+'[data-field="searchEnabled"]') && q(provider+'[data-search-always]'),'search is always available without an off switch');
   change(provider+'[data-field="reasoningEffort"]','high');await tick();
   expect(testState.assets.classifierTypes[0].chatGPT.reasoningEffort==='high' && !testState.settings.research.enabled,'reasoning selection autosaves independently of research consent');

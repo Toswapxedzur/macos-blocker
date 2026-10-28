@@ -107,11 +107,11 @@ final class ClassifierMCPTests: XCTestCase {
         XCTAssertNil(vm.mcpPerform(action: "createClassifierType", data: ["name": "A", "platformIDs": ["youtube"]]).issue)
         let group = try XCTUnwrap(vm.localState?.workspaceCatalog.classifierTypes.first)
         XCTAssertNil(vm.mcpPerform(action: "saveClassifierTypeTagging", data: [
-            "typeID": group.id, "speedQuality": "balanced", "strictness": "4", "houseRules": "Use my group vocabulary."
+            "typeID": group.id, "minimumConfidence": "5", "houseRules": "Use my group vocabulary."
         ]).issue)
         LocalStateFile.flushAllPendingWrites()
         let reopened = try VaultClassifierViewModel(headlessVaultDirectory: directory)
-        XCTAssertEqual(reopened.localState?.workspaceCatalog.classifierTypes.first?.tagging.strictness, .broad)
+        XCTAssertEqual(reopened.localState?.workspaceCatalog.classifierTypes.first?.tagging.minimumConfidence, 5)
         XCTAssertEqual(reopened.localState?.workspaceCatalog.classifierTypes.first?.tagging.houseRules, "Use my group vocabulary.")
     }
 

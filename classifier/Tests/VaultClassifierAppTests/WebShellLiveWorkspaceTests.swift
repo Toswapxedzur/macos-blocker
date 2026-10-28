@@ -64,7 +64,7 @@ final class WebShellLiveWorkspaceTests: XCTestCase {
         for retired in ["speedQualityCards", "downloadModel", "cancelModelDownload", "deleteModelFile", "localModelResidentNote"] {
             XCTAssertFalse(script.contains(retired), "Retired Local control remains: \(retired)")
         }
-        XCTAssertTrue(script.contains("strictnessOptions"))
+        XCTAssertTrue(script.contains("CONFIDENCE_CHOICES"))
         XCTAssertTrue(script.contains("cloud.chooseModel"))
     }
 

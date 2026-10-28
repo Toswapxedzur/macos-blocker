@@ -13,8 +13,7 @@ public struct VideoClassificationPipeline: Sendable {
     /// only the top tag is unconditional; additional tags must clear the floor, so
     /// a single-topic video still resolves to one tag even at a high cap.
     public let maximumTags: Int
-    /// Fewest tags to keep (0 = may decline). ≥1 forbids declining and forces the
-    /// best guesses even below the secondary floor; see TaggingSettings.minimumTags.
+    /// Legacy fixture-only count control. Active cloud requests use zero here.
     public let minimumTags: Int
     /// A secondary (non-top) tag is kept only when its confidence is at least this.
     /// Ungated multi-tag floods low-confidence guesses (eval 2026-09-16: at cap 3,

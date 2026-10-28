@@ -167,20 +167,20 @@ final class ViewModelCharacterizationTests: XCTestCase {
     }
 
 
-    func testGroupDialsPersistIndependentlyAndGlobalSaveIsRetired() throws {
+    func testGroupConfidencePersistsIndependentlyAndGlobalSaveIsRetired() throws {
         let vm = try makeViewModel()
         _ = vm.performWebAction("createClassifierType", data: ["name": "A", "platformIDs": ["youtube"]])
         _ = vm.performWebAction("createClassifierType", data: ["name": "B", "platformIDs": ["reddit"]])
         let groups = try XCTUnwrap(vm.localState?.workspaceCatalog.classifierTypes)
         XCTAssertEqual(groups.count, 2)
         _ = vm.performWebAction("saveClassifierTypeTagging", data: [
-            "typeID": groups[0].id, "speedQuality": "fast", "strictness": "5", "houseRules": "prefer specific tags"
+            "typeID": groups[0].id, "minimumConfidence": "5", "houseRules": "prefer specific tags"
         ])
         XCTAssertNil(vm.issue)
-        XCTAssertEqual(vm.localState?.workspaceCatalog.classifierTypes[0].tagging.strictness, .broadest)
+        XCTAssertEqual(vm.localState?.workspaceCatalog.classifierTypes[0].tagging.minimumConfidence, 5)
         XCTAssertEqual(vm.localState?.workspaceCatalog.classifierTypes[1].tagging, .init())
         let before = vm.localState
-        _ = vm.performWebAction("saveTaggingSettings", data: ["speedQuality": "best", "strictness": "1"])
+        _ = vm.performWebAction("saveTaggingSettings", data: ["minimumConfidence": "1"])
         XCTAssertNotNil(vm.issue)
         XCTAssertEqual(vm.localState, before)
     }

@@ -130,7 +130,7 @@ final class ChatGPTClassificationTests: XCTestCase {
         type.chatGPT.reasoningEffort = .low; type.chatGPT.accountID = "b"; XCTAssertNotEqual(type.cloudModelVersion, original)
         type.chatGPT.accountID = "a"; type.tagging.houseRules = "Chess is Games"; XCTAssertNotEqual(type.cloudModelVersion, original)
         let row = VideoClassification(classifierTypeID: type.id, platformID: "youtube", entryID: "v", creatorID: "c", treeID: "tree", treeRevision: 1,
-            tags: [], source: .model, modelVersion: type.cloudModelVersion + "+p5", tagBounds: type.tagging.tagBounds)
+            tags: [], source: .model, modelVersion: type.cloudModelVersion + "+p6")
         XCTAssertTrue(LocalClassifierCoordinator.isClassificationCurrent(row, forType: type, servingModelVersion: "stub/v1"))
         type.chatGPT.model = "different"; XCTAssertFalse(LocalClassifierCoordinator.isClassificationCurrent(row, forType: type, servingModelVersion: "stub/v1"))
     }

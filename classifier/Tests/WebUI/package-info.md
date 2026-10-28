@@ -6,7 +6,7 @@ owner-selected Mini2 account for the current campaign; no laptop execution.
 `UI_PLAYWRIGHT_MODULE`, `UI_BROWSER_EXECUTABLE`, `UI_WIDTH`, `UI_HEIGHT`, optional
 `UI_TEST_SCRIPT` and `UI_TEST_EXPRESSION` select the existing runtime and case.
 
-- `autosave.html`: group names/rules/strictness, key drafts, snapshots, IME,
+- `autosave.html`: group names/rules/confidence, key drafts, snapshots, IME,
   creation/deletion, focus, Settings and permanent-deletion semantics.
 - `dropdown-layout.js`: supported reasoning choices, menu geometry/hit testing,
   four connections and absent dormant controls.
@@ -16,8 +16,8 @@ owner-selected Mini2 account for the current campaign; no laptop execution.
   desktop shell's four connections, masked key, model/effort controls and geometry.
 - `integrated-settings.js`: shared Settings, language/direction, scene/focus,
   native-key drafts and independent application preferences.
-- `tagging-controls.js`, `group-dials.js`, `tag-bounds.js`, `tag-create-drafts.js`:
-  current group activation, rules, optional bounds and explicit tag creation.
+- `tagging-controls.js`, `group-dials.js`, `confidence-levels.js`, `tag-create-drafts.js`:
+  current group activation, rules, confidence cutoff and explicit tag creation.
 - `info-popovers.js`, `language-manuals.js`, `native-notice-language.mjs`: contextual
   help, current user/code guides and native notice localization.
 - `activity.html`: independent Activity renderer, retention/group drafts and paging.

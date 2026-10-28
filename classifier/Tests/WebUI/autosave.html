@@ -25,7 +25,7 @@ window.testState = {
   presentationRevision:1,workspace:'browserBridge',issue:null,notices:{},
   settings:{research:{enabled:false,llmProviderProfileID:'',llmModelIdentifier:'',status:{}}},
   backup:{unlocked:true,hasOwnerCode:true,enabled:false,savedEnabled:false,directory:'/tmp/test-backups'},
-  assets:{classifierTypes:[{id:'group-1',name:'Test group',treeID:'tree-1',applicablePlatformIDs:['youtube'],tagging:{speedQuality:'balanced',strictness:3,houseRules:''},researchEnabled:null,order:0}],
+  assets:{classifierTypes:[{id:'group-1',name:'Test group',treeID:'tree-1',applicablePlatformIDs:['youtube'],tagging:{minimumConfidence:4,houseRules:''},researchEnabled:null,order:0}],
     trees:[{id:'tree-1',name:'Test tags',nodes:[{id:'tag-1',name:'Science',description:'',parentID:null,positionX:24,positionY:24}]}],datasets:[],
     collectionPlatforms:[{id:'youtube',name:'YouTube',supportsLocalModel:true}],bindings:[],
     knowledge:{creators:[],terms:[{id:'term-1',subject:'Physics',meaning:'Original meaning',writtenByUser:true}],knownCreators:[]},
@@ -50,7 +50,7 @@ window.webkit={messageHandlers:{vaultClassifier:{postMessage(message){
     case 'acknowledgeChatGPTPlan':testState.assets.chatGPT.needsWelcome=false;break;
     case 'confirmDeleteClassifierType':testState.assets.classifierTypes=testState.assets.classifierTypes.filter(t=>t.id!==data.typeID);break;
     case 'configureClassifierType':type.name=data.name.trim();break;
-    case 'saveClassifierTypeTagging':type.tagging={strictness:Number(data.strictness),houseRules:data.houseRules||'',minimumTagsOverride:data.minimumTagsOverride===''||data.minimumTagsOverride==null?null:Number(data.minimumTagsOverride),maximumTagsOverride:data.maximumTagsOverride===''||data.maximumTagsOverride==null?null:Number(data.maximumTagsOverride)};break;
+    case 'saveClassifierTypeTagging':type.tagging={minimumConfidence:Number(data.minimumConfidence),houseRules:data.houseRules||''};break;
     case 'saveClassifierTypeResearch':type.researchEnabled=data.researchMode==='inherit'?null:data.researchMode==='on';break;
     case 'saveResearchSettings':Object.assign(testState.settings.research,data);break;
     case 'updateTag':Object.assign(testState.assets.trees[0].nodes[0],data);break;
@@ -131,24 +131,24 @@ window.runAutosaveTests=async()=>{
   ackDelay=0;
   const local='[data-form-id="classifier-tagging-form-group-1"] ';
   input(local+'[data-field="houseRules"]','Keep my vocabulary');
-  const strict=q(local+'[data-field="strictness"][value="4"]');strict.checked=true;strict.dispatchEvent(new Event('change',{bubbles:true}));
-  expect(commands.at(-1).action==='saveClassifierTypeTagging' && commands.at(-1).data.houseRules==='Keep my vocabulary','dial saves immediately with the current house-rule draft');
-  await poll(()=>testState.assets.classifierTypes[0].tagging.strictness===4);
-  testState.assets.classifierTypes.push({id:'group-2',name:'Other group',treeID:'tree-1',applicablePlatformIDs:['reddit'],tagging:{speedQuality:'best',strictness:1,houseRules:'Other rules'},researchEnabled:null,order:1});pushSnapshot();
+  const confidence=q(local+'[data-field="minimumConfidence"]');confidence.value='5';confidence.dispatchEvent(new Event('change',{bubbles:true}));
+  expect(commands.at(-1).action==='saveClassifierTypeTagging' && commands.at(-1).data.houseRules==='Keep my vocabulary','confidence saves immediately with the current house-rule draft');
+  await poll(()=>testState.assets.classifierTypes[0].tagging.minimumConfidence===5);
+  testState.assets.classifierTypes.push({id:'group-2',name:'Other group',treeID:'tree-1',applicablePlatformIDs:['reddit'],tagging:{minimumConfidence:4,houseRules:'Other rules'},researchEnabled:null,order:1});pushSnapshot();
   q('[data-action="selectType"][data-type-id="group-2"]').click();
   q('[data-expand="type-more:group-2"] summary').click();
-  const other=q('[data-form-id="classifier-tagging-form-group-2"] [data-field="strictness"][value="2"]');
-  other.checked=true;other.dispatchEvent(new Event('change',{bubbles:true}));
-  await poll(()=>testState.assets.classifierTypes[1].tagging.strictness===2);
-  expect(testState.assets.classifierTypes[0].tagging.houseRules==='Keep my vocabulary' && testState.assets.classifierTypes[1].tagging.strictness===2, 'editing another group changes only its own dial and preserves both groups rules');
+  const other=q('[data-form-id="classifier-tagging-form-group-2"] [data-field="minimumConfidence"]');
+  other.value='2';other.dispatchEvent(new Event('change',{bubbles:true}));
+  await poll(()=>testState.assets.classifierTypes[1].tagging.minimumConfidence===2);
+  expect(testState.assets.classifierTypes[0].tagging.houseRules==='Keep my vocabulary' && testState.assets.classifierTypes[1].tagging.minimumConfidence===2, 'editing another group changes only its own confidence and preserves both groups rules');
   q('[data-action="selectType"][data-type-id="group-1"]').click();
   testState.assets.classifierTypes.pop();pushSnapshot();
 
   q(more+' summary').click();await new Promise(r=>setTimeout(r,0));pushSnapshot();
-  expect(!q(more).open && q(more+' summary').textContent.includes('follow Strict') && q(more+' summary').getClientRects().length,'advanced More stays collapsed across snapshots while core settings remain visible');
+  expect(!q(more).open && q(more+' summary').getClientRects().length,'advanced More stays collapsed across snapshots while core settings remain visible');
   q(more+' summary').click();await new Promise(r=>setTimeout(r,0));
   q('[data-action="openUtilityPanel"]').click();
-  expect(!q('[data-form-id="utility-llm-form"]') && !q('.utility-settings-modal [data-field="strictness"]'), 'Settings contains no global dial controls');
+  expect(!q('[data-form-id="utility-llm-form"]') && !q('.utility-settings-modal [data-field="minimumConfidence"]'), 'Settings contains no global confidence controls');
   expect(!q('.utility-research-section, .utility-dictionary-section, [data-expand="classifier-services"]'), 'retired services have no Settings controls');
   expect(!q('[data-field="packageUpdateMode"]') && !q('[data-language-selection]'), 'app settings have no separate Classifier update or language policy');
   expect(!q('[data-action^="save"]'),'settings have no Save buttons');
@@ -197,9 +197,9 @@ window.runAutosaveTests=async()=>{
   scope.activeElement.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true,cancelable:true,composed:true}));
   expect(q('#fixture-settings').hidden && scope.activeElement===q('[data-action="openUtilityPanel"]'),'Escape closes settings and returns focus');
   testState.issue=null;pushSnapshot();
-  const dialForm=q('[data-form-id="classifier-tagging-form-group-1"]');
-  expect(dialForm.querySelectorAll('[data-field="strictness"]').length===5, 'each group contains all strictness positions');
-  expect(!dialForm.querySelector('[data-field="speedQuality"]'), 'Local model tiers are absent');
+  const confidenceForm=q('[data-form-id="classifier-tagging-form-group-1"]');
+  expect(confidenceForm.querySelectorAll('[data-field="minimumConfidence"] option').length===5, 'each group contains all five confidence levels');
+  expect(!confidenceForm.querySelector('[data-field="speedQuality"]'), 'Local model tiers are absent');
   testState.trash=[{id:'retired-trash',name:'Deleted group',kind:'classifierType'}];pushSnapshot();
   expect(!q('[data-expand="trash"], [data-action="selectTrash"], [data-action="restoreTrashedEntry"]'),'obsolete Trash snapshots produce no controls');
   const deletion='[data-action="confirmDeleteClassifierType"][data-type-id="group-1"]';

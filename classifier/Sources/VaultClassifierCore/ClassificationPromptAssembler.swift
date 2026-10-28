@@ -149,7 +149,11 @@ public enum ClassificationPromptAssembler {
         var lines: [String] = []
         lines.append("You are a tagging model. Classify a single video into tags from the taxonomy below, using the video's evidence.")
         lines.append("Rules:")
-        lines.append("- Pick the tag(s) that best match the video's topic; prefer specific child tags over broad parents. Infer the topic from the title even when it is short — a named subject (a person, product, game, show, place, event, or theme) is usually enough to place it, so do not decline just because the title is brief.")
+        if minimumConfidence != nil {
+            lines.append("- Evaluate each tag against the available evidence, including short titles. Prefer specific child tags when supported. Do not infer a topic from a vague title solely to produce a tag.")
+        } else {
+            lines.append("- Pick the tag(s) that best match the video's topic; prefer specific child tags over broad parents. Infer the topic from the title even when it is short — a named subject (a person, product, game, show, place, event, or theme) is usually enough to place it, so do not decline just because the title is brief.")
+        }
         if let minimumConfidence {
             lines.append("- Consider each taxonomy tag independently. Include every tag with evidence strength at least \(minimumConfidence) out of 5. There is no target number of tags; zero is valid when none meet that standard.")
             lines.append("- Grade evidence for each selected tag: 5 = explicit or decisive support; 4 = strong support; 3 = reasonable inference; 2 = weak clue; 1 = guess. These are evidence grades, not probabilities or popularity. Do not inflate a grade to satisfy the minimum.")
