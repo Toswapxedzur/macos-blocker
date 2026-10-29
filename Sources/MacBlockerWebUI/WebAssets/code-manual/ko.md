@@ -165,12 +165,12 @@ Snooze 또는 패널 버튼으로 시작되는 5분 일시 중지 중에만 Stea
 }
 ```
 
+
 ## 실행 중인 규칙의 AI 호출
 
 각 custom group은 **AI calls**에서 connection/model과 reasoning effort를 선택합니다. Mac과 브라우저 규칙은 같은 API를 사용합니다. 브라우저 요청은 Mac Vault 연결이 필요하며 provider 자격 증명은 그곳에 유지됩니다. 연결된 그룹은 선택 및 선택적 일일 요청 한도를 공유합니다. 빈 값은 그룹 한도 없음이며 계정 제한은 계속 적용됩니다. 한도는 UTC 날짜 기준이고 재시작 후 유지되며 실패를 포함한 제출 시도를 셉니다. Link는 기존 사용량을 합치고 Unlink 후에도 이전 사용량을 유지합니다.
 
-`v.ai({ prompt, input? })`는 즉시 request ID를 반환합니다. 규칙 등록이 아니라 handler 안에서 호출하세요. `input`은 모든 JSON 값이며 prompt/input 각각 최대20KB입니다. 응답은 `ai` 이벤트 `{requestId, ok, text, citations,
-error}`로 옵니다. 성공 텍스트 최대48KB, citation은 `{url,title}`입니다. 웹 검색 답변을 표시할 때 출처 링크를 보이고 클릭 가능하게 유지하세요. 검색은 모델에 항상 제공됩니다. 앱의 고정 deadline은 없고 동시성은 제한됩니다. provider 대체나 자동 재시도는 없습니다. 응답은 데이터이며 JavaScript로 실행되지 않습니다. 기존 동작을 할지는 규칙이 결정합니다.
+`v.ai({ prompt, input? })`는 즉시 request ID를 반환합니다. 규칙 등록이 아니라 handler 안에서 호출하세요. `input`은 모든 JSON 값이며 prompt/input 각각 최대20KB입니다. 응답은 `ai` 이벤트 `{requestId, ok, text, citations, error}`로 옵니다. 성공 텍스트 최대48KB, citation은 `{url,title}`입니다. 웹 검색 답변을 표시할 때 출처 링크를 보이고 클릭 가능하게 유지하세요. 검색은 모델에 항상 제공됩니다. 앱의 고정 deadline은 없고 동시성은 제한됩니다. provider 대체나 자동 재시도는 없습니다. 응답은 데이터이며 JavaScript로 실행되지 않습니다. 기존 동작을 할지는 규칙이 결정합니다.
 
 `ask` 버튼과 `note` 필드가 있는 패널의 예:
 

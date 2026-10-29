@@ -165,12 +165,12 @@ Steam se bloquea excepto durante una pausa de cinco minutos activada mediante Po
 }
 ```
 
+
 ## Llamadas de IA desde una regla activa
 
 Cada grupo personalizado elige conexión/modelo y nivel de razonamiento en **AI calls**. Las reglas de Mac y navegador usan la misma API; las solicitudes del navegador requieren Mac Vault conectado y las credenciales del proveedor permanecen allí. Los grupos vinculados comparten la selección y un límite diario opcional. En blanco significa sin límite de grupo; siguen aplicándose los límites de la cuenta. El límite usa el día UTC, persiste tras reinicio y cuenta intentos enviados, incluidos fallos. Vincular combina el uso previo; desvincular conserva el uso anterior.
 
-`v.ai({ prompt, input? })` devuelve un ID de solicitud inmediatamente. Llámala dentro de un handler, no al registrar la regla. `input` acepta cualquier JSON; cada prompt/input está limitado a20KB. Las respuestas llegan como eventos `ai`: `{requestId, ok, text, citations,
-error}`. Texto exitoso hasta48KB; citas `{url,title}`. Conserva enlaces de fuente visibles y clicables al mostrar respuestas de búsqueda web. La búsqueda siempre está disponible para el modelo. No hay plazo fijo de la app; la concurrencia es limitada; no hay alternativa de proveedor ni reintento automático. Las respuestas son datos, nunca JavaScript ejecutable; la regla decide qué acciones existentes tomar.
+`v.ai({ prompt, input? })` devuelve un ID de solicitud inmediatamente. Llámala dentro de un handler, no al registrar la regla. `input` acepta cualquier JSON; cada prompt/input está limitado a20KB. Las respuestas llegan como eventos `ai`: `{requestId, ok, text, citations, error}`. Texto exitoso hasta48KB; citas `{url,title}`. Conserva enlaces de fuente visibles y clicables al mostrar respuestas de búsqueda web. La búsqueda siempre está disponible para el modelo. No hay plazo fijo de la app; la concurrencia es limitada; no hay alternativa de proveedor ni reintento automático. Las respuestas son datos, nunca JavaScript ejecutable; la regla decide qué acciones existentes tomar.
 
 Para un panel con un botón `ask` y un campo `note`:
 

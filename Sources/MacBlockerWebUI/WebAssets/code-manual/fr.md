@@ -165,12 +165,12 @@ Steam est bloqué sauf pendant une pause de cinq minutes déclenchée par Pause 
 }
 ```
 
+
 ## Appels IA depuis une règle active
 
 Chaque groupe personnalisé choisit une connexion/un modèle et un effort de raisonnement dans **AI calls**. Mac et navigateur utilisent la même API ; les requêtes navigateur nécessitent Mac Vault connecté et les identifiants du fournisseur y restent. Les groupes liés partagent le choix et une limite quotidienne facultative. Vide signifie aucune limite de groupe ; les limites du compte s’appliquent. La limite suit le jour UTC, persiste après redémarrage et compte toutes les tentatives soumises, y compris échouées. Le lien combine l’usage existant ; la dissociation conserve l’usage antérieur.
 
-`v.ai({ prompt, input? })` renvoie immédiatement un identifiant de requête. Appelez-la dans un handler, pas lors de l’enregistrement de la règle. `input` accepte toute valeur JSON ; chaque prompt/input est limité à20KB. Les réponses arrivent comme événements `ai` : `{requestId, ok, text, citations,
-error}`. Texte réussi jusqu’à48KB ; citations `{url,title}`. Gardez les liens de sources visibles et cliquables pour les réponses de recherche Web. La recherche est toujours disponible au modèle. Aucun délai fixe de l’app ; concurrence bornée ; aucun repli de fournisseur ni nouvel essai automatique. Les réponses sont des données, jamais exécutées comme JavaScript ; la règle décide des actions existantes.
+`v.ai({ prompt, input? })` renvoie immédiatement un identifiant de requête. Appelez-la dans un handler, pas lors de l’enregistrement de la règle. `input` accepte toute valeur JSON ; chaque prompt/input est limité à20KB. Les réponses arrivent comme événements `ai` : `{requestId, ok, text, citations, error}`. Texte réussi jusqu’à48KB ; citations `{url,title}`. Gardez les liens de sources visibles et cliquables pour les réponses de recherche Web. La recherche est toujours disponible au modèle. Aucun délai fixe de l’app ; concurrence bornée ; aucun repli de fournisseur ni nouvel essai automatique. Les réponses sont des données, jamais exécutées comme JavaScript ; la règle décide des actions existantes.
 
 Pour un panneau avec un bouton `ask` et un champ `note` :
 

@@ -165,12 +165,12 @@ Steam wordt geblokkeerd, behalve tijdens een pauze van vijf minuten gestart door
 }
 ```
 
+
 ## AI-aanroepen vanuit een actieve regel
 
 Elke custom group kiest onder **AI calls** een verbinding/model en reasoning effort. Mac- en browserregels gebruiken dezelfde API; browserverzoeken vereisen een verbonden Mac Vault en providergegevens blijven daar. Gekoppelde groepen delen de keuze en een optionele dagelijkse limiet. Leeg betekent geen groepslimiet; accountlimieten blijven gelden. De limiet gebruikt UTC-dagen, blijft na herstart bestaan en telt ingediende pogingen, ook mislukte. Link combineert bestaand gebruik; unlink behoudt eerder gebruik.
 
-`v.ai({ prompt, input? })` retourneert direct een request-ID. Roep dit binnen een handler aan, niet bij registratie. `input` mag elke JSON-waarde zijn; prompt en input zijn elk maximaal20KB. Antwoorden komen als `ai`-events: `{requestId, ok, text, citations,
-error}`. Succesvolle tekst maximaal48KB; citaties `{url,title}`. Behoud zichtbare, klikbare bronlinks bij antwoorden op basis van web search. Search is altijd beschikbaar voor het model. Geen vaste app-deadline; concurrency is begrensd; geen provider-fallback of automatische retry. Antwoorden zijn gegevens, geen uitvoerbare JavaScript; de regel beslist welke bestaande acties worden uitgevoerd.
+`v.ai({ prompt, input? })` retourneert direct een request-ID. Roep dit binnen een handler aan, niet bij registratie. `input` mag elke JSON-waarde zijn; prompt en input zijn elk maximaal20KB. Antwoorden komen als `ai`-events: `{requestId, ok, text, citations, error}`. Succesvolle tekst maximaal48KB; citaties `{url,title}`. Behoud zichtbare, klikbare bronlinks bij antwoorden op basis van web search. Search is altijd beschikbaar voor het model. Geen vaste app-deadline; concurrency is begrensd; geen provider-fallback of automatische retry. Antwoorden zijn gegevens, geen uitvoerbare JavaScript; de regel beslist welke bestaande acties worden uitgevoerd.
 
 Voor een paneel met een `ask`-knop en een `note`-veld:
 

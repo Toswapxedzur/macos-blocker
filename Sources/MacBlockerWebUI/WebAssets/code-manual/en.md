@@ -196,8 +196,7 @@ including failures. Linking combines existing usage; unlinking retains prior usa
 
 `v.ai({ prompt, input? })` returns a request ID immediately. Call it inside a handler,
 not while registering the rule. `input` may be any JSON value; each prompt/input is
-limited to20KB. Replies arrive as `ai` events: `{requestId, ok, text, citations,
-error}`. Success text is at most48KB; citations are `{url,title}`. Preserve visible,
+limited to20KB. Replies arrive as `ai` events: `{requestId, ok, text, citations, error}`. Success text is at most48KB; citations are `{url,title}`. Preserve visible,
 clickable source links when displaying answers based on web search. Search is always
 available to the model. Generation requests have no fixed app deadline and retain bounded concurrency;
 there is no provider fallback or automatic retry. Responses are data, never executed
