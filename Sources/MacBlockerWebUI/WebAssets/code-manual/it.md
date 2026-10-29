@@ -59,7 +59,7 @@ Gli oggetti con nome sopravvivono a Run e al riavvio nel campo riservato `v.stat
 
 Le altre chiamate restituiscono `undefined`. Gli identificatori delle app sono identificatori di bundle (per esempio `com.valvesoftware.steam`), disponibili negli eventi. Block/Quit possono agire su app Apple e interi browser. Ignorano l’identificatore di bundle di Mac Vault e i suoi helper, incluse altre app che condividono la stessa identità, oltre agli ID vuoti. IDs/state dei panel appartengono al gruppo, non al nome visualizzato.
 
-## Events
+## Eventi
 
 La notazione del payload descrive i tipi, non è codice eseguibile. `?` indica fields facoltativi.
 
@@ -82,7 +82,7 @@ App = { appId: string, name: string }
 - `snooze` indica che è stato premuto il pulsante Snooze del gruppo. Non applica una pausa da solo.
 - Le risposte file sono inviate al gruppo richiedente. Abbina `requestId`, controlla `ok` e imposta una scadenza con ticks: le risposte possono perdersi se la regola viene ricaricata o disabilitata. I request ID possono ripetersi dopo Run; le richieste in sospeso non sono lavoro durevole.
 
-## Panels
+## Pannelli
 
 ```text
 spec = { title?: string, description?: string, controls?: Control[],
@@ -111,7 +111,7 @@ Panel events: gli input normali inviano `change`; i pulsanti solo `click`; PIN i
 
 Limiti testo: title/label 240; description/text 1000; HTML 20000; placeholder 500; input text 2000; altre value strings 512; option value/label 256. L'eccesso viene troncato.
 
-## Files
+## File
 
 `op`: `"read"`, `"write"`, `"append"`, `"list"`, `"exists"`. Richiede **Cartella regole personalizzate** in Settings e la relativa autorizzazione.
 
@@ -126,6 +126,22 @@ file.data = { requestId: string, op: string, path: string, ok: boolean,
 ```
 
 I result fields inutilizzati sono null; il successo ha error vuoto. Gli errori includono invalid-path, unsupported-file-type, folder unavailable, missing file e file-too-large. Considera error una stringa, non un enum esaustivo fisso. Non esiste una transaction API; serializza le operazioni read-modify-write per ogni path.
+
+## Record del gruppo
+
+`v.store(request)` avvia un’operazione asincrona di record JSON dentro un handler. I record sono privati del gruppo, persistono dopo Run e riavvio, e vengono eliminati con il gruppo. I gruppi collegati hanno store distinti. La regola sceglie chiavi, valori, versioni, invalidazione cache e priorità dei feedback. Le regole Mac e browser usano la stessa API, ma ogni app/browser ha uno store separato.
+
+| Request | Result |
+|---|---|
+| `{op:"get", key}` | `record` o `null` |
+| `{op:"put", key, value, version?, ifRevision?}` | `record` salvato |
+| `{op:"delete", key, ifRevision?}` | `record: null` |
+| `{op:"list", prefix?, after?, limit?}` | `entries` ordinate e `next` |
+| `{op:"clear", prefix?}` | conteggio `deleted` |
+
+Ogni record è `{value, revision, version, updatedAt}`. `revision` opaco cambia con una scrittura reale; `version` è metadato scelto dal chiamante. `list` restituisce header senza valori; usa `get` per leggerne uno e `after: next` per la pagina successiva. Senza `ifRevision`, put/delete sono incondizionati; `null` richiede chiave assente e una stringa revision una corrispondenza esatta. Un conflitto restituisce `ok:false`, `error:"store-conflict"` e il `record` attuale, evitando che una risposta automatica tardiva sovrascriva il feedback utente. `v.context.revision` è un marker opaco della configurazione che la regola può includere nella propria versione; il framework non impone politiche cache.
+
+Limiti: chiave 1–2048 caratteri, version ≤128, valore JSON ≤64KiB, profondità ≤32, 10000 chiavi per gruppo e documento completo16MiB. `list` restituisce al massimo100 header e96KiB per pagina. Massimo32 richieste per gruppo e128 avvii al secondo complessivi; overload segnala un `store-busy` per gruppo al secondo e scarta le altre richieste. Errori di storage restituiscono `ok:false`; un documento futuro o malformato viene conservato e segnala `store-unavailable`. Nessun retry o eviction automatici; usa ticks per le deadline.
 
 ## Limiti
 
@@ -147,22 +163,6 @@ Steam è bloccato tranne durante una pausa di cinque minuti attivata da Snooze o
   on("tick", ev => v.block("com.valvesoftware.steam", ev.now >= v.state.pauseUntil));
 }
 ```
-
-## Record del gruppo
-
-`v.store(request)` avvia un’operazione asincrona di record JSON dentro un handler. I record sono privati del gruppo, persistono dopo Run e riavvio, e vengono eliminati con il gruppo. I gruppi collegati hanno store distinti. La regola sceglie chiavi, valori, versioni, invalidazione cache e priorità dei feedback. Le regole Mac e browser usano la stessa API, ma ogni app/browser ha uno store separato.
-
-| Request | Result |
-|---|---|
-| `{op:"get", key}` | `record` o `null` |
-| `{op:"put", key, value, version?, ifRevision?}` | `record` salvato |
-| `{op:"delete", key, ifRevision?}` | `record: null` |
-| `{op:"list", prefix?, after?, limit?}` | `entries` ordinate e `next` |
-| `{op:"clear", prefix?}` | conteggio `deleted` |
-
-Ogni record è `{value, revision, version, updatedAt}`. `revision` opaco cambia con una scrittura reale; `version` è metadato scelto dal chiamante. `list` restituisce header senza valori; usa `get` per leggerne uno e `after: next` per la pagina successiva. Senza `ifRevision`, put/delete sono incondizionati; `null` richiede chiave assente e una stringa revision una corrispondenza esatta. Un conflitto restituisce `ok:false`, `error:"store-conflict"` e il `record` attuale, evitando che una risposta automatica tardiva sovrascriva il feedback utente. `v.context.revision` è un marker opaco della configurazione che la regola può includere nella propria versione; il framework non impone politiche cache.
-
-Limiti: chiave 1–2048 caratteri, version ≤128, valore JSON ≤64KiB, profondità ≤32, 10000 chiavi per gruppo e documento completo16MiB. `list` restituisce al massimo100 header e96KiB per pagina. Massimo32 richieste per gruppo e128 avvii al secondo complessivi; overload segnala un `store-busy` per gruppo al secondo e scarta le altre richieste. Errori di storage restituiscono `ok:false`; un documento futuro o malformato viene conservato e segnala `store-unavailable`. Nessun retry o eviction automatici; usa ticks per le deadline.
 
 ## Chiamate IA da una regola in esecuzione
 

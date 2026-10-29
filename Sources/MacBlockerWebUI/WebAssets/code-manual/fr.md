@@ -127,6 +127,22 @@ file.data = { requestId: string, op: string, path: string, ok: boolean,
 
 Les champs de résultat inutilisés sont null ; la réussite a une erreur vide. Les échecs incluent chemin invalide, type non pris en charge, dossier indisponible, fichier manquant et fichier trop grand. Traitez error comme une chaîne, pas comme une énumération exhaustive fixe. Aucune API de transaction ; sérialisez les opérations lecture-modification-écriture par chemin.
 
+## Enregistrements du groupe
+
+`v.store(request)` lance une opération asynchrone d’enregistrement JSON dans un handler. Les enregistrements sont privés au groupe, persistent après Run et redémarrage, et sont supprimés avec le groupe. Les groupes liés ont des enregistrements séparés. La règle choisit clés, valeurs, versions, invalidation du cache et priorité des retours. Mac et navigateur utilisent la même API, mais chaque app/navigateur a son stockage.
+
+| Requête | Résultat |
+|---|---|
+| `{op:"get", key}` | `record` ou `null` |
+| `{op:"put", key, value, version?, ifRevision?}` | `record` enregistré |
+| `{op:"delete", key, ifRevision?}` | `record: null` |
+| `{op:"list", prefix?, after?, limit?}` | `entries` triées et `next` |
+| `{op:"clear", prefix?}` | nombre `deleted` |
+
+Chaque enregistrement contient `{value, revision, version, updatedAt}`. `revision` est opaque et change lors d’une vraie écriture ; `version` est une métadonnée de l’appelant. `list` renvoie les en-têtes sans valeurs ; `get` lit un enregistrement et `after: next` demande la page suivante. Sans `ifRevision`, put/delete sont inconditionnels ; `null` exige une clé absente, une chaîne exige une correspondance exacte. En cas de conflit, retour `ok:false`, `error:"store-conflict"` et `record` courant. Cela évite qu’une réponse automatique tardive remplace un retour utilisateur. `v.context.revision` est un marqueur opaque de configuration que la règle peut inclure à sa version ; le framework n’impose pas de politique de cache.
+
+Limites : clé 1–2048 caractères, version ≤128, valeur JSON ≤64KiB, profondeur ≤32, 10000 clés par groupe et document entier de16MiB. `list` renvoie au plus100 en-têtes et96KiB par page. Maximum32 requêtes par groupe et128 démarrages par seconde au total ; en surcharge, une erreur `store-busy` par groupe/seconde puis les suivantes sont abandonnées. Les erreurs de stockage renvoient `ok:false` ; un document futur ou mal formé est conservé et signale `store-unavailable`. Pas de nouvel essai ni éviction automatiques ; utiliser ticks pour les délais.
+
 ## Limites
 
 Par événement et groupe : 256 actions en file, 200 appels de journal, 64 émissions ; le surplus est abandonné. Par règle : 1000 gestionnaires, 24 panneaux ; chaque liste de commandes contient 32 entrées et chaque choix 64 options ; le surplus est ignoré/tronqué. Les chaînes d’émission s’arrêtent après 16 générations. Limite d’état sérialisé : 65536 octets UTF-8. Gardez l’enregistrement et l’ensemble des gestionnaires de chaque événement sous 1 seconde ; les dépassements répétés ou un délai strict dépassé arrêtent la règle jusqu’à Exécuter. Le journal conserve 200 entrées par groupe. Les délais/réponses sont fournis au mieux, sans garantie de temps réel.
@@ -147,22 +163,6 @@ Steam est bloqué sauf pendant une pause de cinq minutes déclenchée par Pause 
   on("tick", ev => v.block("com.valvesoftware.steam", ev.now >= v.state.pauseUntil));
 }
 ```
-
-## Enregistrements du groupe
-
-`v.store(request)` lance une opération asynchrone d’enregistrement JSON dans un handler. Les enregistrements sont privés au groupe, persistent après Run et redémarrage, et sont supprimés avec le groupe. Les groupes liés ont des enregistrements séparés. La règle choisit clés, valeurs, versions, invalidation du cache et priorité des retours. Mac et navigateur utilisent la même API, mais chaque app/navigateur a son stockage.
-
-| Requête | Résultat |
-|---|---|
-| `{op:"get", key}` | `record` ou `null` |
-| `{op:"put", key, value, version?, ifRevision?}` | `record` enregistré |
-| `{op:"delete", key, ifRevision?}` | `record: null` |
-| `{op:"list", prefix?, after?, limit?}` | `entries` triées et `next` |
-| `{op:"clear", prefix?}` | nombre `deleted` |
-
-Chaque enregistrement contient `{value, revision, version, updatedAt}`. `revision` est opaque et change lors d’une vraie écriture ; `version` est une métadonnée de l’appelant. `list` renvoie les en-têtes sans valeurs ; `get` lit un enregistrement et `after: next` demande la page suivante. Sans `ifRevision`, put/delete sont inconditionnels ; `null` exige une clé absente, une chaîne exige une correspondance exacte. En cas de conflit, retour `ok:false`, `error:"store-conflict"` et `record` courant. Cela évite qu’une réponse automatique tardive remplace un retour utilisateur. `v.context.revision` est un marqueur opaque de configuration que la règle peut inclure à sa version ; le framework n’impose pas de politique de cache.
-
-Limites : clé 1–2048 caractères, version ≤128, valeur JSON ≤64KiB, profondeur ≤32, 10000 clés par groupe et document entier de16MiB. `list` renvoie au plus100 en-têtes et96KiB par page. Maximum32 requêtes par groupe et128 démarrages par seconde au total ; en surcharge, une erreur `store-busy` par groupe/seconde puis les suivantes sont abandonnées. Les erreurs de stockage renvoient `ok:false` ; un document futur ou mal formé est conservé et signale `store-unavailable`. Pas de nouvel essai ni éviction automatiques ; utiliser ticks pour les délais.
 
 ## Appels IA depuis une règle active
 

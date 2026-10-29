@@ -59,7 +59,7 @@ Linked custom groups में समान object IDs एक स्थानी
 
 अन्य calls `undefined` लौटाती हैं। App IDs bundle identifiers हैं (जैसे `com.valvesoftware.steam`), जो events में मिलते हैं। Block/Quit Apple apps और पूरे browsers को target कर सकते हैं। वे Mac Vault के bundle identifier और उसके helpers, उसी identity वाले किसी भी अन्य app, और खाली IDs को अनदेखा करते हैं। Panel IDs/state एक group के हैं, उसके display name के नहीं।
 
-## Events
+## इवेंट
 
 नीचे payload notation type बताता है, executable code नहीं। `?` वैकल्पिक fields दर्शाता है।
 
@@ -82,7 +82,7 @@ App = { appId: string, name: string }
 - `snooze` का अर्थ group का Snooze button दबाया गया। यह स्वयं pause नहीं करता।
 - File replies अनुरोध करने वाले group को मिलते हैं। `requestId` मिलाएँ, `ok` जाँचें और ticks से deadline तय करें: rule reload/disable होने पर replies खो सकते हैं। Run के बाद request IDs दोहर सकते हैं; pending requests स्थायी काम नहीं।
 
-## Panels
+## पैनल
 
 ```text
 spec = { title?: string, description?: string, controls?: Control[],
@@ -111,7 +111,7 @@ Panel events: सामान्य input `change`; buttons केवल `click`
 
 Text limit: title/label 240; description/text 1000; HTML 20000; placeholder 500; input text 2000; अन्य value strings 512; option value/label 256। अतिरिक्त truncate होता है।
 
-## Files
+## फ़ाइलें
 
 `op`: `"read"`, `"write"`, `"append"`, `"list"`, `"exists"`। Settings में **Custom-rule folder** और उसकी permission चाहिए।
 
@@ -126,6 +126,22 @@ file.data = { requestId: string, op: string, path: string, ok: boolean,
 ```
 
 Unused result fields null; success में error खाली। Failures: invalid-path, unsupported-file-type, folder unavailable, missing file, file-too-large। error string है, कोई fixed exhaustive enum नहीं। Transaction API नहीं; प्रति path read-modify-write serialize करें।
+
+## समूह रिकॉर्ड
+
+`v.store(request)` handler के अंदर asynchronous JSON record operation शुरू करता है। Record group के निजी होते हैं, Run/restart के बाद बने रहते हैं और group हटाने पर हटते हैं। Linked groups का store अलग है। Keys, values, version, cache invalidation और feedback precedence rule चुनता है। Mac और browser rules वही API उपयोग करते हैं, पर हर app/browser store अलग है।
+
+| Request | Result |
+|---|---|
+| `{op:"get", key}` | `record` या `null` |
+| `{op:"put", key, value, version?, ifRevision?}` | saved `record` |
+| `{op:"delete", key, ifRevision?}` | `record: null` |
+| `{op:"list", prefix?, after?, limit?}` | sorted `entries` और `next` |
+| `{op:"clear", prefix?}` | `deleted` count |
+
+Record `{value, revision, version, updatedAt}` होता है। वास्तविक write पर opaque `revision` बदलता है; `version` caller metadata है। `list` बिना values के headers लौटाता है; एक record पढ़ने को `get`, अगले page के लिए `after: next` उपयोग करें। `ifRevision` के बिना put/delete unconditional है; `null` के लिए key अनुपस्थित होनी चाहिए, revision string के लिए exact match। Mismatch में `ok:false`, `error:"store-conflict"` और current `record` लौटते हैं। इससे देर से आया automatic reply user feedback को overwrite नहीं करता। `v.context.revision` opaque rule-configuration marker है, जिसे rule अपने version में शामिल कर सकता है; framework cache नीति नहीं लगाता।
+
+सीमाएं: key 1–2048 अक्षर, version ≤128, JSON value ≤64KiB, depth ≤32, प्रति group 10000 keys और पूरे record document की सीमा16MiB। `list` प्रत्येक page में अधिकतम100 headers और96KiB देता है। प्रति group 32 requests और कुल128 request starts/second; overload में प्रति group/second एक `store-busy` error आता है और बाकी requests drop होते हैं। Storage errors में `ok:false`; future/malformed document सुरक्षित रहता है और `store-unavailable` मिलता है। Auto retry/eviction नहीं। Deadline के लिए ticks उपयोग करें।
 
 ## सीमाएँ
 
@@ -148,23 +164,7 @@ Snooze या उसके panel button से शुरू पाँच मि�
 }
 ```
 
-## Group records
-
-`v.store(request)` handler के अंदर asynchronous JSON record operation शुरू करता है। Record group के निजी होते हैं, Run/restart के बाद बने रहते हैं और group हटाने पर हटते हैं। Linked groups का store अलग है। Keys, values, version, cache invalidation और feedback precedence rule चुनता है। Mac और browser rules वही API उपयोग करते हैं, पर हर app/browser store अलग है।
-
-| Request | Result |
-|---|---|
-| `{op:"get", key}` | `record` या `null` |
-| `{op:"put", key, value, version?, ifRevision?}` | saved `record` |
-| `{op:"delete", key, ifRevision?}` | `record: null` |
-| `{op:"list", prefix?, after?, limit?}` | sorted `entries` और `next` |
-| `{op:"clear", prefix?}` | `deleted` count |
-
-Record `{value, revision, version, updatedAt}` होता है। वास्तविक write पर opaque `revision` बदलता है; `version` caller metadata है। `list` बिना values के headers लौटाता है; एक record पढ़ने को `get`, अगले page के लिए `after: next` उपयोग करें। `ifRevision` के बिना put/delete unconditional है; `null` के लिए key अनुपस्थित होनी चाहिए, revision string के लिए exact match। Mismatch में `ok:false`, `error:"store-conflict"` और current `record` लौटते हैं। इससे देर से आया automatic reply user feedback को overwrite नहीं करता। `v.context.revision` opaque rule-configuration marker है, जिसे rule अपने version में शामिल कर सकता है; framework cache नीति नहीं लगाता।
-
-सीमाएं: key 1–2048 अक्षर, version ≤128, JSON value ≤64KiB, depth ≤32, प्रति group 10000 keys और पूरे record document की सीमा16MiB। `list` प्रत्येक page में अधिकतम100 headers और96KiB देता है। प्रति group 32 requests और कुल128 request starts/second; overload में प्रति group/second एक `store-busy` error आता है और बाकी requests drop होते हैं। Storage errors में `ok:false`; future/malformed document सुरक्षित रहता है और `store-unavailable` मिलता है। Auto retry/eviction नहीं। Deadline के लिए ticks उपयोग करें।
-
-## AI calls from a running rule
+## चलते नियम से AI कॉल
 
 हर custom group **AI calls** में एक connection/model और reasoning effort चुनता है। Mac/browser rules वही API इस्तेमाल करते हैं; browser request के लिए Mac Vault connected होना चाहिए और provider credentials वहीं रहते हैं। Linked groups चयन और optional daily request cap साझा करते हैं। Blank का अर्थ group cap नहीं, account limits फिर भी लागू। Cap UTC day से जुड़ा है, restart के बाद रहता है और failures सहित submitted attempts गिनता है। Link पुराने usage को जोड़ता है; unlink पुराना usage रखता है।
 

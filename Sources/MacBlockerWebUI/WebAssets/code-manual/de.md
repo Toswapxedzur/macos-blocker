@@ -82,7 +82,7 @@ App = { appId: string, name: string }
 - `snooze` bedeutet, dass die Aufschieben-Schaltfläche der Gruppe gedrückt wurde. Es löst selbst keine Pause aus.
 - Dateiantworten richten sich an die anfragende Gruppe. Ordnen Sie sie über `requestId` zu, prüfen Sie `ok` und setzen Sie mit Ticks eine Frist: Antworten können beim Neuladen/Deaktivieren der Regel verloren gehen. Anfrage-IDs können sich nach Ausführen wiederholen; ausstehende Anfragen sind keine dauerhaft gespeicherten Aufgaben.
 
-## Panels
+## Bedienfelder
 
 ```text
 spec = { title?: string, description?: string, controls?: Control[],
@@ -127,6 +127,22 @@ file.data = { requestId: string, op: string, path: string, ok: boolean,
 
 Ungenutzte Ergebnisfelder sind null; bei Erfolg ist error leer. Fehler umfassen invalid-path, unsupported-file-type, nicht verfügbaren Ordner, fehlende Datei und file-too-large. Behandeln Sie error als Zeichenfolge, nicht als festes vollständiges Enum. Keine Transaktions-API; führen Sie Lesen-Ändern-Schreiben-Vorgänge pro Pfad nacheinander aus.
 
+## Gruppen-Datensätze
+
+`v.store(request)` startet in einem Handler einen asynchronen JSON-Datensatzvorgang. Datensätze sind gruppenintern, bleiben über Run und Neustart erhalten und werden mit der Gruppe gelöscht. Verknüpfte Gruppen haben getrennte Datensätze. Schlüssel, Werte, Versionen, Cache-Invalidierung und Vorrang von Rückmeldungen bestimmt die Regel. Mac- und Browserregeln verwenden dieselbe API, aber getrennte Speicher je App/Browser.
+
+| Anfrage | Ergebnis |
+|---|---|
+| `{op:"get", key}` | `record` oder `null` |
+| `{op:"put", key, value, version?, ifRevision?}` | gespeicherter `record` |
+| `{op:"delete", key, ifRevision?}` | `record: null` |
+| `{op:"list", prefix?, after?, limit?}` | sortierte `entries` und `next` |
+| `{op:"clear", prefix?}` | Anzahl `deleted` |
+
+Ein Datensatz hat `{value, revision, version, updatedAt}`. Die opake `revision` ändert sich bei echtem Schreiben; `version` sind vom Aufrufer verwaltete Metadaten. `list` gibt Header ohne Werte zurück; `get` liest einen Datensatz, `after: next` lädt die nächste Seite. Ohne `ifRevision` sind put/delete unbedingt; `null` verlangt einen fehlenden Schlüssel, eine Revisionszeichenfolge exakte Übereinstimmung. Bei Konflikt kommen `ok:false`, `error:"store-conflict"` und der aktuelle `record` zurück. So überschreibt eine verspätete automatische Antwort keine Benutzerrückmeldung. `v.context.revision` ist eine opake Konfigurationsmarke, die eine Regel in ihre Version aufnehmen kann. Das Framework gibt keine Cache-Regel vor.
+
+Grenzen: Schlüssel 1–2048 Zeichen, Version ≤128, JSON-Wert ≤64KiB, Tiefe ≤32, 10000 Schlüssel je Gruppe, gesamtes Dokument 16MiB. `list` höchstens100 Header und96KiB je Seite. Maximal32 Anfragen je Gruppe und128 Starts pro Sekunde insgesamt; Überlast meldet einmal pro Gruppe/Sekunde `store-busy` und verwirft weitere Anfragen. Speicherfehler liefern `ok:false`; zukünftige/fehlerhafte Dokumente bleiben erhalten und melden `store-unavailable`. Keine automatische Wiederholung oder Bereinigung; Fristen mit ticks setzen.
+
 ## Grenzen
 
 Pro Ereignis und Gruppe: 256 eingereihte Aktionen, 200 Log-Aufrufe, 64 Emits; Überschreitungen werden verworfen. Pro Regel: 1000 Handler, 24 Panels; jede Steuerelementliste hat 32 Einträge und jede Auswahl 64 Optionen; Überschreitungen werden ignoriert/abgeschnitten. Emit-Ketten stoppen nach 16 Generationen. Limit des serialisierten Zustands: 65536 UTF-8-Bytes. Halten Sie die Registrierung und die kombinierten Handler jedes Ereignisses unter 1 Sekunde; wiederholte Überschreitungen oder ein harter Timeout stoppen die Regel bis zum Ausführen. Das Log behält 200 Einträge pro Gruppe. Zeitsteuerung/Antworten erfolgen nach bestem Bemühen, ohne Echtzeitgarantie.
@@ -147,22 +163,6 @@ Steam wird blockiert, außer während einer fünfminütigen Pause, ausgelöst du
   on("tick", ev => v.block("com.valvesoftware.steam", ev.now >= v.state.pauseUntil));
 }
 ```
-
-## Gruppen-Datensätze
-
-`v.store(request)` startet in einem Handler einen asynchronen JSON-Datensatzvorgang. Datensätze sind gruppenintern, bleiben über Run und Neustart erhalten und werden mit der Gruppe gelöscht. Verknüpfte Gruppen haben getrennte Datensätze. Schlüssel, Werte, Versionen, Cache-Invalidierung und Vorrang von Rückmeldungen bestimmt die Regel. Mac- und Browserregeln verwenden dieselbe API, aber getrennte Speicher je App/Browser.
-
-| Anfrage | Ergebnis |
-|---|---|
-| `{op:"get", key}` | `record` oder `null` |
-| `{op:"put", key, value, version?, ifRevision?}` | gespeicherter `record` |
-| `{op:"delete", key, ifRevision?}` | `record: null` |
-| `{op:"list", prefix?, after?, limit?}` | sortierte `entries` und `next` |
-| `{op:"clear", prefix?}` | Anzahl `deleted` |
-
-Ein Datensatz hat `{value, revision, version, updatedAt}`. Die opake `revision` ändert sich bei echtem Schreiben; `version` sind vom Aufrufer verwaltete Metadaten. `list` gibt Header ohne Werte zurück; `get` liest einen Datensatz, `after: next` lädt die nächste Seite. Ohne `ifRevision` sind put/delete unbedingt; `null` verlangt einen fehlenden Schlüssel, eine Revisionszeichenfolge exakte Übereinstimmung. Bei Konflikt kommen `ok:false`, `error:"store-conflict"` und der aktuelle `record` zurück. So überschreibt eine verspätete automatische Antwort keine Benutzerrückmeldung. `v.context.revision` ist eine opake Konfigurationsmarke, die eine Regel in ihre Version aufnehmen kann. Das Framework gibt keine Cache-Regel vor.
-
-Grenzen: Schlüssel 1–2048 Zeichen, Version ≤128, JSON-Wert ≤64KiB, Tiefe ≤32, 10000 Schlüssel je Gruppe, gesamtes Dokument 16MiB. `list` höchstens100 Header und96KiB je Seite. Maximal32 Anfragen je Gruppe und128 Starts pro Sekunde insgesamt; Überlast meldet einmal pro Gruppe/Sekunde `store-busy` und verwirft weitere Anfragen. Speicherfehler liefern `ok:false`; zukünftige/fehlerhafte Dokumente bleiben erhalten und melden `store-unavailable`. Keine automatische Wiederholung oder Bereinigung; Fristen mit ticks setzen.
 
 ## KI-Aufrufe aus einer laufenden Regel
 

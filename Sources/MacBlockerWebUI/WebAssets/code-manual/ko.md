@@ -127,6 +127,22 @@ file.data = { requestId: string, op: string, path: string, ok: boolean,
 
 사용하지 않은 결과 필드는 null이며 성공 시 error는 빈 값입니다. 실패에는 invalid-path, unsupported-file-type, 폴더 사용 불가, 파일 없음, file-too-large가 포함됩니다. error는 고정된 전체 enum이 아니라 문자열입니다. 트랜잭션 API가 없으므로 경로별 read-modify-write를 직렬화하세요.
 
+## 그룹 레코드
+
+`v.store(request)`는 handler 안에서 비동기 JSON 레코드 작업을 시작합니다. 레코드는 그룹 전용이며 Run 및 재시작 후에도 유지되고 그룹을 삭제하면 제거됩니다. 연결된 그룹은 별도 store를 사용합니다. 키, 값, 버전, 캐시 무효화, 피드백 우선순위는 규칙이 결정합니다. Mac과 브라우저 규칙은 같은 API를 쓰지만 앱/브라우저별 저장소는 분리됩니다.
+
+| Request | Result |
+|---|---|
+| `{op:"get", key}` | `record` 또는 `null` |
+| `{op:"put", key, value, version?, ifRevision?}` | 저장된 `record` |
+| `{op:"delete", key, ifRevision?}` | `record: null` |
+| `{op:"list", prefix?, after?, limit?}` | 정렬된 `entries`와 `next` |
+| `{op:"clear", prefix?}` | `deleted` 개수 |
+
+레코드는 `{value, revision, version, updatedAt}`입니다. 불투명한 `revision`은 실제 쓰기 시 바뀌며 `version`은 호출자가 관리하는 메타데이터입니다. `list`는 값 없는 헤더를 돌려줍니다. 하나를 읽으려면 `get`, 다음 페이지는 `after: next`를 사용하세요. `ifRevision` 생략 시 put/delete는 무조건 실행됩니다. `null`은 키가 없어야 하고 revision 문자열은 정확히 일치해야 합니다. 불일치 시 `ok:false`, `error:"store-conflict"`, 현재 `record`가 반환됩니다. 지연된 자동 응답이 사용자 피드백을 덮어쓰지 않게 합니다. `v.context.revision`은 규칙 버전에 포함할 수 있는 불투명한 설정 마커입니다. 프레임워크는 캐시 정책을 강제하지 않습니다.
+
+제한: 키 1–2048자, version ≤128, JSON 값 ≤64KiB, depth ≤32, 그룹당 10000개 키, 전체 문서16MiB. `list`는 페이지당 최대100개 헤더와96KiB를 반환합니다. 그룹당 최대32개 요청, 전체 초당128개 시작입니다. 과부하 시 그룹별 초당 하나의 `store-busy` 오류를 알리고 나머지는 버립니다. 저장 오류는 `ok:false`를 반환합니다. 미래 형식/손상 문서는 보존하고 `store-unavailable`을 알립니다. 자동 재시도나 제거는 없습니다. deadline에는 ticks를 사용하세요.
+
 ## 한도
 
 이벤트/그룹별로 대기 작업 256개, log 호출 200회, emit 64회이며 초과분은 버립니다. 규칙별로 핸들러 1000개, 패널 24개이며 각 컨트롤 목록은 항목 32개, 각 선택 컨트롤은 선택지 64개까지 지원합니다. 초과분은 무시하거나 잘라냅니다. emit 체인은 16세대 후 중단됩니다. 직렬화된 상태 제한은 UTF-8 65536바이트입니다. 등록과 각 이벤트의 전체 핸들러 실행 시간을 1초 미만으로 유지하세요. 반복 초과나 강제 시간 초과가 발생하면 Run을 누를 때까지 규칙을 중지합니다. Log는 그룹별로 항목 200개를 보관합니다. 시간 처리/응답은 최선의 노력으로 처리되며 실시간을 보장하지 않습니다.
@@ -147,22 +163,6 @@ Snooze 또는 패널 버튼으로 시작되는 5분 일시 중지 중에만 Stea
   on("tick", ev => v.block("com.valvesoftware.steam", ev.now >= v.state.pauseUntil));
 }
 ```
-
-## 그룹 레코드
-
-`v.store(request)`는 handler 안에서 비동기 JSON 레코드 작업을 시작합니다. 레코드는 그룹 전용이며 Run 및 재시작 후에도 유지되고 그룹을 삭제하면 제거됩니다. 연결된 그룹은 별도 store를 사용합니다. 키, 값, 버전, 캐시 무효화, 피드백 우선순위는 규칙이 결정합니다. Mac과 브라우저 규칙은 같은 API를 쓰지만 앱/브라우저별 저장소는 분리됩니다.
-
-| Request | Result |
-|---|---|
-| `{op:"get", key}` | `record` 또는 `null` |
-| `{op:"put", key, value, version?, ifRevision?}` | 저장된 `record` |
-| `{op:"delete", key, ifRevision?}` | `record: null` |
-| `{op:"list", prefix?, after?, limit?}` | 정렬된 `entries`와 `next` |
-| `{op:"clear", prefix?}` | `deleted` 개수 |
-
-레코드는 `{value, revision, version, updatedAt}`입니다. 불투명한 `revision`은 실제 쓰기 시 바뀌며 `version`은 호출자가 관리하는 메타데이터입니다. `list`는 값 없는 헤더를 돌려줍니다. 하나를 읽으려면 `get`, 다음 페이지는 `after: next`를 사용하세요. `ifRevision` 생략 시 put/delete는 무조건 실행됩니다. `null`은 키가 없어야 하고 revision 문자열은 정확히 일치해야 합니다. 불일치 시 `ok:false`, `error:"store-conflict"`, 현재 `record`가 반환됩니다. 지연된 자동 응답이 사용자 피드백을 덮어쓰지 않게 합니다. `v.context.revision`은 규칙 버전에 포함할 수 있는 불투명한 설정 마커입니다. 프레임워크는 캐시 정책을 강제하지 않습니다.
-
-제한: 키 1–2048자, version ≤128, JSON 값 ≤64KiB, depth ≤32, 그룹당 10000개 키, 전체 문서16MiB. `list`는 페이지당 최대100개 헤더와96KiB를 반환합니다. 그룹당 최대32개 요청, 전체 초당128개 시작입니다. 과부하 시 그룹별 초당 하나의 `store-busy` 오류를 알리고 나머지는 버립니다. 저장 오류는 `ok:false`를 반환합니다. 미래 형식/손상 문서는 보존하고 `store-unavailable`을 알립니다. 자동 재시도나 제거는 없습니다. deadline에는 ticks를 사용하세요.
 
 ## 실행 중인 규칙의 AI 호출
 

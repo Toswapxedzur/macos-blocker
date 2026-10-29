@@ -1,139 +1,73 @@
-# Mac Vault kullanıcı kılavuzu
+# Mac Vault Kullanım Kılavuzu
 
-Mac Vault üç sayfaya sahiptir: **Vault** native uygulamaları engeller, **Classifier** desteklenen tarayıcı içeriğini etiketler, **Activity** kaydedilen kullanımı gösterir. Tarayıcı uzantısı desteklenen içeriği toplar ve tarayıcı engellemesini uygular. Kullandığınız tarayıcıya kurup bağlayın.
+Mac Vault üç sayfadan oluşur: **Vault** yerel uygulamaları engeller, **İçerik etiketleme** desteklenen tarayıcı içeriğini etiketler, **Etkinlik** kaydedilen kullanımı gösterir. Tarayıcı uzantısı desteklenen içeriği toplar ve tarayıcı engellemesini uygular. Kullandığınız tarayıcıya yükleyip bağlayın.
 
 ## Hızlı başlangıç
 
-1. **Vault** içinde bir engelleme grubu ve Apps hedefi ekleyin; ardından + seçicisiyle uygulamaları seçin.
-2. Grubun engelleme davranışını seçip etkinleştirin.
-3. **Classifier** içinde grup oluşturun, platformları seçin ve açıklamalarıyla etiket ekleyin.
-4. Yerel model katmanı seçin, gerekiyorsa indirin. Classifier ayarlarında etiketlemeyi etkinleştirin ve grubu sürdürün.
-5. Bağlı tarayıcıda desteklenen içeriği açın. Etiketlerin engellemeyi denetlemesini istiyorsanız tarayıcı engelleme grubunda etiket filtresi yapılandırın.
+1. **Vault** içinde bir grubu Engelle ve Apps hedefi ekleyin; + seçicisinden uygulamaları seçin.
+2. Engelleme davranışını seçip grubu etkinleştirin.
+3. **İçerik etiketleme** içinde grup oluşturun, platformlarını seçin ve açıklamalı etiketler ekleyin.
+4. Ayarlar → **Yapay zekâ bağlantıları** içinde ChatGPT subscription, OpenAI API, Gemini API veya Grok API seçin. Hesabı bağlayın ya da anahtarı girip modelleri alın; ardından grupta bağlantı/model seçin. Etiketlemeyi etkinleştirip grubu sürdürün.
+5. Bağlı tarayıcıda desteklenen içeriği açın. Etiketlerin engellemeyi yönetmesini istiyorsanız tarayıcı grubu Engelle içinde tag filter ayarlayın.
 
 ## Engelleme grupları
 
-**Engelleme grubu** bir engelleme ilkesi uygular. **Classifier grubu** içeriğe etiket atar; tek başına hiçbir şeyi engellemez.
+**Grubu Engelle** engelleme ilkesi uygular. **İçerik etiketleme** içeriğe etiket verir, tek başına engelleme yapmaz. Grup ekleyip adlandırın, **Uygulandığı yer** altında hedefleri seçin, engellemenin ne zaman uygulanacağını belirleyip zaman çizelgesi veya süre sınırı ayarlayın ve grubu etkinleştirin. Olağan düzenlemeler otomatik kaydedilir. Hata, değişikliğin kabul edilmediğini belirtir; alanı düzeltip yeniden deneyin. Grubu devre dışı bırakmak ayarları tutar ve ilkeyi durdurur; **Grubu sil** siler. Sıralamak için grupları sürükleyin. Aynı hedefe birden fazla grup uygulanabilir; birini snooze etmek diğerinin engelini kaldırmaz. **İhracat** yapılandırmayı kopyalar; **İçe aktarmak** onaydan sonra seçili grubun yapılandırmasını değiştirir.
 
-1. Bir engelleme grubu ekleyip ad verin.
-2. **Uygulandığı yerler** altında hedefleri seçin.
-3. Engellemenin ne zaman uygulanacağını seçin, ardından gerekirse zamanlama veya izin verilen süre belirleyin.
-4. Grubu etkinleştirin. Hedefleri grubun ilkesini paylaşır.
+### Süre sınırı ve zaman çizelgesi
 
-Rutin düzenlemeler otomatik kaydedilir. Hata, düzenlemenin kabul edilmediği anlamına gelir; alanı düzeltip yeniden deneyin. Yapılandırmasını koruyarak ilkesini durdurmak için grubu devre dışı bırakın. **Grubu sil** grubu kaldırır. Grupları yeniden sıralamak için sürükleyin. Bir hedefe birden fazla grup uygulanabilir; birini ertelemek diğer grubun engelini kaldırmaz.
-
-**Dışa aktar** grup yapılandırmasını kopyalar. **İçe aktar** onaydan sonra seçilen grubun yapılandırmasını değiştirir.
-
-### İzin verilen süre ve zamanlama
-
-**Hemen engelle**, etkin grup eşleştiğinde ve zamanlaması etkin olduğunda uygulanır. **İzin verilen süre dolduğunda engelle**, süre bitene kadar eşleşen kullanıma izin verir.
-
-İzin verilen süreyi dakika, sıfırlama aralığını saat olarak belirleyin. Kayan sınır, önceki zaman aralığındaki kullanımı sayar. Gece yarısı sıfırlama, kayan sınır için de yerel gece yarısında yeni dönem başlatır.
-
-Etkin hafta günlerini ve isteğe bağlı yerel saat aralıklarını satır başına bir tane olacak şekilde seçin; örneğin **09:00-12:00**. Aralık listesi boşsa seçilen gün boyunca uygulanır. Aralık aynı gün içinde başladığından daha geç bitmelidir; geceyi aşan zamanlamayı ayrı günlere bölün.
+**Block immediately**, etkin grup eşleştiğinde ve zaman çizelgesi etkin olduğunda engeller. **Block when the time allowance is used**, süre hakkı bitene kadar kullanıma izin verir. Hakkı dakika, sıfırlama aralığını saat olarak ayarlayın. Kayan sınır önceki pencerenin kullanımını sayar. Gece yarısı sıfırlaması, kayan sınırda da yerel gece yarısında yeni dönem başlatır. Etkin haftanın günlerini ve isteğe bağlı yerel saat aralıklarını satır başına bir tane seçin; örneğin **09:00-12:00**. Aralık listesi boşsa seçilen günlerin tamamında geçerlidir. Aralık aynı gün içinde başlangıçtan sonra bitmelidir; geceyi aşan çizelgeyi günlere bölün.
 
 ### Erteleme
 
-Ertelemeyi her engelleme grubunda yapılandırın. **Engellemeyi duraklat**, grubun ilkesini belirlenen duraklama süresince askıya alır. **İzin verilen süreye ekle**, süre sınırlı gruba kullanılabilir dakika ekler. Ertelenmiş süre olarak yalnızca tüketilen ek süre sayılır. Kullanılmayan ek süre bir sonraki sıfırlamada sona erer; kayan sınırda bir aralık sonra, ayar açıksa daha önce gece yarısında biter.
+Her grubu Engelle için snooze yapılandırın. **Pause blocking** grup ilkesini belirlenen süre boyunca askıya alır. **Add to the time allowance** süre sınırlı gruba kullanılabilir dakika ekler. Snoozed time olarak yalnızca kullanılan ek süre sayılır. Kullanılmayan ek süre sonraki sıfırlamada biter; kayan sınırda bir pencere sonra veya etkinse gece yarısında daha erken sona erer. **Activation delay**, engelleme sürerken snooze'u geciktirir. **Cooldown**, snooze bittikten sonraki isteğe kadar beklemedir. **Required confirmations** onay adımlarının sayısını belirler. Dondurulmuş grupta snooze yalnızca freeze öncesinde izin verildiyse kullanılabilir.
 
-**Etkinleştirme gecikmesi**, engelleme sürerken ertelemeyi geciktirir. **Bekleme süresi**, erteleme bittikten sonraki yeni isteğe kadar beklenecek süredir. **Gerekli onay sayısı**, onay adımlarını belirler. Erteleme, dondurulmuş grupta yalnızca dondurmadan önce izin verilmişse kullanılabilir.
+### Freeze ve PIN
 
-### Dondurma ve PIN
-
-**Dondur**, rutin düzenlemeleri engeller. Dondurmayı kaldırmak için beş saniye arayla on onay, ayarlanmış bekleme süresi ve altı haneli PIN gerekir. **Dondurmayı kaldırmadan önce bekle** 0–72 saat kabul eder; 0 ek bekleme koymaz.
-
-Grup donmuşken bekleme uzatılabilir ve yoksa PIN eklenebilir. Grup çözülene kadar bu koşullar gevşetilemez. Silme işlemi de kalan bekleme süresine ve PIN'e tabidir.
+**Freeze** olağan düzenlemeleri engeller. Dondurmayı kaldırmak için beş saniye arayla on onay, yapılandırılmış bekleme ve altı haneli PIN gerekir. **Wait before unfreezing** 0–72 saat kabul eder; 0 bekleme eklemez. Dondurulmuşken bekleme uzatılabilir ve yoksa PIN eklenebilir, fakat çözülene kadar koşullar gevşetilemez. Silme de kalan bekleme ve PIN koşullarına tabidir.
 
 ### Bağlı gruplar
 
-Diğer Vault programlarında açıkça seçilen grupları bağlamak için **Bağla** seçeneğini kullanın. Bağlı gruplar adlarını, desteklenen ilke ayarlarını, hedefleri, kullanımı ve dondurma koşullarını paylaşır. Her program desteklediği hedef türlerini düzenler ve uygular; diğer hedef kayıtları bağlı programlar için kullanılabilir kalır. Bağlantıyı kaldırmak grupları ve ayarlarını korur.
+Diğer Vault programlarında açıkça seçilen grupları bağlamak için **Bağla** kullanın. Adı, desteklenen ilke ayarlarını, hedefleri, kullanımı ve freeze koşullarını paylaşırlar. Her program yalnızca desteklediği hedef türlerini düzenler ve uygular; diğer hedefler bağlı programlarda kullanılabilir. **Bağlantıyı kaldır** bağlantıyı keser, grupları ve ayarlarını tutar. Bir üye çevrimdışıysa Mac Vault ve bağlı tarayıcıyı açıp yeniden bağlanın. Yerel kayıtlı ilke çevrimdışıyken uygulanmayı sürdürebilir.
 
-Bağlı bir üye çevrimdışıysa düzenleme kullanılamayabilir. Yeniden bağlanmak için Mac Vault ve bağlı tarayıcıyı açın. Yerel olarak kaydedilen ilke, üye çevrimdışıyken uygulanmaya devam edebilir.
+## Yardım
 
-## Yardım alma
+Açıklama için alanın yanındaki küçük **i** simgesine tıklayın; kapatmak için dışarı tıklayın veya Escape'e basın. Listeler kaydırılabilir kutulardadır; arama girdileri silmeden görünür listeyi filtreler. Özel kuralların [Code manual](../code-manual/tr.md) belgesi düzenleyiciyi, etkinleştirmeyi, günlükleri, dosya erişimini ve API'yi açıklar.
 
-Açıklamasını görmek için alanın yanındaki küçük **i** simgesine tıklayın. Kapatmak için dışına tıklayın veya Escape tuşuna basın. Listeler kaydırılabilir kutulardadır; daha fazla öğe için kutuyu kaydırın. Arama öğeleri silmeden görünür listeyi filtreler.
+## Yerel uygulamalar
 
-Özel kuralların ayrı bir [Kod kılavuzu](../code-manual/tr.md) vardır. Düzenleyiciyi, etkinleştirmeyi, günlükleri, dosya erişimini ve desteklenen API'yi açıklar.
+Apps hedefinin + seçicisinden yüklü veya çalışmakta olan uygulamaları seçin. Başka klasörden uygulama başlattıktan sonra listeyi yenilemek için seçiciyi yeniden açın. **Burada listelenenler dışındaki tüm uygulamaları engelle** listeyi izin listesine dönüştürür. Mac Vault sıradan Apple uygulamalarını ve tüm tarayıcıları engelleyebilir; Mac Vault'un kendisi ve aynı bundle identifier'ı paylaşan uygulamalar korunur. Engellenen uygulamadan çıkması istenir; **Yasaklanan uygulamanın kapatılmasını şu aralıkla yeniden iste (dakika)** yeniden isteme aralığını ayarlar. Site yönlendirmeleri, sayfa duraklatmaları ve feed gizleme tarayıcı uzantısınca uygulanır; yerel uygulama eylemi değildir.
 
-## Native uygulamalar
+## İçerik etiketleme
 
-Yüklü uygulamaları seçmek için bir Apps hedefinin + seçicisini kullanın. **Bunlar dışındaki tüm uygulamaları engelle** listeyi izin listesine dönüştürür. Sistem uygulamaları, tarayıcılar ve Vault'un kendisi native uygulama engellemesine dâhil değildir.
-
-Engellenen bir uygulamadan çıkması istenir. **Engellenen uygulamadan her (dakikada) yeniden çıkmasını iste** tekrar denemeleri denetler. Web sitesi yönlendirmeleri, sayfa duraklatmaları ve akış gizleme tarayıcı uzantısı tarafından uygulanır; native uygulama işlemlerine dönüşmez.
-
-## Classifier
-
-Classifier grubu, kendine ait etiket ağacı ve model ayarlarıyla atanan platformlardaki içeriği etiketler. Her platform bir gruba aittir. Grubu oluştururken platformları seçin; sonradan değiştirilemez. Engelleme gruplarının zamanlamaları ve filtreleri etiketlemeyi denetlemez.
-
-Classifier ayarlarında etiketlemeyi etkinleştirin. Her grubun **Etiketlemeyi duraklat / Etiketlemeyi sürdür** seçeneklerini ayrı ayrı kullanın. **Activity → Kayıt** bölümünde platform akışının kaydını kapatmak da o akışın etiketlemesini durdurur.
+Her İçerik etiketleme, atanan platformların içeriğini kendi tag tree ve model ayarlarıyla etiketler. Her platform tek gruba aittir; oluştururken seçin, sonra değiştirilemez. Engelleme gruplarının çizelge ve filtreleri etiketlemeyi denetlemez. Ayarlar'te etiketlemeyi açın; her grupta **Etiketlemeyi duraklat / Etiketlemeyi sürdür** ayrı çalışır. **Etkinlik → Kayıt** içinde platform feed kaydını kapatmak onun etiketlemesini de durdurur.
 
 ### Etiketler ve model ayarları
 
-Etiketler oluşturun, anlamlarını açıklayın ve etiket ağacında üst etiketlerini ayarlayın veya kaldırın. Dalını taşımak için etiketi sürükleyin. Açık açıklamalar modelin benzer etiketleri ayırt etmesine yardım eder. Her grubun ayarları bağımsızdır.
+Etiket oluşturun, anlamını açıklayın ve tree içinde üst etiketini ayarlayın veya kaldırın. Sürüklemek dalı taşır. Açık açıklamalar benzer etiketleri ayırmaya yardım eder. Grup ayarları bağımsızdır. **En düşük etiket güveni** her tahmin edilen etiket için gereken kanıt derecesini 1–5 belirler; yeni gruplar 4 (güçlü destek) ile başlar. Hedef etiket sayısı yoktur; öğe etiketsiz kalabilir. **Etiketleme talimatları** grup tercihlerini tutar. Olağan düzenlemeler otomatik kaydolur; her grup açıkça seçilmiş bağlantı, model ve reasoning effort kullanır.
 
-- **Hız ↔ Kalite** yerel model katmanını seçer. Büyük modeller daha çok bellek kullanır; hız ve sonuçlar Mac ile iş yüküne bağlıdır. İndirmeler gruplar arasında paylaşılır.
-- **Katı ↔ Geniş** güven gereksinimlerini ve varsayılan etiket sayılarını belirler.
-- Daha Fazla içindeki **En az etiket / En çok etiket** bu varsayılan sayıları değiştirir. Katı ↔ Geniş ek etiketler için güven düzeyini denetlemeyi sürdürür. Varsayılanı kullanmak için alanı boş bırakın.
-- **Etiketleme yönergeleri** bu gruba isteğe bağlı talimat ekler.
+### AI bağlantıları
 
-Classifier'daki rutin düzenlemeler otomatik kaydedilir. İçeriği etiketlemeden önce seçilen katman indirilmelidir. Aynı katmanı kullanan gruplar yüklü modeli paylaşır; aynı anda en fazla iki katman yüklü kalır.
+Ayarlar'te ChatGPT subscription, OpenAI API, Gemini API ve Grok API vardır. Abonelik Vault'un kendi oturum açmasını ve uygun planı kullanır. API anahtarları seçilen sağlayıcının ücretlendirme ve kullanım sınırlarına tabidir. Sağlayıcıyı seçip anahtarı ortak açılır listenin altına girin; anahtar düzenlemeleri otomatik kaydolur, alanı temizlemek anahtarı siler. **Model listesini getir** modelleri getirir; İçerik etiketleme veya custom-rule grubunda modeli ayrıca seçin.
 
-Bir içerik öğesinin etiketlerini tarayıcı uzantısında düzeltin. **+ tag** düğmesine tıklayın, Classifier'ın mevcut etiketlerini arayın ve eklemek için birini seçin. Etiketi kaldırma kontrolünü kullanın ya da etiketi seçip silmek için Delete tuşuna bir kez basın. **Etiketsiz**, etiketleme tamamlanmış ve etiket bulunmamış demektir; **Etiketleniyor**, sonucun beklemede olduğunu belirtir. Düzeltmeler gelecekteki etiketlemeyi iyileştirir.
+**Akıl yürütme düzeyi** modelin ne kadar düşüneceğini belirler: destekleniyorsa Model default, Low, Medium veya High. Yeni seçimler Medium ile başlar; eskiler kayıtlı kalır. Yüksek düzey süreyi ve token kullanımını artırabilir. Etiketleme için web search daima açıktır; ne zaman kullanılacağına model karar verir. Arama ve yapılandırılmış etiketlemeyi destekleyen model seçin. Başarısız/erişilemeyen istekler geçerli önbellek sonuçlarını korur; **Bulut sınıflandırmasını yeniden dene** seçilene kadar yeni öğeler çözümsüz kalır. Vault sağlayıcıyı otomatik değiştirmez; her bağlantının retry aralığı ve deneme sınırı ayrıdır. Tarayıcı uzantısında **+ tag** ile arayıp etiket ekleyin; kaldırma kontrolüyle ya da etiketi seçip Delete'e bir kez basarak silin. **Etiketsiz** etiketleme bitti ama etiket yok demektir; **Etiketleniyor** sonuç bekleniyor demektir. Düzeltmeniz o öğede geçerlidir.
 
-## Knowledge ve web araştırması
+## Etkinlik
 
-Knowledge, yerel etiketleme modeli için bu Mac üzerinde kısa açıklamalar saklar. **İçerik kaynakları** içerik üreticilerini, hesapları, kanalları ve toplulukları kapsar. Kaynak açıklamaları içerikleriyle birlikte kullanılır. **Bilinen terimler**, terim başlıkta geçtiğinde uygulanır.
+Etkinlik etkin uygulama kullanımını, web sitesi ziyaretlerini ve desteklenen **Görüntülenen içerik** içeriğini yerel olarak kaydeder. Grafikler kaydedilen veriyi yansıtır; boş alan Mac'in boşta olduğunu kanıtlamaz. Tarih aralığı seçin. **Zaman çizelgesi** günün saatine göre kullanım gösterir, **Toplamlar** süreleri toplar, **Zaman aralığı** her aralığın kullanımını dikey bloklarda birleştirir. **Renkler** tıklanabilir bir lejanttır; kaynağı seçerek grafikleri ona odaklayın. Bir gün seçip o günden sonraki kullanımı görün.
 
-Açıklamasıyla bir kaynak veya terim ekleyin ya da etkinleştirildiğinde araştırma isteği için açıklamayı boş bırakın. İçerik üreticisi önerileri Classifier'ın topladığı bir kaynağı bulmaya yardımcı olur. Altı veya daha fazla öğeli listelerin hemen üstünde arama bulunur: Terms ve her platformun Content sources listeleri ad, tanımlayıcı veya açıklama için ayrı aramalara sahiptir. Açıklama düzenlemek gelecekteki etiketlemeyi etkiler; kaynak bilgisini silmek araştırmanın daha sonra yeniden oluşturmasını engellemez.
+### Etkinlik grupları
 
-### Resmî ve kişisel sözlükler
-
-Resmî sözlükleri yapılandırmak için **Ayarlar → Sınıflandırıcı → Resmî sözlükler** bölümünü açın. **Bilgi** yüklü sürümleri ve bu denetimlere giden kısayolu gösterir. Vault başlangıçta güncellemeleri denetler; yüklemek için **Güncellemeleri denetle** ve indirme düğmelerini kullanın. Kendi AI API anahtarınız gerekmez.
-
-- **Terimler** yerel arama için indirilir.
-- **Önbellek + çevrimiçi arama** varsayılan olarak en fazla 10.000 içerik üreticisi kaydı tutar; sınırı değiştirebilirsiniz. Önbellekte bulunmayan içerik üreticisinin platformuyla ilişkili herkese açık kimliği sözlük hizmetine gönderilir.
-- **Tam indirme · çevrimdışı arama** indirme sonrasında içerik üreticilerini yerel olarak arar. Bu modu seçip sözlüğü indirin.
-
-Araştırma sağlayıcınızın oluşturdukları dâhil kişisel açıklamalarınız resmî açıklamalardan önceliklidir. **Sözlüğünüzü içe / dışa aktarın** bölümünden kişisel kayıtları dışa aktarabilir veya JSON dosyası içe aktarabilirsiniz; resmî kayıtlar kişisel dışa aktarıma katılmaz.
-
-**İçerik üreticisi sözlüğünü geliştirmeye yardım edin** varsayılan olarak açıktır ve ilk katkıdan önce açıklanır. Gelecekteki katkıları durdurup bekleyen istekleri iptal etmek için burada kapatın. Açıkken Vault yalnızca eksik herkese açık içerik üreticisi kimliklerinden bir örneklem ile mevcut herkese açık takipçi/abone sayılarını gönderir; başlıkları, gezinme geçmişini veya kişisel açıklamaları göndermez. Sınırlar ve saklama süresi için bilgilendirmeyi okuyun. Web araştırmasının ayrı izni ve sağlayıcı ayarları vardır.
-
-### Araştırma sağlayıcısını yapılandırma
-
-1. **Classifier ayarları → API keys & providers** bölümünü açın.
-2. Sağlayıcı türünü seçin ve **Sağlayıcı ekle** seçeneğine basın. Bu bir yapılandırma oluşturur; API key vermez.
-3. Sağlayıcıdan kimlik bilgilerini alın ve girin. Uyumlu bir özel endpoint için endpoint ve protocol alanlarını da yapılandırın.
-4. **Web araştırması** bölümünde yerleşik web search özelliği olan bir sağlayıcı seçin. Model listesini alıp araştırma modelini seçin. Listeyi daraltmak için model seçicinin aramasını kullanın; listeyi yeniden almak için yenileyin.
-5. Onay açıklamasını okuyup onayı etkinleştirin. Her grupta **Açık**, **Kapalı** veya **Classifier ayarlarını izle** seçin.
-
-**Web araştırmasını ayarla…** yapılandırma eksik olduğunda ayarlara götürür. Grup araştırma onayını atlayamaz. **Bağlantıyı test et**, test isteğinin başarılı olduğunu doğrular; tüm modellerin araştırmayı desteklediğini doğrulamaz. Sağlayıcının test modeli, seçilen araştırma modelinden ayrıdır.
-
-Keys, system Keychain'de değil, bu Mac üzerindeki uygulamanın support klasöründe saklanır. Yapılandırılan sağlayıcıya gönderilen istekleri doğrular; Vault bunları kendi sunucusuna yüklemez. Araştırma, temizlenmiş herkese açık konuları seçilen sağlayıcıya gönderir; özel içerik gövdelerini veya özetlerini göndermez. Gönderilen tam fields listesi için onay açıklamasını okuyun. Sağlayıcı kullanımı, araştırmanın yanında bağlantı testleri ve model listesi isteklerini de içerir.
-
-Araştırma durumu kuyruktaki istekleri, yeniden deneme bekleme sürelerini, hataları ve günlük token kullanımını gösterir. **Başarısız konuları şimdi yeniden dene**, uygun hataları yeniden dener; günlük sınırı veya onayı atlamaz.
-
-## Activity
-
-Activity etkin uygulama kullanımını, web sitesi ziyaretlerini ve desteklenen **Görüntülenen içerikleri** yerel olarak kaydeder. Grafikleri kaydedilen verileri yansıtır; boş bir alan Mac'ın boşta olduğunu kanıtlamaz.
-
-Tarih aralığı seçin. **Zaman çizelgesi** kullanımı gün içindeki saatinde gösterir; **Toplamlar** süreyi toplar. **Zaman aralığı** her aralıktaki kullanımı dikey bloklarda birleştirir. **Renkler** tıklanabilir bir açıklamadır: grafikleri bir kaynağa odaklamak için onu seçin. O günden itibaren kullanımı görmek için bir gün seçin.
-
-### Activity grupları
-
-Seçilen uygulamaları ve web sitelerini Usage içinde birlikte göstermek için grup oluşturun. **Birleştir**, tüm Activity'de üyeler için tek ad ve renk kullanır. Activity grubu kaydedilen kullanımı düzenler; engelleme veya Classifier grubundan ayrıdır. Activity grubu düzenleyicisini **Kaydet** düğmesiyle açıkça kaydedin.
+Seçilen uygulama ve siteleri Usage içinde birlikte göstermek için grup oluşturun. **Merge**, Etkinlik boyunca üyeler için tek ad ve renk kullanır. Etkinlik group kayıtlı kullanımı düzenler; blocking ve İçerik etiketleme gruplarından ayrıdır. Düzenleyiciyi açıkça **Save** ile kaydedin.
 
 ### Kayıt ve saklama
 
-**Kayıt** bölümünde her kategori veya kaynak için kaydı açıp kapatın. **Sakla**, geçmişin ne kadar tutulacağını belirler; **Sonsuza dek** otomatik süre sonu olmadan saklar. Tek tek seçimler daha genel ayarı izleyebilir. Kaydı kapatmak yeni kaydı durdurur; geçmişi silmek kaydedilmiş öğeleri kaldırır.
-
-Platform akışları, açık olup olmadıklarına bakmadan desteklenen platform sayfalarında gösterilen içeriği toplar. **Etiketleme destekleniyor** yazan akış, kayıt açıkken Classifier'a içerik sağlayabilir. Akış saklaması, toplanan içeriği uygulama ve web sitesi kullanımından ayrı denetler. Duraklatılmış Classifier grubu kaydı kendiliğinden kapatmaz.
+**Kayıt** içinde kategori veya tekil kaynak kaydını açıp kapatın. **Sakla** geçmişin ne kadar saklanacağını belirler; **Sonsuza dek** otomatik sona erme olmadan tutar. Tekil seçimler üst ayarı izleyebilir. Kaydı kapatmak yeni kayıtları durdurur; geçmişi silmek kayıtlı girdileri kaldırır. Platform feed'leri desteklenen sayfalarda gösterilen içeriği, açılmış olsun ya da olmasın toplar. **Etiketleme destekleniyor** feed, kayıt açıkken İçerik etiketleme'e içerik sağlayabilir. Saklama süresi uygulama ve site kullanımından ayrıdır. Tagging grubunu duraklatmak kaydı kendiliğinden kapatmaz.
 
 ## Ayarlar
 
-Settings bölümünden arayüz dilini seçin. Alan açıklamaları, seçilen arayüz dilindeki küçük Info düğmelerinden edinilebilir.
+Ayarlar'te arayüz dilini seçin. Alan açıklamaları seçilen dildeki Info düğmelerindedir.
 
 ## Kaydetme ve sorun giderme
 
-Vault ve Classifier rutin düzenlemeleri otomatik kaydedilir. Activity grubu düzenleme **Kaydet** gerektirir. Ekleme, silme, model indirme, bağlantı testi ve model listesi alma açıkça başlatılan işlemlerdir.
-
-Etiketler eksikse tarayıcı bağlantısını, genel etiketleme düğmesini, grup duraklatma durumunu, platform kaydını ve model indirmesini denetleyin. Araştırma çalışmıyorsa onayı, grup seçimini, sağlayıcı kimlik bilgilerini, araştırma modelini ve araştırma durumunu kontrol edin. Bağlı bir grup düzenlenemiyorsa programları yeniden bağlayın veya belirtildiği gibi dondurmayı kaldırın.
+Olağan Vault ve İçerik etiketleme düzenlemeleri otomatik kaydolur; Etkinlik group düzenleyicisi **Save** gerektirir. Ekleme, silme, bağlantı testleri ve model listesi getirme açık işlemlerdir. Etiketler yoksa tarayıcı bağlantısını, genel tagging anahtarını, grup duraklatmasını, platform kaydını, seçilen bağlantı/modeli ve kimlik bilgilerini kontrol edin. AI istekleri başarısızsa sağlayıcı sınırlarını ve grup Log'unu da inceleyin. Bağlı grup düzenlenemiyorsa programlarını yeniden bağlayın veya belirtildiği gibi freeze'i kaldırın.

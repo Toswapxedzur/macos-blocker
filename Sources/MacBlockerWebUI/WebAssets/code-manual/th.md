@@ -59,7 +59,7 @@ Object IDs เดียวกันใน custom groups ที่เชื่อ
 
 Calls อื่นคืน `undefined` App IDs คือ bundle identifiers (เช่น `com.valvesoftware.steam`) ที่มีให้ใน events Block/Quit สามารถกำหนดเป้าหมายเป็น Apple apps และ browsers ทั้งแอปได้ โดยจะละเว้น bundle identifier ของ Mac Vault และ helpers ของแอป รวมถึงแอปอื่นใดที่ใช้ identity เดียวกันและ IDs ว่าง Panel IDs/state เป็นของกลุ่ม ไม่ใช่ชื่อที่แสดง
 
-## Events
+## เหตุการณ์
 
 สัญกรณ์ payload ด้านล่างระบุชนิดข้อมูล ไม่ใช่โค้ดที่รันได้ `?` หมายถึง field ที่ไม่บังคับ
 
@@ -71,6 +71,9 @@ snooze: {}
 panel: { panelId: string, controlId: string, eventName: string,
          value: string, values: { [controlId: string]: string } }
 file: see Files
+record: { requestId: string, ok: boolean, op?: string, key?: string,
+          record?: Record | null, entries?: Header[], next?: string | null,
+          deleted?: number, error?: string }
 App = { appId: string, name: string }
 ```
 
@@ -79,7 +82,7 @@ App = { appId: string, name: string }
 - `snooze` หมายถึงกดปุ่ม Snooze ของกลุ่ม ไม่ได้พักอะไรด้วยตัวเอง
 - File replies ส่งให้กลุ่มที่ร้องขอ จับคู่ด้วย `requestId`, ตรวจ `ok` และตั้ง deadline ด้วย ticks: replies อาจหายถ้า reload/disable rule Request IDs อาจซ้ำหลัง Run; requests ที่ค้างไม่ใช่งานถาวร
 
-## Panels
+## แผงควบคุม
 
 ```text
 spec = { title?: string, description?: string, controls?: Control[],
@@ -108,7 +111,7 @@ Panel events: inputs ทั่วไปส่ง `change`; buttons ส่งเ�
 
 ขีดจำกัดข้อความ: title/label 240; description/text 1000; HTML 20000; placeholder 500; input text 2000; value strings อื่น 512; option value/label 256 ข้อความเกินจะถูกตัด
 
-## Files
+## ไฟล์
 
 `op`: `"read"`, `"write"`, `"append"`, `"list"`, `"exists"` ต้องเปิด **โฟลเดอร์กฎแบบกำหนดเอง** และ permission ของโฟลเดอร์ใน Settings
 
@@ -123,6 +126,22 @@ file.data = { requestId: string, op: string, path: string, ok: boolean,
 ```
 
 result fields ที่ไม่ได้ใช้เป็น null; เมื่อสำเร็จ error จะว่าง ความล้มเหลวรวมถึง invalid-path, unsupported-file-type, folder unavailable, missing file และ file-too-large ให้ถือว่า error เป็น string ไม่ใช่ enum ที่แจกแจงครบ API ไม่มี transaction; จัด read-modify-write ตามลำดับสำหรับแต่ละ path
+
+## บันทึกของกลุ่ม
+
+`v.store(request)` เริ่มการทำงานบันทึก JSON แบบ asynchronous ภายใน handler บันทึกเป็นของกลุ่มนั้น อยู่ต่อหลัง Run และ restart และถูกลบพร้อมกลุ่ม กลุ่มที่เชื่อมกันมี store แยกกัน Rule เลือก key, value, version, cache invalidation และลำดับความสำคัญของ feedback กฎ Mac และ browser ใช้ API เดียวกัน แต่ store ของแต่ละ app/browser แยกกัน
+
+| Request | Result |
+|---|---|
+| `{op:"get", key}` | `record` หรือ `null` |
+| `{op:"put", key, value, version?, ifRevision?}` | `record` ที่บันทึกแล้ว |
+| `{op:"delete", key, ifRevision?}` | `record: null` |
+| `{op:"list", prefix?, after?, limit?}` | `entries` ที่เรียงแล้วและ `next` |
+| `{op:"clear", prefix?}` | จำนวน `deleted` |
+
+แต่ละ record คือ `{value, revision, version, updatedAt}` ค่า `revision` แบบ opaque เปลี่ยนเมื่อเขียนจริง; `version` เป็น metadata ของ caller `list` คืน headers โดยไม่มี values ใช้ `get` เพื่ออ่านและ `after: next` เพื่อขอหน้าถัดไป เมื่อไม่ระบุ `ifRevision` put/delete จะไม่มีเงื่อนไข; `null` ต้องไม่มี key นั้น ส่วน revision string ต้องตรงกันพอดี หากไม่ตรงจะคืน `ok:false`, `error:"store-conflict"` และ `record` ปัจจุบัน เพื่อป้องกัน automatic reply ที่ล่าช้าเขียนทับ feedback ของผู้ใช้ `v.context.revision` เป็น configuration marker แบบ opaque ที่ rule อาจรวมใน version ของตัวเอง framework ไม่กำหนดนโยบาย cache
+
+ขีดจำกัด: key 1–2048 ตัวอักษร, version ≤128, JSON value ≤64KiB, depth ≤32, 10000 keys ต่อกลุ่ม และเอกสารรวม16MiB `list` คืนได้สูงสุด100 headers และ96KiB ต่อหน้า สูงสุด32 requests ต่อกลุ่มและ128 starts/second โดยรวม เมื่อเกินจะรายงาน `store-busy` หนึ่งครั้งต่อกลุ่มต่อวินาทีและทิ้งรายการที่เหลือ Storage error คืน `ok:false`; เอกสารอนาคตหรือผิดรูปจะถูกเก็บไว้และรายงาน `store-unavailable` ไม่มี retry หรือ eviction อัตโนมัติ ใช้ ticks กำหนด deadline
 
 ## ขีดจำกัด
 
@@ -144,3 +163,29 @@ Steam ถูกบล็อก ยกเว้นช่วงพักห้า�
   on("tick", ev => v.block("com.valvesoftware.steam", ev.now >= v.state.pauseUntil));
 }
 ```
+
+## การเรียก AI จากกฎที่กำลังทำงาน
+
+แต่ละ custom group เลือก connection/model และ reasoning effort ใน **AI calls** กฎ Mac และ browser ใช้ API เดียวกัน; browser request ต้องเชื่อม Mac Vault และ credentials ของ provider อยู่ที่นั่น กลุ่มที่เชื่อมกันแชร์ตัวเลือกและ daily cap แบบเลือกได้ ค่าว่างหมายถึงไม่จำกัดระดับกลุ่ม แต่ข้อจำกัดบัญชียังใช้ cap คิดตามวัน UTC อยู่หลัง restart และนับทุก attempt ที่ส่งรวมถึงที่ล้มเหลว Link รวม usage เดิม; unlink เก็บ usage ที่ผ่านมา
+
+`v.ai({ prompt, input? })` คืน request ID ทันที เรียกใน handler ไม่ใช่ตอนลงทะเบียน rule `input` เป็น JSON ใดก็ได้; prompt/input จำกัดอย่างละ20KB คำตอบมาใน `ai` event: `{requestId, ok, text, citations, error}` ข้อความสำเร็จไม่เกิน48KB; citations เป็น `{url,title}` เก็บลิงก์แหล่งที่มาให้มองเห็นและคลิกได้เมื่อแสดงคำตอบจาก web search Search มีให้โมเดลเสมอ ไม่มี app deadline คงที่และจำกัด concurrency; ไม่มี provider fallback หรือ auto retry คำตอบเป็นข้อมูล ไม่ถูก execute เป็น JavaScript และ rule ตัดสินใจว่าจะใช้ action เดิมใด
+
+```javascript
+(on, v) => {
+  let pending = null;
+  on("panel", ({ data }) => {
+    if (data.controlId !== "ask" || pending) return;
+    pending = v.ai({ prompt: "Summarize this text.", input: data.values?.note ?? "" });
+  });
+  on("ai", ({ data }) => {
+    if (data.requestId !== pending) return;
+    pending = null;
+    if (!data.ok) { v.log("AI request failed:", data.error); return; }
+    v.log(data.text, data.citations);
+  });
+}
+```
+
+คำขอค้างไม่เล่นซ้ำหลัง restart; Run, disable/re-enable และ delete ทิ้งคำตอบเก่า เบราว์เซอร์ที่ตัดการเชื่อมต่อแจ้ง `ai-unavailable` ข้อผิดพลาดอื่น ได้แก่ `ai-not-configured`, `ai-invalid-input`, `ai-busy`, `ai-daily-limit`, `ai-request-failed`, `ai-usage-storage-unavailable` คำขอที่ล้มเหลวไม่เขียนทับผลเดิมที่ rule เก็บไว้ ขนาด state ยังคงจำกัด64KB
+
+ค้นตัวเลือกที่ไม่มี credentials ด้วย `rule_ai_models` บน Mac หรือ `settings-rule-ai-models` ใน browser ตั้ง `ruleAI` ผ่าน set-group path เดิม ฟิลด์คือ `providerModel`, `accountID`, `reasoningEffort` (`default`, `low`, `medium`, `high`) และ `dailyRequestLimit` (null หรือ1–100000) ใช้ตัวเลือกที่คืนมา อย่าใส่ key หรือ provider URL ใน source ของ rule

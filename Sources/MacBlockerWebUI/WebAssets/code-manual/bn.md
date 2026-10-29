@@ -127,6 +127,22 @@ file.data = { requestId: string, op: string, path: string, ok: boolean,
 
 Unused result field null; success-এ error ফাঁকা। Failure-এ invalid-path, unsupported-file-type, folder unavailable, missing file, file-too-large আছে। Error string, সম্পূর্ণ নির্দিষ্ট enum নয়। Transaction API নেই; প্রতি path-এ read-modify-write ধারাবাহিক করুন।
 
+## গ্রুপ রেকর্ড
+
+`v.store(request)` handler-এর মধ্যে asynchronous JSON record operation শুরু করে। Record এই গ্রুপের ব্যক্তিগত, Run ও restart-এর পর থাকে এবং গ্রুপ মুছলে মুছে যায়; linked group-এর record আলাদা। Key, value, version, cache invalidation ও feedback precedence নিয়মই নির্ধারণ করে। Mac ও browser একই API ব্যবহার করলেও প্রতিটি app/browser store আলাদা।
+
+| Request | Result |
+|---|---|
+| `{op:"get", key}` | `record` বা `null` |
+| `{op:"put", key, value, version?, ifRevision?}` | সংরক্ষিত `record` |
+| `{op:"delete", key, ifRevision?}` | `record: null` |
+| `{op:"list", prefix?, after?, limit?}` | সাজানো `entries` ও `next` |
+| `{op:"clear", prefix?}` | `deleted` সংখ্যা |
+
+প্রতিটি record-এ `{value, revision, version, updatedAt}` থাকে। বাস্তব write হলে opaque `revision` বদলায়; `version` caller-এর metadata। `list` value ছাড়া header ফেরায়; একটি পড়তে `get`, পরের page-এ যেতে `after: next` ব্যবহার করুন। `ifRevision` বাদ দিলে put/delete unconditional; `null` মানে key অনুপস্থিত হতে হবে, revision string হলে exact match চাই। Mismatch-এ `ok:false`, `error:"store-conflict"` ও বর্তমান `record` ফেরে—এটি delayed automatic reply-কে user feedback overwrite করা থেকে আটকায়। `v.context.revision` opaque rule-configuration marker; rule চাইলে নিজের version-এ রাখতে পারে। Framework cache policy নির্ধারণ করে না।
+
+সীমা: key 1–2048 অক্ষর, version ≤128, JSON value ≤64KiB, depth ≤32, প্রতি group 10000 key, পুরো record document 16MiB। `list` প্রতি page-এ সর্বোচ্চ100 header ও96KiB দেয়। প্রতি group 32 এবং মোট প্রতি সেকেন্ডে 128 request start; overload-এ প্রতি group-এ প্রতি সেকেন্ডে একটি `store-busy` error, অতিরিক্ত request drop হয়। Storage error `ok:false`; future/malformed document সংরক্ষণ করে `store-unavailable` জানায়। Auto retry/eviction নেই; deadline-এর জন্য ticks ব্যবহার করুন।
+
 ## সীমা
 
 প্রতি event/group: 256 queued action, 200 log call, 64 emit; অতিরিক্ত বাদ। প্রতি rule: 1000 handler, 24 panel; প্রতি control list-এ 32 entry এবং choice-এ 64 option; অতিরিক্ত ignore/truncate। Emit chain 16 generation-এ থামে। Serialized state limit 65536 UTF-8 byte। Registration ও প্রতি event-এর combined handler 1 সেকেন্ডের নিচে রাখুন; বারবার limit ছাড়ালে বা hard timeout হলে Run পর্যন্ত rule থামে। প্রতি group-এ Log 200 entry রাখে। Timing/reply best-effort, real-time guarantee নয়।
@@ -147,22 +163,6 @@ Snooze বা তার panel button চালু করা পাঁচ মি�
   on("tick", ev => v.block("com.valvesoftware.steam", ev.now >= v.state.pauseUntil));
 }
 ```
-
-## গ্রুপ রেকর্ড
-
-`v.store(request)` handler-এর মধ্যে asynchronous JSON record operation শুরু করে। Record এই গ্রুপের ব্যক্তিগত, Run ও restart-এর পর থাকে এবং গ্রুপ মুছলে মুছে যায়; linked group-এর record আলাদা। Key, value, version, cache invalidation ও feedback precedence নিয়মই নির্ধারণ করে। Mac ও browser একই API ব্যবহার করলেও প্রতিটি app/browser store আলাদা।
-
-| Request | Result |
-|---|---|
-| `{op:"get", key}` | `record` বা `null` |
-| `{op:"put", key, value, version?, ifRevision?}` | সংরক্ষিত `record` |
-| `{op:"delete", key, ifRevision?}` | `record: null` |
-| `{op:"list", prefix?, after?, limit?}` | সাজানো `entries` ও `next` |
-| `{op:"clear", prefix?}` | `deleted` সংখ্যা |
-
-প্রতিটি record-এ `{value, revision, version, updatedAt}` থাকে। বাস্তব write হলে opaque `revision` বদলায়; `version` caller-এর metadata। `list` value ছাড়া header ফেরায়; একটি পড়তে `get`, পরের page-এ যেতে `after: next` ব্যবহার করুন। `ifRevision` বাদ দিলে put/delete unconditional; `null` মানে key অনুপস্থিত হতে হবে, revision string হলে exact match চাই। Mismatch-এ `ok:false`, `error:"store-conflict"` ও বর্তমান `record` ফেরে—এটি delayed automatic reply-কে user feedback overwrite করা থেকে আটকায়। `v.context.revision` opaque rule-configuration marker; rule চাইলে নিজের version-এ রাখতে পারে। Framework cache policy নির্ধারণ করে না।
-
-সীমা: key 1–2048 অক্ষর, version ≤128, JSON value ≤64KiB, depth ≤32, প্রতি group 10000 key, পুরো record document 16MiB। `list` প্রতি page-এ সর্বোচ্চ100 header ও96KiB দেয়। প্রতি group 32 এবং মোট প্রতি সেকেন্ডে 128 request start; overload-এ প্রতি group-এ প্রতি সেকেন্ডে একটি `store-busy` error, অতিরিক্ত request drop হয়। Storage error `ok:false`; future/malformed document সংরক্ষণ করে `store-unavailable` জানায়। Auto retry/eviction নেই; deadline-এর জন্য ticks ব্যবহার করুন।
 
 ## চলমান নিয়ম থেকে AI কল
 

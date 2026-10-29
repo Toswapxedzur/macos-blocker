@@ -59,7 +59,7 @@ Các ID đối tượng giống nhau trong nhóm tùy chỉnh được liên k�
 
 Các lời gọi khác trả về `undefined`. ID ứng dụng là bundle identifier (ví dụ `com.valvesoftware.steam`), có trong sự kiện. Block/Quit có thể nhắm đến ứng dụng Apple và toàn bộ trình duyệt. Chúng bỏ qua bundle identifier của Mac Vault và các ứng dụng hỗ trợ của nó, bao gồm ứng dụng khác dùng chung danh tính đó, cùng ID trống. ID/state của panel thuộc về một nhóm, không phải tên hiển thị.
 
-## Events
+## Sự kiện
 
 Ký hiệu payload bên dưới mô tả kiểu dữ liệu, không phải mã có thể chạy. `?` đánh dấu fields tùy chọn.
 
@@ -71,6 +71,9 @@ snooze: {}
 panel: { panelId: string, controlId: string, eventName: string,
          value: string, values: { [controlId: string]: string } }
 file: see Files
+record: { requestId: string, ok: boolean, op?: string, key?: string,
+          record?: Record | null, entries?: Header[], next?: string | null,
+          deleted?: number, error?: string }
 App = { appId: string, name: string }
 ```
 
@@ -79,7 +82,7 @@ App = { appId: string, name: string }
 - `snooze` nghĩa là nhấn nút Snooze của nhóm. Nó không tự tạm dừng gì.
 - File replies gửi về nhóm yêu cầu. Đối chiếu `requestId`, kiểm tra `ok` và đặt deadline bằng ticks: replies có thể mất nếu rule được tải lại/tắt. Request IDs có thể lặp sau Run; requests đang chờ không phải công việc bền vững.
 
-## Panels
+## Bảng điều khiển
 
 ```text
 spec = { title?: string, description?: string, controls?: Control[],
@@ -108,7 +111,7 @@ Panel events: input thông thường gửi `change`; buttons chỉ gửi `click`
 
 Giới hạn text: title/label 240; description/text 1000; HTML 20000; placeholder 500; input text 2000; value strings khác 512; option value/label 256. Phần vượt mức bị cắt.
 
-## Files
+## Tệp
 
 `op`: `"read"`, `"write"`, `"append"`, `"list"`, `"exists"`. Cần bật **Thư mục quy tắc tùy chỉnh** trong Settings và cấp quyền.
 
@@ -123,6 +126,22 @@ file.data = { requestId: string, op: string, path: string, ok: boolean,
 ```
 
 result fields không dùng là null; thành công có error rỗng. Lỗi gồm invalid-path, unsupported-file-type, folder unavailable, missing file và file-too-large. Xem error là string, không phải enum cố định đầy đủ. Không có transaction API; tuần tự hóa thao tác read-modify-write theo từng path.
+
+## Bản ghi nhóm
+
+`v.store(request)` bắt đầu thao tác bản ghi JSON bất đồng bộ trong handler. Bản ghi riêng tư theo nhóm, tồn tại qua Run và khởi động lại, rồi bị xóa cùng nhóm. Nhóm liên kết có store riêng. Quy tắc chọn key, value, version, cache invalidation và mức ưu tiên phản hồi. Quy tắc Mac và trình duyệt dùng cùng API nhưng mỗi app/trình duyệt có store riêng.
+
+| Request | Result |
+|---|---|
+| `{op:"get", key}` | `record` hoặc `null` |
+| `{op:"put", key, value, version?, ifRevision?}` | `record` đã lưu |
+| `{op:"delete", key, ifRevision?}` | `record: null` |
+| `{op:"list", prefix?, after?, limit?}` | `entries` đã sắp xếp và `next` |
+| `{op:"clear", prefix?}` | số `deleted` |
+
+Mỗi record là `{value, revision, version, updatedAt}`. `revision` opaque đổi khi ghi thực sự; `version` là metadata của bên gọi. `list` trả header không kèm value; dùng `get` để đọc, `after: next` để lấy trang tiếp. Bỏ `ifRevision` nghĩa là put/delete vô điều kiện; `null` yêu cầu key chưa tồn tại, chuỗi revision yêu cầu trùng khớp chính xác. Sai lệch trả `ok:false`, `error:"store-conflict"` và `record` hiện tại để phản hồi tự động đến muộn không ghi đè ý kiến người dùng. `v.context.revision` là dấu cấu hình opaque mà quy tắc có thể đưa vào version; framework không áp đặt chính sách cache.
+
+Giới hạn: key 1–2048 ký tự, version ≤128, JSON value ≤64KiB, depth ≤32, 10000 key mỗi nhóm, toàn bộ tài liệu16MiB. `list` trả tối đa100 header và96KiB mỗi trang. Tối đa32 request mỗi nhóm và128 request khởi chạy mỗi giây tổng cộng; quá tải báo một `store-busy` mỗi nhóm mỗi giây và bỏ các yêu cầu dư. Lỗi lưu trữ trả `ok:false`; tài liệu phiên bản tương lai hoặc lỗi định dạng được giữ lại và báo `store-unavailable`. Không tự retry/evict. Dùng ticks đặt deadline.
 
 ## Giới hạn
 
@@ -144,3 +163,29 @@ Steam bị chặn trừ khoảng tạm dừng năm phút được kích hoạt b
   on("tick", ev => v.block("com.valvesoftware.steam", ev.now >= v.state.pauseUntil));
 }
 ```
+
+## Lời gọi AI từ quy tắc đang chạy
+
+Mỗi custom group chọn một connection/model và reasoning effort trong **AI calls**. Quy tắc Mac và trình duyệt dùng cùng API; request trình duyệt cần Mac Vault kết nối, thông tin nhà cung cấp được giữ tại đó. Nhóm liên kết chia sẻ lựa chọn và daily cap tùy chọn. Để trống nghĩa là không giới hạn ở nhóm; giới hạn tài khoản vẫn áp dụng. Cap theo ngày UTC, tồn tại qua khởi động lại và đếm mọi lần gửi kể cả lỗi. Link cộng usage hiện có; unlink giữ usage trước đó.
+
+`v.ai({ prompt, input? })` trả request ID ngay. Gọi bên trong handler, không gọi lúc đăng ký quy tắc. `input` nhận mọi giá trị JSON; prompt/input tối đa20KB mỗi phần. Phản hồi đến trong event `ai`: `{requestId, ok, text, citations, error}`. Văn bản thành công tối đa48KB; citation `{url,title}`. Giữ liên kết nguồn hiển thị và có thể nhấp khi trình bày câu trả lời từ web search. Search luôn sẵn có cho mô hình. Không có deadline cố định của app; concurrency có giới hạn; không fallback nhà cung cấp hoặc tự retry. Phản hồi là dữ liệu, không thực thi như JavaScript; quy tắc quyết định có dùng hành động hiện có nào.
+
+```javascript
+(on, v) => {
+  let pending = null;
+  on("panel", ({ data }) => {
+    if (data.controlId !== "ask" || pending) return;
+    pending = v.ai({ prompt: "Summarize this text.", input: data.values?.note ?? "" });
+  });
+  on("ai", ({ data }) => {
+    if (data.requestId !== pending) return;
+    pending = null;
+    if (!data.ok) { v.log("AI request failed:", data.error); return; }
+    v.log(data.text, data.citations);
+  });
+}
+```
+
+Lời gọi đang chờ không chạy lại sau khởi động. Run, tắt/bật lại và xóa sẽ loại phản hồi cũ; trình duyệt mất kết nối báo `ai-unavailable`. Lỗi khác: `ai-not-configured`, `ai-invalid-input`, `ai-busy`, `ai-daily-limit`, `ai-request-failed`, `ai-usage-storage-unavailable`. Lời gọi lỗi không thay kết quả trước mà quy tắc muốn giữ. State của quy tắc vẫn giới hạn64KB.
+
+Tìm lựa chọn không cần credential bằng `rule_ai_models` trên Mac hoặc `settings-rule-ai-models` trong trình duyệt; cấu hình `ruleAI` qua đường set-group hiện có. Các trường: `providerModel`, `accountID`, `reasoningEffort` (`default`, `low`, `medium`, `high`) và `dailyRequestLimit` (null hoặc1–100000). Dùng lựa chọn được trả về; không đặt key hoặc URL nhà cung cấp trong mã nguồn quy tắc.

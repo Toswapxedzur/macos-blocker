@@ -59,7 +59,7 @@ Linked custom groups ਵਿੱਚ ਇੱਕੋ object IDs ਇੱਕ ਸਥਾਨ
 
 ਹੋਰ calls `undefined` ਵਾਪਸ ਕਰਦੀਆਂ ਹਨ। App IDs bundle identifiers ਹਨ (ਮਿਸਾਲ ਲਈ `com.valvesoftware.steam`) ਅਤੇ events ਵਿੱਚ ਮਿਲਦੇ ਹਨ। Block/Quit Apple apps ਅਤੇ ਪੂਰੇ browsers ਨੂੰ target ਕਰ ਸਕਦੇ ਹਨ। ਇਹ Mac Vault ਦੇ bundle identifier ਅਤੇ ਇਸ ਦੇ helpers, ਉਸੇ identity ਵਾਲੇ ਕਿਸੇ ਹੋਰ app, ਅਤੇ ਖਾਲੀ IDs ਨੂੰ ਅਣਡਿੱਠਾ ਕਰਦੇ ਹਨ। Panel IDs/state ਇੱਕ group ਦੇ ਹਨ, ਇਸ ਦੇ display name ਦੇ ਨਹੀਂ।
 
-## Events
+## ਇਵੈਂਟ
 
 ਹੇਠਲੀ payload notation types ਦੱਸਦੀ ਹੈ, ਚੱਲਣਯੋਗ code ਨਹੀਂ। `?` optional fields ਦਰਸਾਉਂਦਾ ਹੈ।
 
@@ -71,6 +71,9 @@ snooze: {}
 panel: { panelId: string, controlId: string, eventName: string,
          value: string, values: { [controlId: string]: string } }
 file: see Files
+record: { requestId: string, ok: boolean, op?: string, key?: string,
+          record?: Record | null, entries?: Header[], next?: string | null,
+          deleted?: number, error?: string }
 App = { appId: string, name: string }
 ```
 
@@ -79,7 +82,7 @@ App = { appId: string, name: string }
 - `snooze` ਦਾ ਮਤਲਬ group ਦਾ Snooze button ਦਬਾਇਆ ਗਿਆ। ਇਹ ਆਪਣੇ ਆਪ ਕੋਈ pause ਲਾਗੂ ਨਹੀਂ ਕਰਦਾ।
 - File replies ਬੇਨਤੀ ਕਰਨ ਵਾਲੇ group ਨੂੰ ਜਾਂਦੇ ਹਨ। `requestId` ਨਾਲ ਮਿਲਾਓ, `ok` ਜਾਂਚੋ ਅਤੇ ticks ਨਾਲ deadline ਰੱਖੋ: rule reload/disable ਹੋਣ 'ਤੇ replies ਗੁੰਮ ਹੋ ਸਕਦੇ ਹਨ। Run ਮਗਰੋਂ request IDs ਦੁਹਰਾਏ ਜਾ ਸਕਦੇ ਹਨ; pending requests ਟਿਕਾਊ ਕੰਮ ਨਹੀਂ ਹਨ।
 
-## Panels
+## ਪੈਨਲ
 
 ```text
 spec = { title?: string, description?: string, controls?: Control[],
@@ -108,7 +111,7 @@ Panel events: ਆਮ inputs `change` ਭੇਜਦੇ ਹਨ; buttons ਸਿਰ�
 
 Text limits: title/label 240; description/text 1000; HTML 20000; placeholder 500; input text 2000; ਹੋਰ value strings 512; option value/label 256। ਵਾਧੂ ਲੰਬਾਈ truncate ਹੁੰਦੀ ਹੈ।
 
-## Files
+## ਫਾਈਲਾਂ
 
 `op`: `"read"`, `"write"`, `"append"`, `"list"`, `"exists"`। Settings ਵਿੱਚ **Custom-rule folder** ਅਤੇ ਇਸ ਦੀ permission ਲੋੜੀਂਦੀ ਹੈ।
 
@@ -123,6 +126,22 @@ file.data = { requestId: string, op: string, path: string, ok: boolean,
 ```
 
 ਨਾ ਵਰਤੇ result fields null ਹੁੰਦੇ ਹਨ; ਸਫਲਤਾ ਵਿੱਚ error ਖਾਲੀ ਹੁੰਦਾ ਹੈ। ਅਸਫਲਤਾਵਾਂ ਵਿੱਚ invalid-path, unsupported-file-type, folder unavailable, missing file ਅਤੇ file-too-large ਸ਼ਾਮਲ ਹਨ। Error ਨੂੰ string ਸਮਝੋ, ਪੂਰੀ ਤਰ੍ਹਾਂ ਨਿਰਧਾਰਤ enum ਨਹੀਂ। Transaction API ਨਹੀਂ; ਹਰ path ਲਈ read-modify-write ਕਾਰਵਾਈਆਂ ਲੜੀਵਾਰ ਕਰੋ।
+
+## ਗਰੁੱਪ ਰਿਕਾਰਡ
+
+`v.store(request)` handler ਵਿੱਚ asynchronous JSON record operation ਸ਼ੁਰੂ ਕਰਦਾ ਹੈ। ਰਿਕਾਰਡ ਗਰੁੱਪ-ਨਿੱਜੀ ਹਨ, Run ਅਤੇ restart ਮਗਰੋਂ ਰਹਿੰਦੇ ਹਨ ਅਤੇ ਗਰੁੱਪ ਮਿਟਾਉਣ ਨਾਲ ਹਟਦੇ ਹਨ। Linked groups ਦੇ stores ਵੱਖਰੇ ਹਨ। Keys, values, versions, cache invalidation ਅਤੇ feedback precedence rule ਚੁਣਦਾ ਹੈ। Mac ਅਤੇ browser rules ਇੱਕੋ API ਵਰਤਦੇ ਹਨ, ਪਰ ਹਰ app/browser ਦਾ store ਵੱਖਰਾ ਹੈ।
+
+| Request | Result |
+|---|---|
+| `{op:"get", key}` | `record` ਜਾਂ `null` |
+| `{op:"put", key, value, version?, ifRevision?}` | ਸੰਭਾਲਿਆ `record` |
+| `{op:"delete", key, ifRevision?}` | `record: null` |
+| `{op:"list", prefix?, after?, limit?}` | ਕ੍ਰਮਬੱਧ `entries` ਅਤੇ `next` |
+| `{op:"clear", prefix?}` | `deleted` ਗਿਣਤੀ |
+
+ਰਿਕਾਰਡ `{value, revision, version, updatedAt}` ਹੁੰਦਾ ਹੈ। Opaque `revision` ਅਸਲ write ਉੱਤੇ ਬਦਲਦਾ ਹੈ; `version` caller metadata ਹੈ। `list` values ਬਿਨਾਂ headers ਦਿੰਦਾ ਹੈ; ਇੱਕ ਪੜ੍ਹਨ ਲਈ `get`, ਅਗਲੇ page ਲਈ `after: next` ਵਰਤੋ। `ifRevision` ਬਿਨਾਂ put/delete unconditional ਹਨ; `null` ਲਈ key ਗੈਰ-ਮੌਜੂਦ ਹੋਣੀ ਚਾਹੀਦੀ ਹੈ, revision string ਲਈ exact match। ਟਕਰਾਅ `ok:false`, `error:"store-conflict"` ਅਤੇ ਮੌਜੂਦਾ `record` ਦਿੰਦਾ ਹੈ; ਇਸ ਨਾਲ ਦੇਰ ਨਾਲ ਆਇਆ automatic reply user feedback ਨਹੀਂ ਮਿਟਾਉਂਦਾ। `v.context.revision` opaque configuration marker ਹੈ ਜਿਸਨੂੰ rule ਆਪਣੇ version ਵਿੱਚ ਜੋੜ ਸਕਦਾ ਹੈ। Framework cache policy ਨਹੀਂ ਥੋਪਦਾ।
+
+ਸੀਮਾਵਾਂ: key 1–2048 ਅੱਖਰ, version ≤128, JSON value ≤64KiB, depth ≤32, ਹਰ group ਵਿੱਚ10000 keys, ਪੂਰਾ document16MiB। `list` ਪ੍ਰਤੀ page ਵੱਧ ਤੋਂ ਵੱਧ100 headers ਅਤੇ96KiB ਦਿੰਦਾ ਹੈ। ਹਰ group ਵਾਸਤੇ32 requests ਅਤੇ ਕੁੱਲ128 starts/second। Overload ਵਿੱਚ ਹਰ group ਲਈ ਹਰ second ਇੱਕ `store-busy` error ਆਉਂਦਾ ਹੈ ਅਤੇ ਬਾਕੀ drop ਹੁੰਦੇ ਹਨ। Storage error `ok:false` ਦਿੰਦਾ ਹੈ; future/malformed document ਸੰਭਾਲ ਕੇ `store-unavailable` ਦਿੰਦਾ ਹੈ। Auto retry/eviction ਨਹੀਂ। Deadline ਲਈ ticks ਵਰਤੋ।
 
 ## ਹੱਦਾਂ
 
@@ -144,3 +163,29 @@ Steam blocked ਰਹਿੰਦਾ ਹੈ, ਸਿਵਾਏ ਪੰਜ ਮਿੰਟ�
   on("tick", ev => v.block("com.valvesoftware.steam", ev.now >= v.state.pauseUntil));
 }
 ```
+
+## ਚੱਲਦੇ ਨਿਯਮ ਤੋਂ AI calls
+
+ਹਰ custom group **AI calls** ਵਿੱਚ ਇੱਕ connection/model ਅਤੇ reasoning effort ਚੁਣਦਾ ਹੈ। Mac ਅਤੇ browser rules ਇੱਕੋ API ਵਰਤਦੇ ਹਨ; browser request ਲਈ Mac Vault connected ਹੋਣਾ ਲਾਜ਼ਮੀ ਹੈ ਅਤੇ provider credentials ਉੱਥੇ ਹੀ ਰਹਿੰਦੇ ਹਨ। Linked groups ਚੋਣ ਅਤੇ optional daily cap ਸਾਂਝੇ ਕਰਦੇ ਹਨ। ਖਾਲੀ ਦਾ ਅਰਥ group cap ਨਹੀਂ, account limits ਫਿਰ ਵੀ ਲਾਗੂ ਹਨ। Cap UTC ਦਿਨ ਅਨੁਸਾਰ, restart ਮਗਰੋਂ ਕਾਇਮ ਅਤੇ failed ਸਮੇਤ submitted attempts ਗਿਣਦਾ ਹੈ। Link ਪੁਰਾਣੀ usage ਜੋੜਦਾ ਹੈ; unlink ਪੁਰਾਣੀ usage ਰੱਖਦਾ ਹੈ।
+
+`v.ai({ prompt, input? })` ਤੁਰੰਤ request ID ਵਾਪਸ ਕਰਦਾ ਹੈ। Handler ਵਿੱਚ call ਕਰੋ, rule registration ਵੇਲੇ ਨਹੀਂ। `input` ਕੋਈ ਵੀ JSON value ਹੋ ਸਕਦੀ ਹੈ; prompt/input ਹਰ ਇੱਕ20KB ਤੱਕ। Replies `ai` event ਵਿੱਚ `{requestId, ok, text, citations, error}` ਹੁੰਦੇ ਹਨ। ਸਫਲ text ਵੱਧ ਤੋਂ ਵੱਧ48KB; citations `{url,title}`। Web-search ਜਵਾਬ ਦਿਖਾਉਣ ਵੇਲੇ source links ਦਿੱਖਣਯੋਗ ਅਤੇ clickable ਰੱਖੋ। Search model ਲਈ ਹਮੇਸ਼ਾ ਉਪਲਬਧ ਹੈ। ਨਿਰਧਾਰਤ app deadline ਨਹੀਂ, concurrency ਸੀਮਤ ਹੈ, provider fallback/automatic retry ਨਹੀਂ। Reply data ਹੈ, JavaScript ਵਜੋਂ execute ਨਹੀਂ; ਮੌਜੂਦਾ actions ਕਦੋਂ ਲੈਣੇ ਹਨ rule ਤੈਅ ਕਰਦਾ ਹੈ।
+
+```javascript
+(on, v) => {
+  let pending = null;
+  on("panel", ({ data }) => {
+    if (data.controlId !== "ask" || pending) return;
+    pending = v.ai({ prompt: "Summarize this text.", input: data.values?.note ?? "" });
+  });
+  on("ai", ({ data }) => {
+    if (data.requestId !== pending) return;
+    pending = null;
+    if (!data.ok) { v.log("AI request failed:", data.error); return; }
+    v.log(data.text, data.citations);
+  });
+}
+```
+
+Outstanding calls restart ਮਗਰੋਂ ਮੁੜ ਨਹੀਂ ਚਲਦੀਆਂ। Run, disable/re-enable ਅਤੇ delete ਪੁਰਾਣੇ replies discard ਕਰਦੇ ਹਨ; disconnected browser `ai-unavailable` ਦਿੰਦਾ ਹੈ। ਹੋਰ errors: `ai-not-configured`, `ai-invalid-input`, `ai-busy`, `ai-daily-limit`, `ai-request-failed`, `ai-usage-storage-unavailable`। Failed call rule ਵੱਲੋਂ ਰੱਖਿਆ ਪਿਛਲਾ result ਨਹੀਂ ਬਦਲਦੀ। Rule state ਦੀ ਹੱਦ64KB ਹੈ।
+
+Credential-free choices Mac `rule_ai_models` ਜਾਂ browser `settings-rule-ai-models` ਨਾਲ ਲੱਭੋ; ਮੌਜੂਦਾ set-group ਰਾਹੀਂ `ruleAI` configure ਕਰੋ। Fields: `providerModel`, `accountID`, `reasoningEffort` (`default`, `low`, `medium`, `high`), `dailyRequestLimit` (null ਜਾਂ1–100000)। ਵਾਪਸ ਮਿਲੀ choice ਵਰਤੋ; rule source ਵਿੱਚ key ਜਾਂ provider URL ਨਾ ਰੱਖੋ।

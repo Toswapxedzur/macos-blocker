@@ -127,6 +127,22 @@ file.data = { requestId: string, op: string, path: string, ok: boolean,
 
 未使用の結果フィールドはnull、成功時errorは空です。失敗にはinvalid-path、unsupported-file-type、フォルダー利用不可、ファイルなし、file-too-largeがあります。errorは固定の網羅的enumではなく文字列として扱います。トランザクションAPIはありません。pathごとにread-modify-writeを直列化してください。
 
+## グループレコード
+
+`v.store(request)` はハンドラー内で非同期の JSON レコード操作を開始します。レコードはグループ専用で、Run や再起動後も保持され、グループ削除時に削除されます。リンク済みグループのストアは別々です。キー、値、バージョン、キャッシュ無効化、フィードバックの優先順位はルールが決めます。Mac とブラウザーのルールは同じ API を使いますが、アプリ/ブラウザーごとにストアは別です。
+
+| Request | Result |
+|---|---|
+| `{op:"get", key}` | `record` または `null` |
+| `{op:"put", key, value, version?, ifRevision?}` | 保存された `record` |
+| `{op:"delete", key, ifRevision?}` | `record: null` |
+| `{op:"list", prefix?, after?, limit?}` | ソート済み `entries` と `next` |
+| `{op:"clear", prefix?}` | `deleted` 件数 |
+
+レコードは `{value, revision, version, updatedAt}` です。不透明な `revision` は実際の書き込みで変わります。`version` は呼び出し側のメタデータです。`list` は値を含まないヘッダーを返します。1件の読み出しには `get`、次ページには `after: next` を使います。`ifRevision` 省略時の put/delete は無条件です。`null` はキーが存在しないこと、revision 文字列は完全一致を条件にします。不一致は `ok:false`、`error:"store-conflict"`、現在の `record` を返します。遅延した自動応答がユーザーのフィードバックを上書きするのを防げます。`v.context.revision` はルール設定の不透明なマーカーで、ルール独自のバージョンに含められます。フレームワークはキャッシュ方針を定めません。
+
+上限: キー1～2048文字、version ≤128、JSON値 ≤64KiB、深さ≤32、グループあたり10000キー、レコード文書全体16MiB。`list` は1ページあたり最大100ヘッダー、96KiB。グループあたり32要求、全体で毎秒128開始まで。過負荷時はグループごとに毎秒1回 `store-busy` を返し、残りを破棄します。ストレージエラーは `ok:false`。将来形式または不正な文書は保持して `store-unavailable` を報告します。自動再試行/削除はありません。期限には ticks を使います。
+
 ## 上限
 
 イベント/グループごとにキュー操作256件、log呼び出し200回、emit64回。超過分は破棄されます。ルールごとにハンドラー1000個、パネル24個。各コントロールリストは32項目、各選択コントロールは64個の選択肢を持ち、超過分は無視または切り詰められます。emit連鎖は16世代で停止します。シリアライズした状態の上限は65536 UTF-8バイトです。登録と各イベントのハンドラーの合計実行時間を1秒未満にしてください。超過が繰り返された場合や強制タイムアウト時は、Runまでルールを停止します。Logはグループごとに200件を保持します。タイミングと応答はベストエフォートで、リアルタイム保証はありません。
@@ -147,22 +163,6 @@ Snoozeまたはパネルボタンで起動する5分間の一時停止中を除�
   on("tick", ev => v.block("com.valvesoftware.steam", ev.now >= v.state.pauseUntil));
 }
 ```
-
-## グループレコード
-
-`v.store(request)` はハンドラー内で非同期の JSON レコード操作を開始します。レコードはグループ専用で、Run や再起動後も保持され、グループ削除時に削除されます。リンク済みグループのストアは別々です。キー、値、バージョン、キャッシュ無効化、フィードバックの優先順位はルールが決めます。Mac とブラウザーのルールは同じ API を使いますが、アプリ/ブラウザーごとにストアは別です。
-
-| Request | Result |
-|---|---|
-| `{op:"get", key}` | `record` または `null` |
-| `{op:"put", key, value, version?, ifRevision?}` | 保存された `record` |
-| `{op:"delete", key, ifRevision?}` | `record: null` |
-| `{op:"list", prefix?, after?, limit?}` | ソート済み `entries` と `next` |
-| `{op:"clear", prefix?}` | `deleted` 件数 |
-
-レコードは `{value, revision, version, updatedAt}` です。不透明な `revision` は実際の書き込みで変わります。`version` は呼び出し側のメタデータです。`list` は値を含まないヘッダーを返します。1件の読み出しには `get`、次ページには `after: next` を使います。`ifRevision` 省略時の put/delete は無条件です。`null` はキーが存在しないこと、revision 文字列は完全一致を条件にします。不一致は `ok:false`、`error:"store-conflict"`、現在の `record` を返します。遅延した自動応答がユーザーのフィードバックを上書きするのを防げます。`v.context.revision` はルール設定の不透明なマーカーで、ルール独自のバージョンに含められます。フレームワークはキャッシュ方針を定めません。
-
-上限: キー1～2048文字、version ≤128、JSON値 ≤64KiB、深さ≤32、グループあたり10000キー、レコード文書全体16MiB。`list` は1ページあたり最大100ヘッダー、96KiB。グループあたり32要求、全体で毎秒128開始まで。過負荷時はグループごとに毎秒1回 `store-busy` を返し、残りを破棄します。ストレージエラーは `ok:false`。将来形式または不正な文書は保持して `store-unavailable` を報告します。自動再試行/削除はありません。期限には ticks を使います。
 
 ## 実行中ルールからの AI 呼び出し
 

@@ -59,7 +59,7 @@ Source: одно функциональное выражение `(on, v) => { .
 
 Остальные вызовы возвращают `undefined`. App IDs — идентификаторы пакетов (например, `com.valvesoftware.steam`), доступные в событиях. Block/Quit могут воздействовать на приложения Apple и целые браузеры. Они игнорируют идентификатор пакета Mac Vault и его помощники, включая другие приложения с той же идентичностью, а также пустые идентификаторы. Panel IDs/state принадлежат группе, а не отображаемому имени.
 
-## Events
+## События
 
 Обозначения payload ниже описывают типы и не являются исполняемым кодом. `?` отмечает необязательные fields.
 
@@ -71,6 +71,9 @@ snooze: {}
 panel: { panelId: string, controlId: string, eventName: string,
          value: string, values: { [controlId: string]: string } }
 file: see Files
+record: { requestId: string, ok: boolean, op?: string, key?: string,
+          record?: Record | null, entries?: Header[], next?: string | null,
+          deleted?: number, error?: string }
 App = { appId: string, name: string }
 ```
 
@@ -79,7 +82,7 @@ App = { appId: string, name: string }
 - `snooze` означает, что нажата кнопка Snooze группы. Само по себе это не вызывает паузу.
 - Ответы file направляются запросившей группе. Сопоставьте `requestId`, проверьте `ok` и установите deadline с ticks: ответы могут потеряться при перезагрузке/отключении правила. Request IDs могут повторяться после Run; ожидающие requests не являются долговременной работой.
 
-## Panels
+## Панели
 
 ```text
 spec = { title?: string, description?: string, controls?: Control[],
@@ -108,7 +111,7 @@ Panel events: обычные поля ввода отправляют `change`; 
 
 Ограничения текста: title/label 240; description/text 1000; HTML 20000; placeholder 500; input text 2000; другие value strings 512; option value/label 256. Превышение обрезается.
 
-## Files
+## Файлы
 
 `op`: `"read"`, `"write"`, `"append"`, `"list"`, `"exists"`. Требуется **Папка пользовательских правил** в Settings и её разрешение.
 
@@ -123,6 +126,22 @@ file.data = { requestId: string, op: string, path: string, ok: boolean,
 ```
 
 Неиспользуемые result fields равны null; при успехе error пустой. Ошибки включают invalid-path, unsupported-file-type, папка недоступна, файл отсутствует и file-too-large. Рассматривайте error как string, а не полный фиксированный enum. Transaction API нет; сериализуйте read-modify-write для каждого path.
+
+## Записи группы
+
+`v.store(request)` запускает асинхронную операцию JSON-записи внутри обработчика. Записи принадлежат группе, сохраняются после Run и перезапуска и удаляются вместе с группой. У связанных групп отдельные хранилища. Правило выбирает ключи, значения, версии, инвалидацию кеша и приоритет обратной связи. Правила Mac и браузера используют один API, но у каждого приложения/браузера свое хранилище.
+
+| Request | Result |
+|---|---|
+| `{op:"get", key}` | `record` или `null` |
+| `{op:"put", key, value, version?, ifRevision?}` | сохраненный `record` |
+| `{op:"delete", key, ifRevision?}` | `record: null` |
+| `{op:"list", prefix?, after?, limit?}` | отсортированные `entries` и `next` |
+| `{op:"clear", prefix?}` | число `deleted` |
+
+Запись имеет вид `{value, revision, version, updatedAt}`. Непрозрачная `revision` меняется при реальной записи; `version` — метаданные вызывающей стороны. `list` возвращает заголовки без значений; `get` читает запись, `after: next` запрашивает следующую страницу. Без `ifRevision` put/delete безусловны; `null` требует отсутствия ключа, строка revision — точного совпадения. Конфликт возвращает `ok:false`, `error:"store-conflict"` и текущий `record`, чтобы запоздалый автоматический ответ не перезаписал отзыв пользователя. `v.context.revision` — непрозрачный маркер конфигурации правила, который можно включить в его версию; фреймворк не задает политику кеша.
+
+Ограничения: ключ 1–2048 символов, version ≤128, JSON-значение ≤64KiB, глубина ≤32, 10000 ключей на группу, весь документ16MiB. `list` возвращает максимум100 заголовков и96KiB на страницу. До32 запросов на группу и128 запусков в секунду всего; перегрузка выдает один `store-busy` на группу в секунду и отбрасывает остальные. Ошибки хранилища возвращают `ok:false`; будущий/поврежденный документ сохраняется и сообщает `store-unavailable`. Автоматических повторов и очистки нет. Для сроков используйте ticks.
 
 ## Ограничения
 
@@ -144,3 +163,29 @@ Steam заблокирован, кроме пятиминутной паузы, 
   on("tick", ev => v.block("com.valvesoftware.steam", ev.now >= v.state.pauseUntil));
 }
 ```
+
+## Вызовы ИИ из работающего правила
+
+Каждая custom group выбирает подключение/модель и reasoning effort в **AI calls**. Правила Mac и браузера используют один API; браузерным запросам нужен подключенный Mac Vault, учетные данные поставщика остаются там. Связанные группы совместно используют выбор и необязательный дневной лимит. Пустое поле означает отсутствие лимита группы; лимиты аккаунта сохраняются. Лимит считается по UTC-дню, переживает перезапуск и учитывает отправленные попытки, включая неудачные. Link объединяет прежнее использование; unlink сохраняет его.
+
+`v.ai({ prompt, input? })` немедленно возвращает request ID. Вызывайте внутри обработчика, не при регистрации правила. `input` может быть любым JSON; prompt/input ограничены20KB каждый. Ответы приходят в событиях `ai`: `{requestId, ok, text, citations, error}`. Успешный текст до48KB; цитаты `{url,title}`. Сохраняйте видимые и кликабельные ссылки на источники в ответах веб-поиска. Поиск всегда доступен модели. Фиксированного срока приложения нет; параллелизм ограничен; нет fallback поставщика и автоматического повтора. Ответы — данные, они не исполняются как JavaScript; правило решает, какие существующие действия выполнять.
+
+```javascript
+(on, v) => {
+  let pending = null;
+  on("panel", ({ data }) => {
+    if (data.controlId !== "ask" || pending) return;
+    pending = v.ai({ prompt: "Summarize this text.", input: data.values?.note ?? "" });
+  });
+  on("ai", ({ data }) => {
+    if (data.requestId !== pending) return;
+    pending = null;
+    if (!data.ok) { v.log("AI request failed:", data.error); return; }
+    v.log(data.text, data.citations);
+  });
+}
+```
+
+Незавершенные вызовы не воспроизводятся после перезапуска. Run, отключение/повторное включение и удаление отбрасывают старые ответы; отключенный браузер сообщает `ai-unavailable`. Другие ошибки: `ai-not-configured`, `ai-invalid-input`, `ai-busy`, `ai-daily-limit`, `ai-request-failed`, `ai-usage-storage-unavailable`. Неудачные вызовы не заменяют сохраненный правилом предыдущий результат. Лимит состояния по-прежнему64KB.
+
+Варианты без учетных данных доступны через `rule_ai_models` на Mac или `settings-rule-ai-models` в браузере; настройте `ruleAI` существующим путем set-group. Поля: `providerModel`, `accountID`, `reasoningEffort` (`default`, `low`, `medium`, `high`), `dailyRequestLimit` (null или1–100000). Используйте возвращенный вариант; не помещайте ключ или URL поставщика в исходный код правила.

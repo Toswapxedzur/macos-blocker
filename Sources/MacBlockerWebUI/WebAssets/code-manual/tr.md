@@ -59,7 +59,7 @@ Adlandırılmış nesneler, ayrılmış `v.state.$vaultTime` alanında Run ve ye
 
 Diğer çağrılar `undefined` döndürür. App IDs, olaylarda bulunan paket tanımlayıcılarıdır (örneğin `com.valvesoftware.steam`). Block/Quit, Apple uygulamalarını ve tarayıcıların tamamını hedefleyebilir. Mac Vault’un paket tanımlayıcısını ve yardımcılarını, bu kimliği paylaşan diğer uygulamalar dahil olmak üzere, ve boş kimlikleri yok sayarlar. Panel IDs/state gruba aittir, görünen adına değil.
 
-## Events
+## Olaylar
 
 Aşağıdaki payload gösterimi yürütülebilir kod değil, types bilgisi verir. `?` isteğe bağlı fields alanlarını belirtir.
 
@@ -71,6 +71,9 @@ snooze: {}
 panel: { panelId: string, controlId: string, eventName: string,
          value: string, values: { [controlId: string]: string } }
 file: see Files
+record: { requestId: string, ok: boolean, op?: string, key?: string,
+          record?: Record | null, entries?: Header[], next?: string | null,
+          deleted?: number, error?: string }
 App = { appId: string, name: string }
 ```
 
@@ -79,7 +82,7 @@ App = { appId: string, name: string }
 - `snooze`, grubun Snooze düğmesine basıldığı anlamına gelir. Tek başına duraklama uygulamaz.
 - File replies isteği yapan gruba gider. `requestId` ile eşleştirin, `ok` değerini denetleyin ve ticks ile deadline belirleyin: rule yeniden yüklenirse/devre dışı bırakılırsa replies kaybolabilir. Request IDs Run sonrasında tekrarlanabilir; bekleyen requests kalıcı iş değildir.
 
-## Panels
+## Paneller
 
 ```text
 spec = { title?: string, description?: string, controls?: Control[],
@@ -108,7 +111,7 @@ Panel events: sıradan girdiler `change`; buttons yalnızca `click`; PIN autoSub
 
 Metin sınırları: title/label 240; description/text 1000; HTML 20000; placeholder 500; input text 2000; diğer value strings 512; option value/label 256. Fazlası kısaltılır.
 
-## Files
+## Dosyalar
 
 `op`: `"read"`, `"write"`, `"append"`, `"list"`, `"exists"`. Settings içinde **Özel kural klasörü** ve izin gerekir.
 
@@ -123,6 +126,22 @@ file.data = { requestId: string, op: string, path: string, ok: boolean,
 ```
 
 Kullanılmayan result fields null; başarıda error boş olur. Hatalara invalid-path, unsupported-file-type, klasör kullanılamıyor, dosya eksik ve file-too-large dahildir. error değerini sabit ve eksiksiz enum değil, string olarak ele alın. Transaction API yoktur; her path için read-modify-write işlemlerini serileştirin.
+
+## Grup kayıtları
+
+`v.store(request)` bir handler içinde asenkron JSON kayıt işlemi başlatır. Kayıtlar gruba özeldir, Run ve yeniden başlatma sonrasında kalır ve grupla silinir. Bağlı grupların store'ları ayrıdır. Key, value, version, cache invalidation ve feedback önceliğini kural belirler. Mac ve tarayıcı kuralları aynı API'yi kullanır ancak her app/tarayıcı store'u ayrıdır.
+
+| Request | Result |
+|---|---|
+| `{op:"get", key}` | `record` veya `null` |
+| `{op:"put", key, value, version?, ifRevision?}` | kaydedilen `record` |
+| `{op:"delete", key, ifRevision?}` | `record: null` |
+| `{op:"list", prefix?, after?, limit?}` | sıralı `entries` ve `next` |
+| `{op:"clear", prefix?}` | `deleted` sayısı |
+
+Her kayıt `{value, revision, version, updatedAt}` biçimindedir. Opaque `revision` gerçek yazmada değişir; `version` çağıranın metadata'sıdır. `list` değerler olmadan başlıkları döndürür; okumak için `get`, sonraki sayfa için `after: next` kullanın. `ifRevision` yoksa put/delete koşulsuzdur; `null` anahtarın bulunmamasını, revision metni tam eşleşmeyi şart koşar. Uyuşmazlık `ok:false`, `error:"store-conflict"` ve güncel `record` döndürür; geciken otomatik yanıtın kullanıcı geri bildirimini ezmesini önler. `v.context.revision` kuralın sürümüne katabileceği opaque yapılandırma işaretidir; framework cache politikası dayatmaz.
+
+Sınırlar: key 1–2048 karakter, version ≤128, JSON value ≤64KiB, depth ≤32, grup başına10000 key, tüm belge16MiB. `list` sayfa başına en çok100 başlık ve96KiB döndürür. Grup başına32 request, toplam saniyede128 başlangıç. Aşırı yükte grup başına saniyede bir `store-busy` hatası bildirilir ve fazlası atılır. Storage hatası `ok:false` döndürür; gelecekteki/bozuk belge korunup `store-unavailable` bildirilir. Otomatik retry/eviction yoktur. Deadline için ticks kullanın.
 
 ## Sınırlar
 
@@ -144,3 +163,29 @@ Steam, Snooze veya panel düğmesiyle başlatılan beş dakikalık duraklama dı
   on("tick", ev => v.block("com.valvesoftware.steam", ev.now >= v.state.pauseUntil));
 }
 ```
+
+## Çalışan kuraldan AI çağrıları
+
+Her custom group **AI calls** içinde bir connection/model ve reasoning effort seçer. Mac ve tarayıcı kuralları aynı API'yi kullanır; tarayıcı istekleri bağlı Mac Vault gerektirir ve provider kimlik bilgileri orada kalır. Bağlı gruplar seçimi ve isteğe bağlı günlük sınırı paylaşır. Boş değer grup sınırı olmadığı anlamına gelir; hesap limitleri geçerlidir. Sınır UTC gününe göre hesaplanır, restart'ta korunur ve başarısızlar dahil gönderilen denemeleri sayar. Link mevcut kullanımı birleştirir; unlink önceki kullanımı saklar.
+
+`v.ai({ prompt, input? })` hemen request ID döndürür. Kuralı kaydederken değil, handler içinde çağırın. `input` herhangi bir JSON olabilir; prompt/input ayrı ayrı20KB ile sınırlıdır. Yanıtlar `ai` event'leriyle gelir: `{requestId, ok, text, citations, error}`. Başarılı metin en çok48KB; citation `{url,title}`. Web arama yanıtlarında kaynak bağlantılarını görünür ve tıklanabilir tutun. Search modele daima açıktır. Sabit app deadline yoktur, concurrency sınırlıdır; provider fallback veya otomatik retry yoktur. Yanıtlar veridir, JavaScript olarak çalıştırılmaz; mevcut eylemleri kural seçer.
+
+```javascript
+(on, v) => {
+  let pending = null;
+  on("panel", ({ data }) => {
+    if (data.controlId !== "ask" || pending) return;
+    pending = v.ai({ prompt: "Summarize this text.", input: data.values?.note ?? "" });
+  });
+  on("ai", ({ data }) => {
+    if (data.requestId !== pending) return;
+    pending = null;
+    if (!data.ok) { v.log("AI request failed:", data.error); return; }
+    v.log(data.text, data.citations);
+  });
+}
+```
+
+Bekleyen çağrılar restart sonrasında yeniden oynatılmaz. Run, devre dışı bırakıp yeniden etkinleştirme ve silme eski yanıtları atar; bağlantısız tarayıcı `ai-unavailable` bildirir. Diğer hatalar: `ai-not-configured`, `ai-invalid-input`, `ai-busy`, `ai-daily-limit`, `ai-request-failed`, `ai-usage-storage-unavailable`. Başarısız çağrı kuralın koruduğu önceki sonucu ezmez. Kural state sınırı64KB olarak kalır.
+
+Kimlik bilgisi gerektirmeyen seçimleri Mac'te `rule_ai_models`, tarayıcıda `settings-rule-ai-models` ile keşfedin; mevcut set-group yolu üzerinden `ruleAI` yapılandırın. Alanlar: `providerModel`, `accountID`, `reasoningEffort` (`default`, `low`, `medium`, `high`) ve `dailyRequestLimit` (null veya1–100000). Dönen seçimi kullanın; kural kaynağına key ya da provider URL koymayın.

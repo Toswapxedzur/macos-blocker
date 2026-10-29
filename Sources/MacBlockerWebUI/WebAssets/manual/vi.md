@@ -1,139 +1,73 @@
 # Hướng dẫn sử dụng Mac Vault
 
-Mac Vault có ba trang: **Vault** chặn ứng dụng native, **Bộ phân loại** gắn thẻ nội dung trình duyệt được hỗ trợ và **Activity** hiển thị mức sử dụng đã ghi nhận. Tiện ích trình duyệt thu thập nội dung được hỗ trợ và áp dụng việc chặn trong trình duyệt. Cài đặt và kết nối tiện ích trong trình duyệt bạn sử dụng.
+Mac Vault có ba trang: **Vault** chặn ứng dụng native, **Gắn thẻ nội dung** gắn thẻ nội dung trình duyệt được hỗ trợ và **Hoạt động** hiển thị hoạt động đã ghi. Tiện ích mở rộng trình duyệt thu thập nội dung hỗ trợ và áp dụng chặn trong trình duyệt. Hãy cài đặt và kết nối tiện ích trong trình duyệt bạn dùng.
 
 ## Bắt đầu nhanh
 
-1. Trong **Vault**, thêm nhóm chặn và mục tiêu Apps, sau đó chọn ứng dụng bằng bộ chọn +.
-2. Chọn hành vi chặn của nhóm và bật nhóm.
-3. Trong **Bộ phân loại**, tạo nhóm, chọn nền tảng rồi thêm thẻ kèm mô tả.
-4. Chọn cấp mô hình cục bộ và tải xuống nếu cần. Bật gắn thẻ trong Cài đặt và tiếp tục nhóm.
-5. Mở nội dung được hỗ trợ trong trình duyệt đã kết nối. Cấu hình bộ lọc thẻ trong nhóm chặn của trình duyệt nếu muốn thẻ điều khiển việc chặn.
+1. Trong **Vault**, thêm nhóm chặn và mục tiêu Apps, rồi chọn ứng dụng bằng bộ chọn +.
+2. Chọn cách chặn và bật nhóm.
+3. Trong **Gắn thẻ nội dung**, tạo nhóm, chọn nền tảng và thêm thẻ kèm mô tả.
+4. Mở Cài đặt → **Kết nối AI**, chọn ChatGPT subscription, OpenAI API, Gemini API hoặc Grok API. Kết nối tài khoản hoặc nhập khóa và tải danh sách mô hình; sau đó chọn kết nối/mô hình cho nhóm. Bật tagging và tiếp tục nhóm.
+5. Mở nội dung được hỗ trợ trong trình duyệt đã kết nối. Đặt bộ lọc thẻ trong browser nhóm chặn nếu muốn thẻ điều khiển việc chặn.
 
 ## Nhóm chặn
 
-**Nhóm chặn** áp dụng chính sách chặn. **Nhóm phân loại** gắn thẻ cho nội dung; bản thân nhóm này không chặn gì.
+**Nhóm chặn** áp dụng chính sách chặn. **Gắn thẻ nội dung** gán thẻ cho nội dung, không tự chặn. Thêm và đặt tên nhóm, chọn mục tiêu tại **Áp dụng cho**, xác định thời điểm chặn rồi đặt lịch hoặc hạn mức thời gian, sau đó bật nhóm. Các sửa đổi thông thường được lưu tự động. Lỗi nghĩa là thay đổi chưa được chấp nhận; hãy sửa trường và thử lại. Tắt nhóm dừng chính sách nhưng giữ cấu hình; **Xoa nhom** xóa nhóm. Kéo để sắp xếp nhóm. Nhiều nhóm có thể áp dụng cho cùng mục tiêu; snooze một nhóm không bỏ chặn của nhóm khác. **Xuất khẩu** sao chép cấu hình; **Nhập khẩu** thay cấu hình của nhóm đã chọn sau khi xác nhận.
 
-1. Thêm một nhóm chặn và đặt tên.
-2. Chọn mục tiêu trong **Áp dụng cho**.
-3. Chọn thời điểm áp dụng chặn, rồi đặt lịch hoặc thời lượng cho phép nếu cần.
-4. Bật nhóm. Các mục tiêu của nhóm dùng chung chính sách đó.
+### Hạn mức thời gian và lịch
 
-Các chỉnh sửa thông thường được lưu tự động. Nếu có lỗi, chỉnh sửa chưa được chấp nhận; hãy sửa trường đó rồi thử lại. Tắt nhóm để ngừng chính sách nhưng giữ cấu hình. **Xóa nhóm** sẽ xóa nhóm. Kéo nhóm để sắp xếp lại. Nhiều nhóm có thể áp dụng cho cùng mục tiêu; hoãn một nhóm không gỡ chặn của nhóm khác.
+**Block immediately** chặn khi nhóm bật khớp điều kiện và lịch đang hoạt động. **Block when the time allowance is used** cho phép dùng đến khi hết hạn mức. Đặt hạn mức theo phút và chu kỳ đặt lại theo giờ. Rolling limit tính mức dùng trong cửa sổ trước đó. Đặt lại lúc nửa đêm bắt đầu chu kỳ mới theo nửa đêm địa phương, kể cả với rolling limit. Chọn các ngày trong tuần hoạt động và các khoảng giờ địa phương tùy chọn, mỗi dòng một khoảng, ví dụ **09:00-12:00**. Danh sách khoảng trống áp dụng suốt ngày đã chọn. Khoảng phải kết thúc muộn hơn lúc bắt đầu trong cùng ngày; chia lịch qua đêm thành các ngày riêng.
 
-**Xuất** sao chép cấu hình nhóm. **Nhập** thay thế cấu hình của nhóm đã chọn sau khi xác nhận.
+### Tạm hoãn
 
-### Thời lượng cho phép và lịch
+Cấu hình snooze cho từng nhóm chặn. **Pause blocking** tạm dừng chính sách trong thời lượng đã chọn. **Add to the time allowance** cộng phút có thể dùng cho nhóm giới hạn thời gian. Chỉ phần hạn mức bổ sung đã dùng mới được tính là thời gian snooze. Phần dư hết hạn khi đặt lại lần tới; với rolling limit thì sau một cửa sổ, hoặc sớm hơn vào nửa đêm nếu bật đặt lại. **Activation delay** trì hoãn snooze trong khi chặn vẫn tiếp tục. **Cooldown** là thời gian chờ sau snooze trước yêu cầu kế tiếp. **Required confirmations** đặt số bước xác nhận. Nhóm bị freeze chỉ dùng snooze nếu đã cho phép trước khi freeze.
 
-**Chặn ngay** áp dụng bất cứ khi nào nhóm đang bật khớp và lịch của nhóm có hiệu lực. **Chặn khi hết thời lượng cho phép** cho phép sử dụng nội dung khớp cho đến khi thời lượng cho phép cạn.
+### Freeze và PIN
 
-Đặt thời lượng cho phép theo phút và chu kỳ đặt lại theo giờ. Giới hạn trượt tính mức sử dụng trong khoảng thời gian ngay trước đó. Đặt lại lúc nửa đêm sẽ bắt đầu chu kỳ mới vào nửa đêm theo giờ địa phương, kể cả với giới hạn trượt.
+**Freeze** ngăn sửa đổi thông thường. Bỏ freeze cần mười lần xác nhận cách nhau năm giây, thời gian chờ đã đặt và PIN sáu chữ số. **Wait before unfreezing** nhận 0–72 giờ; 0 nghĩa là không chờ. Khi đang freeze, có thể tăng thời gian chờ và thêm PIN còn thiếu, nhưng không thể nới điều kiện trước khi bỏ freeze. Xóa nhóm cũng phải tuân theo thời gian còn lại và PIN.
 
-Chọn các ngày trong tuần cần hoạt động và các khung giờ địa phương tùy chọn, mỗi dòng một khung, chẳng hạn **09:00-12:00**. Nếu không có khung giờ, lịch áp dụng suốt các ngày đã chọn. Giờ kết thúc phải muộn hơn giờ bắt đầu trong cùng ngày; hãy tách lịch qua đêm thành các ngày riêng.
+### Nhóm liên kết
 
-### Hoãn
-
-Cấu hình hoãn trong từng nhóm chặn. **Tạm dừng chặn** đình chỉ chính sách của nhóm trong thời lượng tạm dừng. **Cộng vào thời lượng cho phép** thêm phút sử dụng được cho nhóm giới hạn thời gian. Chỉ phần thời lượng cộng thêm đã dùng mới được tính là thời gian hoãn. Thời lượng cộng thêm chưa dùng sẽ hết hạn vào lần đặt lại kế tiếp; với giới hạn trượt, hết hạn sau một cửa sổ hoặc sớm hơn vào nửa đêm nếu bật tùy chọn đó.
-
-**Độ trễ kích hoạt** hoãn yêu cầu hoãn trong khi việc chặn vẫn tiếp tục. **Thời gian chờ** là khoảng chờ sau khi hết hoãn trước lần yêu cầu tiếp theo. **Số lần xác nhận bắt buộc** đặt số bước xác nhận. Chỉ có thể hoãn nhóm đã khóa nếu cho phép trước khi khóa.
-
-### Khóa và PIN
-
-**Khóa** ngăn chỉnh sửa thông thường. Mở khóa cần mười lần xác nhận, cách nhau năm giây, cùng thời gian chờ đã đặt và PIN sáu chữ số. **Chờ trước khi mở khóa** nhận giá trị 0–72 giờ; 0 nghĩa là không chờ thêm.
-
-Khi đang khóa, có thể kéo dài thời gian chờ và thêm PIN nếu chưa có. Không thể nới lỏng các điều kiện đó cho đến khi mở khóa nhóm. Xóa nhóm cũng phải tuân thủ thời gian chờ còn lại và PIN.
-
-### Nhóm được liên kết
-
-Dùng **Liên kết** để nối các nhóm được chọn rõ ràng trong những chương trình Vault khác. Các nhóm được liên kết dùng chung tên, cài đặt chính sách được hỗ trợ, mục tiêu, mức sử dụng và điều kiện khóa. Mỗi chương trình chỉnh sửa và thực thi các loại mục tiêu mà chương trình đó hỗ trợ; các mục tiêu loại khác vẫn có sẵn cho chương trình liên kết. Hủy liên kết vẫn giữ từng nhóm và cài đặt của nhóm.
-
-Nếu thành viên được liên kết ngoại tuyến, có thể không chỉnh sửa được. Mở Mac Vault và trình duyệt đã liên kết để kết nối lại. Chính sách đã lưu cục bộ có thể tiếp tục áp dụng khi thành viên ngoại tuyến.
+Dùng **Liên kết** để nối các nhóm được chọn rõ ràng từ chương trình Vault khác. Nhóm chia sẻ tên, cài đặt chính sách được hỗ trợ, mục tiêu, mức dùng và điều kiện freeze. Mỗi chương trình sửa và thực thi loại mục tiêu mà nó hỗ trợ; mục tiêu khác vẫn có sẵn cho chương trình liên kết. **Hủy liên kết** ngắt liên kết nhưng giữ nhóm và cài đặt. Nếu thành viên ngoại tuyến, mở Mac Vault và trình duyệt liên kết để kết nối lại. Chính sách đã lưu cục bộ có thể tiếp tục áp dụng khi thành viên ngoại tuyến.
 
 ## Trợ giúp
 
-Nhấp vào chữ **i** nhỏ bên cạnh trường để xem giải thích. Nhấp bên ngoài hoặc nhấn Escape để đóng. Danh sách nằm trong các hộp có thể cuộn; cuộn trong hộp để xem thêm mục. Tìm kiếm lọc danh sách đang hiển thị mà không xóa mục nào.
-
-Quy tắc tùy chỉnh có [Hướng dẫn mã](../code-manual/vi.md) riêng. Hướng dẫn giải thích trình chỉnh sửa, kích hoạt, nhật ký, truy cập tệp và API được hỗ trợ.
+Nhấp **i** nhỏ cạnh trường để xem giải thích; nhấp bên ngoài hoặc nhấn Escape để đóng. Danh sách nằm trong hộp có thể cuộn; tìm kiếm lọc mục đang hiển thị mà không xóa. [Code manual](../code-manual/vi.md) dành cho quy tắc tùy chỉnh giải thích trình soạn thảo, kích hoạt, nhật ký, quyền truy cập tệp và API.
 
 ## Ứng dụng native
 
-Dùng bộ chọn + của mục tiêu Apps để chọn ứng dụng đã cài đặt. **Chặn mọi ứng dụng ngoại trừ các ứng dụng này** biến danh sách thành allowlist. Ứng dụng hệ thống, trình duyệt và chính Vault không bị chặn ở cấp native.
+Dùng bộ chọn + của mục tiêu Apps để chọn ứng dụng đã cài hoặc đang chạy. Mở lại để làm mới danh sách sau khi chạy ứng dụng từ thư mục khác. **Chặn tất cả ứng dụng ngoại trừ các ứng dụng được liệt kê ở đây** biến danh sách thành allowlist. Mac Vault có thể chặn ứng dụng Apple thông thường và toàn bộ trình duyệt; Mac Vault và ứng dụng dùng chung bundle identifier vẫn được bảo vệ. Ứng dụng bị chặn được yêu cầu thoát; **Yêu cầu ứng dụng bị chặn thoát lại mỗi (phút)** đặt khoảng thời gian yêu cầu lại. Chuyển hướng trang web, tạm dừng trang và ẩn feed do tiện ích mở rộng trình duyệt thực hiện, không phải hành động native.
 
-Ứng dụng bị chặn sẽ được yêu cầu thoát. **Yêu cầu ứng dụng bị chặn thoát lại sau mỗi (phút)** điều khiển việc thử lại. Chuyển hướng trang web, tạm dừng trang và ẩn feed do tiện ích trình duyệt thực thi; chúng không trở thành thao tác native của ứng dụng.
+## Gắn thẻ nội dung
 
-## Bộ phân loại
-
-Nhóm phân loại gắn thẻ nội dung từ nền tảng được giao, bằng cây thẻ và cài đặt mô hình riêng. Mỗi nền tảng thuộc về một nhóm. Chọn nền tảng khi tạo nhóm; không thể đổi sau đó. Lịch và bộ lọc của nhóm chặn không điều khiển việc gắn thẻ.
-
-Bật gắn thẻ trong Cài đặt. Dùng riêng **Tạm dừng gắn thẻ / Tiếp tục gắn thẻ** cho mỗi nhóm. Tắt ghi nhận feed nền tảng trong **Activity → Ghi nhận** cũng sẽ dừng việc gắn thẻ của feed đó.
+Mỗi nhóm gắn thẻ nội dung từ nền tảng được gán bằng cây thẻ và cài đặt mô hình riêng. Mỗi nền tảng thuộc một nhóm; chọn khi tạo vì sau đó không đổi được. Lịch và bộ lọc nhóm chặn không điều khiển tagging. Bật tagging trong Cài đặt và dùng **Tạm dừng gắn thẻ / Tiếp tục gắn thẻ** riêng từng nhóm. Tắt ghi feed nền tảng tại **Hoạt động → Ghi dữ liệu** cũng dừng tagging của feed đó.
 
 ### Thẻ và cài đặt mô hình
 
-Tạo thẻ, mô tả ý nghĩa, đặt hoặc gỡ thẻ cha trong cây thẻ. Kéo thẻ để chuyển nhánh. Mô tả rõ ràng giúp mô hình phân biệt các thẻ tương tự. Cài đặt của từng nhóm độc lập.
+Tạo thẻ, mô tả ý nghĩa, đặt hoặc bỏ thẻ cha trong cây. Kéo thẻ để di chuyển nhánh. Mô tả rõ giúp mô hình phân biệt các thẻ giống nhau. Cài đặt mỗi nhóm độc lập. **Độ tin cậy tối thiểu của thẻ** đặt mức bằng chứng cần cho từng thẻ dự đoán từ 1 đến 5; nhóm mới bắt đầu ở 4 (hỗ trợ mạnh). Không có số lượng thẻ mục tiêu; mục có thể không có thẻ. **Hướng dẫn gắn thẻ** lưu tùy chọn của nhóm. Sửa đổi thông thường tự lưu; mỗi nhóm dùng connection, model và reasoning effort đã chọn rõ ràng.
 
-- **Tốc độ ↔ Chất lượng** chọn cấp mô hình cục bộ. Mô hình lớn dùng nhiều bộ nhớ hơn; tốc độ và kết quả tùy thuộc Mac và khối lượng công việc. Các nhóm dùng chung tệp tải xuống.
-- **Nghiêm ngặt ↔ Mở rộng** đặt yêu cầu độ tin cậy và số lượng thẻ mặc định.
-- **Thẻ tối thiểu / Thẻ tối đa** trong Thêm sẽ thay các số lượng mặc định đó. Nghiêm ngặt ↔ Mở rộng vẫn kiểm soát độ tin cậy của thẻ bổ sung. Để trống trường nào để dùng giá trị mặc định của trường đó.
-- **Hướng dẫn gắn thẻ** thêm chỉ dẫn tùy chọn cho nhóm này.
+### Kết nối AI
 
-Các chỉnh sửa thông thường trong bộ phân loại được lưu tự động. Cấp đã chọn phải được tải xuống trước khi gắn thẻ nội dung. Các nhóm dùng cùng cấp chia sẻ mô hình đã tải; tối đa hai cấp được giữ tải cùng lúc.
+Cài đặt có ChatGPT subscription, OpenAI API, Gemini API và Grok API. Đăng ký ChatGPT dùng đăng nhập riêng của Vault và gói đủ điều kiện. API key chịu phí và giới hạn của nhà cung cấp đã chọn. Chọn nhà cung cấp rồi nhập key ngay dưới danh sách chung; chỉnh sửa key tự lưu, xóa nội dung trường sẽ xóa key. **Tải danh sách mô hình** lấy mô hình nhưng không tự chọn; hãy chọn model trong nhóm Gắn thẻ nội dung hoặc custom-rule.
 
-Sửa thẻ của mục nội dung trong tiện ích trình duyệt. Nhấp **+ thẻ**, tìm thẻ hiện có trong bộ phân loại rồi chọn để thêm. Dùng nút xóa của thẻ hoặc chọn thẻ rồi nhấn Delete một lần để gỡ. **Chưa gắn thẻ** nghĩa là gắn thẻ đã hoàn tất nhưng không có thẻ; **Đang gắn thẻ** nghĩa là kết quả đang chờ. Các chỉnh sửa giúp cải thiện lần gắn thẻ sau.
+**Mức độ suy luận** điều chỉnh mức suy nghĩ của mô hình: Model default, Low, Medium hoặc High nếu được hỗ trợ. Lựa chọn mới bắt đầu ở Medium; lựa chọn cũ giữ nguyên. Mức cao hơn có thể tốn thời gian và token. Web search luôn bật cho tagging; mô hình quyết định lúc dùng. Chọn mô hình hỗ trợ tìm kiếm và tagging có cấu trúc. Yêu cầu lỗi/không khả dụng vẫn giữ kết quả cache hợp lệ; mục mới chưa có kết quả cho đến khi chọn **Thử lại phân loại trên đám mây**. Vault không tự đổi nhà cung cấp; mỗi connection có chu kỳ retry và giới hạn lần thử riêng. Sửa thẻ trong tiện ích trình duyệt: nhấn **+ tag**, tìm và chọn để thêm; dùng nút xóa hoặc chọn thẻ rồi nhấn Delete một lần để xóa. **Chưa gắn thẻ** nghĩa là tagging xong nhưng không có thẻ; **Đang gắn thẻ** nghĩa là kết quả đang chờ. Sửa đổi của bạn có hiệu lực cho mục đó.
 
-## Knowledge và nghiên cứu web
+## Hoạt động
 
-Knowledge lưu mô tả ngắn trên Mac này cho mô hình gắn thẻ cục bộ. **Nguồn nội dung** gồm nhà sáng tạo, tài khoản, kênh và cộng đồng. Mô tả nguồn đi cùng nội dung của nguồn đó. **Thuật ngữ đã biết** áp dụng khi thuật ngữ xuất hiện trong tiêu đề.
+Hoạt động ghi cục bộ việc dùng ứng dụng đã bật, lượt truy cập trang web và **Nội dung đã xem** được hỗ trợ. Biểu đồ phản ánh dữ liệu đã ghi; khoảng trống không chứng minh Mac không hoạt động. Chọn khoảng ngày. **Dòng thời gian** hiển thị theo giờ trong ngày; **Tổng** cộng thời lượng; **Khoảng thời gian** gom hoạt động mỗi khoảng thành khối dọc. **Màu sắc** là chú giải có thể nhấp; chọn nguồn để tập trung biểu đồ. Chọn ngày để xem từ ngày đó.
 
-Thêm nguồn hoặc thuật ngữ cùng mô tả, hoặc để trống mô tả để yêu cầu nghiên cứu khi bật tính năng. Gợi ý nhà sáng tạo giúp tìm nguồn mà bộ phân loại đã thu thập. Danh sách có ít nhất sáu mục có ô tìm kiếm ngay phía trên: Terms và Content sources của từng nền tảng có ô riêng để tìm theo tên, mã định danh hoặc mô tả. Sửa mô tả ảnh hưởng đến lần gắn thẻ sau; xóa kiến thức nguồn không ngăn nghiên cứu tạo lại sau này.
+### Nhóm Hoạt động
 
-### Từ điển chính thức và từ điển cá nhân
+Tạo nhóm để hiển thị chung ứng dụng và trang web đã chọn trong Usage. **Merge** dùng chung một tên và màu cho các thành viên trên Hoạt động. Nhóm Hoạt động sắp xếp hoạt động đã ghi và tách biệt với nhóm chặn và Gắn thẻ nội dung. Lưu trình chỉnh sửa bằng **Save**.
 
-Mở **Cài đặt → Bộ phân loại → Từ điển chính thức** để cấu hình từ điển chính thức. **Kiến thức** hiển thị phiên bản đã cài đặt và lối tắt đến các mục này. Vault kiểm tra cập nhật khi khởi động; dùng **Kiểm tra cập nhật** và các nút tải xuống để cài đặt. Không cần khóa API AI riêng của bạn.
+### Ghi và lưu giữ
 
-- **Thuật ngữ** được tải xuống để tra cứu cục bộ.
-- **Bộ nhớ đệm + tra cứu trực tuyến** lưu tối đa 10.000 mục nhà sáng tạo theo mặc định; bạn có thể đổi giới hạn. Nếu không có nhà sáng tạo trong bộ nhớ đệm, ID công khai gắn với nền tảng của họ sẽ được gửi đến dịch vụ từ điển.
-- **Tải đầy đủ · tra cứu ngoại tuyến** tra cứu nhà sáng tạo cục bộ sau khi tải xuống. Chọn chế độ này rồi tải từ điển.
-
-Mô tả cá nhân của bạn, kể cả mô tả do nhà cung cấp nghiên cứu tạo, được ưu tiên hơn mô tả chính thức. Trong **Nhập / xuất từ điển của bạn**, bạn có thể xuất mục cá nhân hoặc nhập tệp JSON; mục chính thức không có trong bản xuất cá nhân.
-
-**Giúp cải thiện từ điển nhà sáng tạo** được bật theo mặc định và được giải thích trước lần đóng góp đầu tiên. Tắt tại đây để dừng đóng góp sau này và hủy yêu cầu đang chờ. Khi bật, Vault chỉ gửi mẫu ID công khai còn thiếu của nhà sáng tạo và số người theo dõi/người đăng ký công khai hiện có; không gửi tiêu đề, lịch sử duyệt web hoặc mô tả cá nhân. Xem thông báo về giới hạn gửi và thời gian lưu giữ. Nghiên cứu web có sự đồng ý và cài đặt nhà cung cấp riêng.
-
-### Cấu hình nhà cung cấp nghiên cứu
-
-1. Mở **Cài đặt → API keys & providers**.
-2. Chọn loại nhà cung cấp và **Thêm nhà cung cấp**. Thao tác này tạo cấu hình, không cấp API key.
-3. Lấy thông tin xác thực từ nhà cung cấp đó rồi nhập vào. Với endpoint tùy chỉnh tương thích, cấu hình thêm các trường endpoint và protocol.
-4. Trong **Nghiên cứu web**, chọn nhà cung cấp có web search tích hợp. Lấy danh sách mô hình rồi chọn mô hình nghiên cứu. Dùng ô tìm kiếm của bộ chọn mô hình để thu hẹp danh sách; làm mới để lấy lại danh sách.
-5. Đọc thông báo đồng ý và bật chấp thuận. Trong mỗi nhóm, chọn **Bật**, **Tắt** hoặc **Theo Cài đặt**.
-
-**Thiết lập nghiên cứu web…** mở cài đặt khi thiếu cấu hình. Nhóm không thể bỏ qua yêu cầu đồng ý nghiên cứu. **Kiểm tra kết nối** xác nhận yêu cầu thử đã thành công, không xác nhận mọi mô hình đều hỗ trợ nghiên cứu. Mô hình thử của nhà cung cấp khác với mô hình nghiên cứu đã chọn.
-
-Keys lưu trong thư mục support của ứng dụng trên Mac này, không phải system Keychain. Chúng xác thực yêu cầu gửi đến nhà cung cấp đã cấu hình; Vault không tải chúng lên máy chủ riêng. Nghiên cứu gửi các chủ đề công khai đã được làm sạch đến nhà cung cấp đã chọn, không gửi phần thân nội dung riêng tư hay bản tóm tắt. Đọc thông báo đồng ý để biết chính xác fields được gửi. Mức sử dụng nhà cung cấp tính cả kiểm tra kết nối và yêu cầu danh sách mô hình, ngoài nghiên cứu.
-
-Trạng thái nghiên cứu hiển thị yêu cầu đang chờ, thời gian chờ thử lại, lỗi và lượng token sử dụng trong ngày. **Thử lại ngay các chủ đề lỗi** thử lại các lỗi đủ điều kiện; thao tác này không bỏ qua hạn mức ngày hoặc yêu cầu đồng ý.
-
-## Activity
-
-Activity ghi cục bộ việc sử dụng ứng dụng đã bật, lượt truy cập trang web và **Nội dung đã xem** được hỗ trợ. Biểu đồ phản ánh dữ liệu đã ghi; vùng trống không chứng minh Mac đã không hoạt động.
-
-Chọn khoảng ngày. **Dòng thời gian** hiển thị mức sử dụng theo thời điểm trong ngày; **Tổng** cộng thời lượng. **Khoảng thời gian** gộp mức sử dụng trong mỗi khoảng thành các khối dọc. **Màu sắc** là chú giải có thể nhấp: chọn nguồn để tập trung biểu đồ vào nguồn đó. Chọn ngày để xem hoạt động từ ngày ấy.
-
-### Nhóm Activity
-
-Tạo nhóm để hiển thị các ứng dụng và trang web đã chọn cùng nhau trong Usage. **Gộp** dùng chung tên và màu cho các thành viên trên toàn Activity. Nhóm Activity sắp xếp mức sử dụng đã ghi nhận; nhóm này tách biệt với nhóm chặn hoặc nhóm phân loại. Lưu trình chỉnh sửa nhóm Activity bằng nút **Lưu**.
-
-### Ghi nhận và lưu giữ
-
-Trong **Ghi nhận**, bật hoặc tắt việc ghi theo từng danh mục hay nguồn riêng lẻ. **Giữ lại** kiểm soát thời gian lưu lịch sử; **Vĩnh viễn** giữ mà không tự hết hạn. Lựa chọn riêng có thể theo cài đặt rộng hơn. Tắt ghi nhận ngừng lưu dữ liệu mới; xóa lịch sử sẽ xóa các mục đã ghi.
-
-Feed nền tảng thu thập nội dung hiển thị trên trang nền tảng được hỗ trợ, dù đã mở hay chưa. Feed có nhãn **Hỗ trợ gắn thẻ** có thể cung cấp dữ liệu cho bộ phân loại khi đang bật ghi nhận. Lưu giữ của feed kiểm soát nội dung đã thu thập riêng với mức sử dụng ứng dụng/trang web. Tạm dừng nhóm phân loại không tự tắt ghi nhận.
+Trong **Ghi dữ liệu**, bật/tắt ghi theo danh mục hoặc nguồn riêng. **Lưu giữ** đặt thời gian lưu lịch sử; **Mãi mãi** không tự hết hạn. Lựa chọn riêng có thể theo cài đặt rộng hơn. Tắt ghi sẽ dừng bản ghi mới; xóa lịch sử xóa mục đã ghi. Feed nền tảng thu thập nội dung hiển thị trên trang được hỗ trợ dù trang đã mở hay chưa. Feed **Hỗ trợ gắn thẻ** có thể cung cấp nội dung cho Gắn thẻ nội dung khi đang ghi. Thời hạn lưu feed tách biệt khỏi việc dùng ứng dụng và trang web. Tạm dừng nhóm tagging không tự dừng ghi.
 
 ## Cài đặt
 
-Chọn ngôn ngữ giao diện trong Settings. Có thể xem giải thích trường qua các nút Info nhỏ bằng ngôn ngữ giao diện đã chọn.
+Chọn ngôn ngữ giao diện trong Cài đặt. Nút Info cung cấp giải thích trường bằng ngôn ngữ đã chọn.
 
 ## Lưu và khắc phục sự cố
 
-Các chỉnh sửa thông thường trong Vault và bộ phân loại được lưu tự động. Chỉnh sửa nhóm Activity cần **Lưu**. Thêm, xóa, tải mô hình, thử kết nối và lấy danh sách mô hình vẫn là thao tác chủ động.
-
-Nếu thiếu thẻ, kiểm tra kết nối trình duyệt, công tắc gắn thẻ toàn cục, trạng thái tạm dừng nhóm, ghi nhận nền tảng và tải mô hình. Nếu nghiên cứu không chạy, kiểm tra đồng ý, lựa chọn nhóm, thông tin xác thực nhà cung cấp, mô hình nghiên cứu và trạng thái nghiên cứu. Nếu không chỉnh sửa được nhóm liên kết, kết nối lại các chương trình hoặc mở khóa như được hướng dẫn.
+Sửa đổi thường ngày của Vault và Gắn thẻ nội dung tự lưu; trình chỉnh sửa Hoạt động group cần **Save**. Thêm, xóa, kiểm tra kết nối và lấy danh sách model là thao tác rõ ràng. Nếu thiếu thẻ, kiểm tra kết nối trình duyệt, công tắc tagging chung, trạng thái tạm dừng, ghi nền tảng, connection/model đã chọn và thông tin xác thực. Khi yêu cầu AI lỗi, kiểm tra thêm giới hạn nhà cung cấp và Log nhóm. Nếu không sửa được nhóm liên kết, kết nối lại chương trình hoặc bỏ freeze theo hướng dẫn.

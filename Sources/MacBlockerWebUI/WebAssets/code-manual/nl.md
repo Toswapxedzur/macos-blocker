@@ -59,7 +59,7 @@ Benoemde objecten overleven Run en herstarten in het gereserveerde `v.state.$vau
 
 Andere aanroepen retourneren `undefined`. App IDs zijn bundle identifiers (bijvoorbeeld `com.valvesoftware.steam`), beschikbaar in events. Block/Quit kunnen Apple-apps en volledige browsers als doel hebben. Ze negeren de bundle identifier van Mac Vault en de helpers ervan, inclusief andere apps met diezelfde identiteit, en lege IDs. Panel IDs/state horen bij één groep, niet bij de weergavenaam.
 
-## Events
+## Gebeurtenissen
 
 De payloadnotatie hieronder beschrijft typen en is geen uitvoerbare code. `?` markeert optionele fields.
 
@@ -71,6 +71,9 @@ snooze: {}
 panel: { panelId: string, controlId: string, eventName: string,
          value: string, values: { [controlId: string]: string } }
 file: see Files
+record: { requestId: string, ok: boolean, op?: string, key?: string,
+          record?: Record | null, entries?: Header[], next?: string | null,
+          deleted?: number, error?: string }
 App = { appId: string, name: string }
 ```
 
@@ -79,7 +82,7 @@ App = { appId: string, name: string }
 - `snooze` betekent dat de Snooze-knop van de groep is ingedrukt. Dit pauzeert zelf niets.
 - File-antwoorden gaan naar de aanvragende groep. Koppel `requestId`, controleer `ok` en stel een deadline met ticks in: antwoorden kunnen verloren gaan als de regel wordt herladen/uitgeschakeld. Request IDs kunnen na Run herhaald worden; openstaande verzoeken zijn geen duurzaam werk.
 
-## Panels
+## Panelen
 
 ```text
 spec = { title?: string, description?: string, controls?: Control[],
@@ -108,7 +111,7 @@ Panel-events: gewone inputs sturen `change`; buttons alleen `click`; PIN stuurt 
 
 Tekstlimieten: title/label 240; description/text 1000; HTML 20000; placeholder 500; input text 2000; overige value strings 512; option value/label 256. Extra tekst wordt afgekapt.
 
-## Files
+## Bestanden
 
 `op`: `"read"`, `"write"`, `"append"`, `"list"`, `"exists"`. Vereist **Map voor aangepaste regels** in Settings en de bijbehorende machtiging.
 
@@ -123,6 +126,22 @@ file.data = { requestId: string, op: string, path: string, ok: boolean,
 ```
 
 Ongebruikte result fields zijn null; succes heeft een lege error. Fouten omvatten invalid-path, unsupported-file-type, map niet beschikbaar, bestand ontbreekt en file-too-large. Behandel error als string, niet als vaste uitputtende enum. Er is geen transaction-API; serialiseer read-modify-write-bewerkingen per path.
+
+## Groepsrecords
+
+`v.store(request)` start binnen een handler een asynchrone JSON-recordbewerking. Records zijn privé per groep, blijven bestaan na Run en herstart en worden met de groep verwijderd. Gekoppelde groepen hebben aparte stores. De regel kiest sleutels, waarden, versies, cache-invalidatie en voorrang van feedback. Mac- en browserregels gebruiken dezelfde API, maar elke app/browser heeft een eigen store.
+
+| Request | Result |
+|---|---|
+| `{op:"get", key}` | `record` of `null` |
+| `{op:"put", key, value, version?, ifRevision?}` | opgeslagen `record` |
+| `{op:"delete", key, ifRevision?}` | `record: null` |
+| `{op:"list", prefix?, after?, limit?}` | gesorteerde `entries` en `next` |
+| `{op:"clear", prefix?}` | aantal `deleted` |
+
+Een record bevat `{value, revision, version, updatedAt}`. De ondoorzichtige `revision` verandert bij een echte schrijfoperatie; `version` is metadata van de aanroeper. `list` retourneert headers zonder waarden; gebruik `get` om er een te lezen en `after: next` voor de volgende pagina. Zonder `ifRevision` zijn put/delete onvoorwaardelijk; `null` vereist een ontbrekende sleutel, een revision-string een exacte overeenkomst. Een conflict retourneert `ok:false`, `error:"store-conflict"` en de huidige `record`. Zo overschrijft een late automatische reactie geen gebruikersfeedback. `v.context.revision` is een ondoorzichtige configuratiemarker die een regel in zijn versie kan opnemen. Het framework legt geen cachebeleid op.
+
+Limieten: sleutel 1–2048 tekens, versie ≤128, JSON-waarde ≤64KiB, diepte ≤32, 10000 sleutels per groep, volledig document16MiB. `list` retourneert maximaal100 headers en96KiB per pagina. Maximaal32 verzoeken per groep en128 starts per seconde totaal. Bij overbelasting meldt het systeem één `store-busy` per groep per seconde en laat overige verzoeken vallen. Opslagfouten geven `ok:false`; toekomstige of beschadigde documenten blijven behouden en melden `store-unavailable`. Geen automatische retry of verwijdering. Gebruik ticks voor deadlines.
 
 ## Limieten
 
@@ -144,3 +163,29 @@ Steam wordt geblokkeerd, behalve tijdens een pauze van vijf minuten gestart door
   on("tick", ev => v.block("com.valvesoftware.steam", ev.now >= v.state.pauseUntil));
 }
 ```
+
+## AI-aanroepen vanuit een actieve regel
+
+Elke custom group kiest onder **AI calls** een verbinding/model en reasoning effort. Mac- en browserregels gebruiken dezelfde API; browserverzoeken vereisen een verbonden Mac Vault en providergegevens blijven daar. Gekoppelde groepen delen de keuze en een optionele dagelijkse limiet. Leeg betekent geen groepslimiet; accountlimieten blijven gelden. De limiet gebruikt UTC-dagen, blijft na herstart bestaan en telt ingediende pogingen, ook mislukte. Link combineert bestaand gebruik; unlink behoudt eerder gebruik.
+
+`v.ai({ prompt, input? })` retourneert direct een request-ID. Roep dit binnen een handler aan, niet bij registratie. `input` mag elke JSON-waarde zijn; prompt en input zijn elk maximaal20KB. Antwoorden komen als `ai`-events: `{requestId, ok, text, citations, error}`. Succesvolle tekst maximaal48KB; citaties `{url,title}`. Behoud zichtbare, klikbare bronlinks bij antwoorden op basis van web search. Search is altijd beschikbaar voor het model. Geen vaste app-deadline; concurrency is begrensd; geen provider-fallback of automatische retry. Antwoorden zijn gegevens, geen uitvoerbare JavaScript; de regel beslist welke bestaande acties worden uitgevoerd.
+
+```javascript
+(on, v) => {
+  let pending = null;
+  on("panel", ({ data }) => {
+    if (data.controlId !== "ask" || pending) return;
+    pending = v.ai({ prompt: "Summarize this text.", input: data.values?.note ?? "" });
+  });
+  on("ai", ({ data }) => {
+    if (data.requestId !== pending) return;
+    pending = null;
+    if (!data.ok) { v.log("AI request failed:", data.error); return; }
+    v.log(data.text, data.citations);
+  });
+}
+```
+
+Openstaande aanroepen worden na herstart niet opnieuw afgespeeld. Run, uitschakelen/opnieuw inschakelen en verwijderen verwerpen oude antwoorden; een niet-verbonden browser meldt `ai-unavailable`. Andere fouten: `ai-not-configured`, `ai-invalid-input`, `ai-busy`, `ai-daily-limit`, `ai-request-failed`, `ai-usage-storage-unavailable`. Mislukte aanroepen overschrijven geen eerder resultaat dat de regel bewaart. De statelimiet blijft64KB.
+
+Ontdek keuzes zonder inloggegevens met `rule_ai_models` op Mac of `settings-rule-ai-models` in de browser. Configureer `ruleAI` via het bestaande set-group-pad. Velden: `providerModel`, `accountID`, `reasoningEffort` (`default`, `low`, `medium`, `high`) en `dailyRequestLimit` (null of1–100000). Gebruik een geretourneerde keuze; zet geen sleutel of provider-URL in de regelbron.

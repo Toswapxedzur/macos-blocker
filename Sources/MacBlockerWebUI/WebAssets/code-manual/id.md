@@ -127,6 +127,22 @@ file.data = { requestId: string, op: string, path: string, ok: boolean,
 
 Field hasil yang tak dipakai bernilai null; sukses memiliki error kosong. Kegagalan termasuk invalid-path, unsupported-file-type, folder tak tersedia, file hilang, dan file-too-large. Perlakukan error sebagai string, bukan enum tetap lengkap. Tidak ada API transaksi; serialkan operasi read-modify-write per path.
 
+## Catatan grup
+
+`v.store(request)` memulai operasi record JSON asinkron di dalam handler. Record bersifat privat bagi grup, bertahan melewati Run dan restart, lalu dihapus bersama grup. Grup tertaut memiliki store terpisah. Rule memilih key, value, version, invalidasi cache, dan prioritas feedback. Mac dan browser rule memakai API sama, tetapi store tiap app/browser terpisah.
+
+| Request | Result |
+|---|---|
+| `{op:"get", key}` | `record` atau `null` |
+| `{op:"put", key, value, version?, ifRevision?}` | `record` tersimpan |
+| `{op:"delete", key, ifRevision?}` | `record: null` |
+| `{op:"list", prefix?, after?, limit?}` | `entries` terurut dan `next` |
+| `{op:"clear", prefix?}` | jumlah `deleted` |
+
+Record berbentuk `{value, revision, version, updatedAt}`. `revision` opaque berubah pada write nyata; `version` adalah metadata caller. `list` memberi header tanpa value; gunakan `get` untuk membaca dan `after: next` untuk halaman berikutnya. Tanpa `ifRevision`, put/delete unconditional; `null` mensyaratkan key tidak ada, string revision harus cocok persis. Ketidakcocokan memberi `ok:false`, `error:"store-conflict"` dan `record` kini. Ini mencegah balasan otomatis tertunda menimpa feedback pengguna. `v.context.revision` adalah marker konfigurasi rule opaque yang dapat disertakan dalam version; framework tidak menentukan kebijakan cache.
+
+Batas: key 1–2048 karakter, version ≤128, JSON value ≤64KiB, depth ≤32, 10000 key per grup, dokumen penuh16MiB. `list` paling banyak100 header dan96KiB per halaman. Maksimum32 request per grup dan128 start per detik total; overload mengirim satu `store-busy` per grup per detik dan membuang sisanya. Storage error memberi `ok:false`; dokumen future/malformed dipertahankan dan melaporkan `store-unavailable`. Tidak ada retry/eviction otomatis. Gunakan ticks untuk deadline.
+
 ## Batas
 
 Per peristiwa per grup: 256 tindakan dalam antrean, 200 pemanggilan log, 64 emit; kelebihannya dibuang. Per aturan: 1000 handler, 24 panel; tiap daftar kontrol memiliki 32 entri dan tiap pilihan 64 opsi; kelebihannya diabaikan/dipotong. Rantai emit berhenti setelah 16 generasi. Batas state terserialisasi: 65536 byte UTF-8. Pendaftaran dan gabungan handler tiap peristiwa harus selesai dalam kurang dari 1 detik; pelampauan berulang atau timeout paksa menghentikan aturan sampai Run. Log menyimpan 200 entri per grup. Waktu/balasan bersifat upaya terbaik, bukan jaminan waktu nyata.
@@ -148,23 +164,7 @@ Steam diblokir kecuali selama jeda lima menit yang dipicu Snooze atau tombol pan
 }
 ```
 
-## Group records
-
-`v.store(request)` memulai operasi record JSON asinkron di dalam handler. Record bersifat privat bagi grup, bertahan melewati Run dan restart, lalu dihapus bersama grup. Grup tertaut memiliki store terpisah. Rule memilih key, value, version, invalidasi cache, dan prioritas feedback. Mac dan browser rule memakai API sama, tetapi store tiap app/browser terpisah.
-
-| Request | Result |
-|---|---|
-| `{op:"get", key}` | `record` atau `null` |
-| `{op:"put", key, value, version?, ifRevision?}` | `record` tersimpan |
-| `{op:"delete", key, ifRevision?}` | `record: null` |
-| `{op:"list", prefix?, after?, limit?}` | `entries` terurut dan `next` |
-| `{op:"clear", prefix?}` | jumlah `deleted` |
-
-Record berbentuk `{value, revision, version, updatedAt}`. `revision` opaque berubah pada write nyata; `version` adalah metadata caller. `list` memberi header tanpa value; gunakan `get` untuk membaca dan `after: next` untuk halaman berikutnya. Tanpa `ifRevision`, put/delete unconditional; `null` mensyaratkan key tidak ada, string revision harus cocok persis. Ketidakcocokan memberi `ok:false`, `error:"store-conflict"` dan `record` kini. Ini mencegah balasan otomatis tertunda menimpa feedback pengguna. `v.context.revision` adalah marker konfigurasi rule opaque yang dapat disertakan dalam version; framework tidak menentukan kebijakan cache.
-
-Batas: key 1–2048 karakter, version ≤128, JSON value ≤64KiB, depth ≤32, 10000 key per grup, dokumen penuh16MiB. `list` paling banyak100 header dan96KiB per halaman. Maksimum32 request per grup dan128 start per detik total; overload mengirim satu `store-busy` per grup per detik dan membuang sisanya. Storage error memberi `ok:false`; dokumen future/malformed dipertahankan dan melaporkan `store-unavailable`. Tidak ada retry/eviction otomatis. Gunakan ticks untuk deadline.
-
-## AI calls from a running rule
+## Panggilan AI dari aturan berjalan
 
 Setiap custom group memilih satu connection/model dan reasoning effort di **AI calls**. Mac dan browser rule menggunakan API sama; request browser memerlukan Mac Vault terhubung, kredensial provider tetap di sana. Grup tertaut berbagi pilihan dan optional daily request cap. Kosong berarti tanpa cap grup, tetapi limit akun tetap berlaku. Cap memakai hari UTC, bertahan setelah restart, menghitung semua attempt terkirim termasuk gagal. Link menggabungkan usage yang ada; unlink mempertahankan usage sebelumnya.
 

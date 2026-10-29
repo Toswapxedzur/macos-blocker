@@ -71,6 +71,9 @@ snooze: {}
 panel: { panelId: string, controlId: string, eventName: string,
          value: string, values: { [controlId: string]: string } }
 file: see Files
+record: { requestId: string, ok: boolean, op?: string, key?: string,
+          record?: Record | null, entries?: Header[], next?: string | null,
+          deleted?: number, error?: string }
 App = { appId: string, name: string }
 ```
 
@@ -124,6 +127,22 @@ file.data = { requestId: string, op: string, path: string, ok: boolean,
 
 未使用的结果字段为 null；成功时 error 为空。失败包括 invalid-path、unsupported-file-type、文件夹不可用、文件不存在及 file-too-large。将 error 视为字符串，不要当作固定且完整的枚举。没有事务 API；请对每个路径的读取、修改、写入操作进行串行处理。
 
+## 组记录
+
+`v.store(request)` 会在 handler 中启动异步 JSON 记录操作。记录属于该组，在 Run 和重启后保留，并随组删除。链接组的 store 相互独立。规则决定 key、value、version、缓存失效和反馈优先级。Mac 与浏览器规则使用同一 API，但每个 app/browser 的 store 独立。
+
+| Request | Result |
+|---|---|
+| `{op:"get", key}` | `record` 或 `null` |
+| `{op:"put", key, value, version?, ifRevision?}` | 已保存的 `record` |
+| `{op:"delete", key, ifRevision?}` | `record: null` |
+| `{op:"list", prefix?, after?, limit?}` | 排序后的 `entries` 和 `next` |
+| `{op:"clear", prefix?}` | `deleted` 数量 |
+
+每条记录为 `{value, revision, version, updatedAt}`。不透明的 `revision` 在实际写入时更改；`version` 是调用方管理的元数据。`list` 返回不含 value 的 header；用 `get` 读取一条记录，用 `after: next` 获取下一页。省略 `ifRevision` 时 put/delete 无条件执行；`null` 要求 key 不存在，revision 字符串要求完全匹配。不匹配时返回 `ok:false`、`error:"store-conflict"` 和当前 `record`，防止延迟的自动回复覆盖用户反馈。`v.context.revision` 是不透明的规则配置标记，规则可将其纳入自己的 version；框架不规定缓存策略。
+
+限制：key 为1–2048字符，version ≤128，JSON value ≤64KiB，深度≤32，每组10000个 key，整份记录文档16MiB。`list` 每页最多100个 header、96KiB。每组最多32个请求，总计每秒128个启动；过载时每组每秒报告一个 `store-busy`，其余请求丢弃。存储错误返回 `ok:false`；未来版本或格式错误文档会保留并报告 `store-unavailable`。没有自动重试或清理。用 ticks 设置期限。
+
 ## 限制
 
 每个组的每次事件最多排队 256 个操作、调用 200 次 log、发送 64 次事件；超出部分会被丢弃。每条规则最多有 1000 个处理器、24 个面板；每个控件列表最多 32 项，每个选择控件最多 64 个选项；超出部分会被忽略或截断。事件发送链在 16 代后停止。序列化状态上限为 65536 个 UTF-8 字节。注册阶段及每次事件的处理器合计执行时间应低于 1 秒；反复超时或触发硬超时会停止规则，直到再次运行。日志每组保留 200 条记录。时间处理和回复尽力完成，不保证实时性。
@@ -144,3 +163,29 @@ file.data = { requestId: string, op: string, path: string, ok: boolean,
   on("tick", ev => v.block("com.valvesoftware.steam", ev.now >= v.state.pauseUntil));
 }
 ```
+
+## 运行中规则的 AI 调用
+
+每个 custom group 在 **AI calls** 中选择一个 connection/model 和 reasoning effort。Mac 与浏览器规则使用同一 API；浏览器请求需要连接 Mac Vault，提供商凭据保存在那里。链接组共享选择和可选的每日请求上限。留空表示组级不限额，账户限制仍适用。上限按 UTC 日计算，重启后保留，并统计已提交的尝试（包括失败）。Link 合并现有用量；unlink 保留之前的用量。
+
+`v.ai({ prompt, input? })` 立即返回 request ID。请在 handler 中调用，不要在注册规则时调用。`input` 可以是任意 JSON 值；prompt/input 各限20KB。回复通过 `ai` 事件到达：`{requestId, ok, text, citations, error}`。成功文本最多48KB；citations 是 `{url,title}`。展示网页搜索答案时保留可见、可点击的来源链接。模型始终可以使用搜索。没有固定的 app 截止时间，并发数受限；不会回退到其他提供商或自动重试。回复是数据，不会作为 JavaScript 执行；规则决定采取哪些现有操作。
+
+```javascript
+(on, v) => {
+  let pending = null;
+  on("panel", ({ data }) => {
+    if (data.controlId !== "ask" || pending) return;
+    pending = v.ai({ prompt: "Summarize this text.", input: data.values?.note ?? "" });
+  });
+  on("ai", ({ data }) => {
+    if (data.requestId !== pending) return;
+    pending = null;
+    if (!data.ok) { v.log("AI request failed:", data.error); return; }
+    v.log(data.text, data.citations);
+  });
+}
+```
+
+未完成的调用不会在重启后重放。Run、禁用/重新启用和删除会丢弃过时回复；断开的浏览器会报告 `ai-unavailable`。其他错误包括 `ai-not-configured`、`ai-invalid-input`、`ai-busy`、`ai-daily-limit`、`ai-request-failed` 和 `ai-usage-storage-unavailable`。失败调用不会覆盖规则选择保留的旧结果。规则 state 仍受64KB限制。
+
+可在 Mac 使用 `rule_ai_models`，或在浏览器使用 `settings-rule-ai-models` 查找无需凭据的选项；通过现有 set-group 路径配置 `ruleAI`。字段为 `providerModel`、`accountID`、`reasoningEffort`（`default`、`low`、`medium`、`high`）和 `dailyRequestLimit`（null 或1–100000）。使用返回的选项；不要把 key 或 provider URL 写进规则源码。

@@ -59,7 +59,7 @@ Os objetos com nome sobrevivem a Run e à reinicialização no campo reservado `
 
 Outras chamadas retornam `undefined`. Os identificadores de apps são identificadores de bundle (por exemplo, `com.valvesoftware.steam`), disponíveis em eventos. Block/Quit podem ter como alvo apps da Apple e navegadores inteiros. Eles ignoram o identificador de bundle do Mac Vault e seus helpers, incluindo qualquer outro app que compartilhe essa identidade, além de IDs vazios. Panel IDs/state pertencem ao grupo, não ao nome exibido.
 
-## Events
+## Eventos
 
 A notação de payload abaixo descreve os tipos; não é código executável. `?` indica fields opcionais.
 
@@ -71,6 +71,9 @@ snooze: {}
 panel: { panelId: string, controlId: string, eventName: string,
          value: string, values: { [controlId: string]: string } }
 file: see Files
+record: { requestId: string, ok: boolean, op?: string, key?: string,
+          record?: Record | null, entries?: Header[], next?: string | null,
+          deleted?: number, error?: string }
 App = { appId: string, name: string }
 ```
 
@@ -79,7 +82,7 @@ App = { appId: string, name: string }
 - `snooze` significa que o botão Snooze do grupo foi pressionado. Ele não aplica pausa por si só.
 - Respostas de arquivo vão para o grupo solicitante. Associe `requestId`, verifique `ok` e defina um deadline usando ticks: respostas podem se perder se a regra recarregar/for desativada. Request IDs podem se repetir após Run; requests pendentes não são trabalho duradouro.
 
-## Panels
+## Painéis
 
 ```text
 spec = { title?: string, description?: string, controls?: Control[],
@@ -108,7 +111,7 @@ Panel events: entradas comuns enviam `change`; buttons somente `click`; PIN envi
 
 Limites de texto: title/label 240; description/text 1000; HTML 20000; placeholder 500; input text 2000; outras value strings 512; option value/label 256. O excesso é truncado.
 
-## Files
+## Arquivos
 
 `op`: `"read"`, `"write"`, `"append"`, `"list"`, `"exists"`. Requer **Pasta de regras personalizadas** em Settings e sua permissão.
 
@@ -123,6 +126,22 @@ file.data = { requestId: string, op: string, path: string, ok: boolean,
 ```
 
 result fields não usados são null; sucesso tem error vazio. Falhas incluem invalid-path, unsupported-file-type, pasta indisponível, arquivo ausente e file-too-large. Trate error como string, não um enum fixo e completo. Não há transaction API; serialize operações read-modify-write por path.
+
+## Registros do grupo
+
+`v.store(request)` inicia uma operação assíncrona de registro JSON dentro de um handler. Os registros são privados do grupo, persistem após Run e reinicialização e são removidos com o grupo. Grupos vinculados têm stores separados. A regra escolhe chaves, valores, versões, invalidação de cache e prioridade do feedback. Regras Mac e navegador usam a mesma API, mas cada app/navegador possui store próprio.
+
+| Request | Result |
+|---|---|
+| `{op:"get", key}` | `record` ou `null` |
+| `{op:"put", key, value, version?, ifRevision?}` | `record` salvo |
+| `{op:"delete", key, ifRevision?}` | `record: null` |
+| `{op:"list", prefix?, after?, limit?}` | `entries` ordenadas e `next` |
+| `{op:"clear", prefix?}` | contagem `deleted` |
+
+Cada registro é `{value, revision, version, updatedAt}`. A `revision` opaca muda numa gravação real; `version` é metadado do chamador. `list` retorna cabeçalhos sem valores; use `get` para ler e `after: next` para a página seguinte. Sem `ifRevision`, put/delete são incondicionais; `null` exige chave ausente e string de revisão exige correspondência exata. Conflito retorna `ok:false`, `error:"store-conflict"` e o `record` atual, impedindo resposta automática atrasada de substituir feedback do usuário. `v.context.revision` é um marcador opaco de configuração que a regra pode incluir em sua versão. O framework não impõe política de cache.
+
+Limites: chave 1–2048 caracteres, versão ≤128, valor JSON ≤64KiB, profundidade ≤32, 10000 chaves por grupo, documento inteiro16MiB. `list` retorna até100 cabeçalhos e96KiB por página. No máximo32 pedidos por grupo e128 inícios/segundo no total. Sobrecarga informa `store-busy` uma vez por grupo por segundo e descarta os demais. Erros de armazenamento retornam `ok:false`; documento futuro/malformado é preservado e sinaliza `store-unavailable`. Não há retry nem eviction automáticos. Use ticks para prazos.
 
 ## Limites
 
@@ -144,3 +163,29 @@ Steam é bloqueado, exceto durante uma pausa de cinco minutos iniciada pelo Snoo
   on("tick", ev => v.block("com.valvesoftware.steam", ev.now >= v.state.pauseUntil));
 }
 ```
+
+## Chamadas de IA em uma regra em execução
+
+Cada custom group escolhe conexão/modelo e reasoning effort em **AI calls**. Regras Mac e navegador usam a mesma API; pedidos do navegador exigem Mac Vault conectado e as credenciais do provedor ficam lá. Grupos vinculados compartilham seleção e limite diário opcional. Em branco significa sem limite do grupo; limites da conta continuam valendo. O limite usa o dia UTC, persiste após reinício e conta tentativas enviadas, inclusive falhas. Link combina uso existente; unlink mantém o uso anterior.
+
+`v.ai({ prompt, input? })` retorna um request ID imediatamente. Chame dentro de um handler, não ao registrar a regra. `input` pode ser qualquer JSON; prompt/input limitados a20KB cada. Respostas chegam como eventos `ai`: `{requestId, ok, text, citations, error}`. Texto de sucesso até48KB; citations `{url,title}`. Preserve links de fonte visíveis e clicáveis ao exibir respostas da pesquisa Web. Search está sempre disponível ao modelo. Não há prazo fixo do app; concorrência limitada; sem fallback de provedor ou retry automático. Respostas são dados, nunca executadas como JavaScript. A regra decide quais ações existentes tomar.
+
+```javascript
+(on, v) => {
+  let pending = null;
+  on("panel", ({ data }) => {
+    if (data.controlId !== "ask" || pending) return;
+    pending = v.ai({ prompt: "Summarize this text.", input: data.values?.note ?? "" });
+  });
+  on("ai", ({ data }) => {
+    if (data.requestId !== pending) return;
+    pending = null;
+    if (!data.ok) { v.log("AI request failed:", data.error); return; }
+    v.log(data.text, data.citations);
+  });
+}
+```
+
+Chamadas pendentes não são reproduzidas após reiniciar. Run, desabilitar/habilitar e exclusão descartam respostas antigas; navegador desconectado informa `ai-unavailable`. Outros erros: `ai-not-configured`, `ai-invalid-input`, `ai-busy`, `ai-daily-limit`, `ai-request-failed`, `ai-usage-storage-unavailable`. Chamadas falhas não substituem resultado anterior que a regra escolheu manter. O estado da regra continua limitado a64KB.
+
+Descubra opções sem credenciais com `rule_ai_models` no Mac ou `settings-rule-ai-models` no navegador; configure `ruleAI` pelo caminho set-group existente. Campos: `providerModel`, `accountID`, `reasoningEffort` (`default`, `low`, `medium`, `high`) e `dailyRequestLimit` (null ou1–100000). Use uma opção retornada; não coloque chave ou URL do provedor no código-fonte.
