@@ -613,6 +613,10 @@ textarea:focus {
 
 .action-row { align-items: center; flex-wrap: wrap; gap: 8px; }
 
+.classifier-type-section[data-autosave-action="saveClassificationProvider"] > .action-row {
+  margin-top: 10px;
+}
+
 .primary,
 .secondary,
 .danger,

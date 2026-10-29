@@ -9,6 +9,8 @@ window.runDropdownLayoutTests = async () => {
   pushSnapshot();q('[data-action="selectType"]').click();await wait();
   const form=q('[data-form-id="cloud-provider-group-1"]');
   const effort=form.querySelector('[data-field="reasoningEffort"]'), button=effort.closest('label').querySelector('.vui-select-button');
+  const manage=form.querySelector('[data-action="openConnections"]');
+  check(manage.getBoundingClientRect().top-button.getBoundingClientRect().bottom>=8,'connection action has space below reasoning picker');
   button.scrollIntoView({block:'center'});await wait();button.click();await wait();
   const menu=document.querySelector('.vui-menu-layer .vui-menu') || document.querySelector('.vui-menu-layer');
   const high=[...document.querySelectorAll('.vui-menu-item')].find(node=>node.textContent.trim()==='High');
