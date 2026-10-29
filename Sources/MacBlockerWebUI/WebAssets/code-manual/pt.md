@@ -165,12 +165,12 @@ Steam é bloqueado, exceto durante uma pausa de cinco minutos iniciada pelo Snoo
 }
 ```
 
+
 ## Chamadas de IA em uma regra em execução
 
 Cada custom group escolhe conexão/modelo e reasoning effort em **AI calls**. Regras Mac e navegador usam a mesma API; pedidos do navegador exigem Mac Vault conectado e as credenciais do provedor ficam lá. Grupos vinculados compartilham seleção e limite diário opcional. Em branco significa sem limite do grupo; limites da conta continuam valendo. O limite usa o dia UTC, persiste após reinício e conta tentativas enviadas, inclusive falhas. Link combina uso existente; unlink mantém o uso anterior.
 
-`v.ai({ prompt, input? })` retorna um request ID imediatamente. Chame dentro de um handler, não ao registrar a regra. `input` pode ser qualquer JSON; prompt/input limitados a20KB cada. Respostas chegam como eventos `ai`: `{requestId, ok, text, citations,
-error}`. Texto de sucesso até48KB; citations `{url,title}`. Preserve links de fonte visíveis e clicáveis ao exibir respostas da pesquisa Web. Search está sempre disponível ao modelo. Não há prazo fixo do app; concorrência limitada; sem fallback de provedor ou retry automático. Respostas são dados, nunca executadas como JavaScript. A regra decide quais ações existentes tomar.
+`v.ai({ prompt, input? })` retorna um request ID imediatamente. Chame dentro de um handler, não ao registrar a regra. `input` pode ser qualquer JSON; prompt/input limitados a20KB cada. Respostas chegam como eventos `ai`: `{requestId, ok, text, citations, error}`. Texto de sucesso até48KB; citations `{url,title}`. Preserve links de fonte visíveis e clicáveis ao exibir respostas da pesquisa Web. Search está sempre disponível ao modelo. Não há prazo fixo do app; concorrência limitada; sem fallback de provedor ou retry automático. Respostas são dados, nunca executadas como JavaScript. A regra decide quais ações existentes tomar.
 
 Para um painel com um botão `ask` e um campo `note`:
 

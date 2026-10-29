@@ -165,12 +165,12 @@ Snooze या उसके panel button से शुरू पाँच मि�
 }
 ```
 
+
 ## चलते नियम से AI कॉल
 
 हर custom group **AI calls** में एक connection/model और reasoning effort चुनता है। Mac/browser rules वही API इस्तेमाल करते हैं; browser request के लिए Mac Vault connected होना चाहिए और provider credentials वहीं रहते हैं। Linked groups चयन और optional daily request cap साझा करते हैं। Blank का अर्थ group cap नहीं, account limits फिर भी लागू। Cap UTC day से जुड़ा है, restart के बाद रहता है और failures सहित submitted attempts गिनता है। Link पुराने usage को जोड़ता है; unlink पुराना usage रखता है।
 
-`v.ai({ prompt, input? })` तुरंत request ID देता है। इसे handler के भीतर call करें, rule register करते समय नहीं। `input` कोई JSON value हो सकता है; prompt/input प्रत्येक अधिकतम20KB। Reply `ai` events में आता है: `{requestId, ok, text, citations,
-error}`। सफल text अधिकतम48KB; citation `{url,title}`। Web search आधारित उत्तर दिखाते समय source links दिखने योग्य और clickable रखें। Search model के लिए हमेशा उपलब्ध है। निश्चित app deadline नहीं, concurrency bounded है; provider fallback/automatic retry नहीं। Response data है, JavaScript के रूप में execute नहीं; कौन-सी existing action लेनी है rule तय करता है।
+`v.ai({ prompt, input? })` तुरंत request ID देता है। इसे handler के भीतर call करें, rule register करते समय नहीं। `input` कोई JSON value हो सकता है; prompt/input प्रत्येक अधिकतम20KB। Reply `ai` events में आता है: `{requestId, ok, text, citations, error}`। सफल text अधिकतम48KB; citation `{url,title}`। Web search आधारित उत्तर दिखाते समय source links दिखने योग्य और clickable रखें। Search model के लिए हमेशा उपलब्ध है। निश्चित app deadline नहीं, concurrency bounded है; provider fallback/automatic retry नहीं। Response data है, JavaScript के रूप में execute नहीं; कौन-सी existing action लेनी है rule तय करता है।
 
 `ask` बटन और `note` field वाले panel के लिए:
 

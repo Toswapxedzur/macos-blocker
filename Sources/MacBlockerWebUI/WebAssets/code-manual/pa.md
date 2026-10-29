@@ -165,12 +165,12 @@ Steam blocked ਰਹਿੰਦਾ ਹੈ, ਸਿਵਾਏ ਪੰਜ ਮਿੰਟ�
 }
 ```
 
+
 ## ਚੱਲਦੇ ਨਿਯਮ ਤੋਂ AI calls
 
 ਹਰ custom group **AI calls** ਵਿੱਚ ਇੱਕ connection/model ਅਤੇ reasoning effort ਚੁਣਦਾ ਹੈ। Mac ਅਤੇ browser rules ਇੱਕੋ API ਵਰਤਦੇ ਹਨ; browser request ਲਈ Mac Vault connected ਹੋਣਾ ਲਾਜ਼ਮੀ ਹੈ ਅਤੇ provider credentials ਉੱਥੇ ਹੀ ਰਹਿੰਦੇ ਹਨ। Linked groups ਚੋਣ ਅਤੇ optional daily cap ਸਾਂਝੇ ਕਰਦੇ ਹਨ। ਖਾਲੀ ਦਾ ਅਰਥ group cap ਨਹੀਂ, account limits ਫਿਰ ਵੀ ਲਾਗੂ ਹਨ। Cap UTC ਦਿਨ ਅਨੁਸਾਰ, restart ਮਗਰੋਂ ਕਾਇਮ ਅਤੇ failed ਸਮੇਤ submitted attempts ਗਿਣਦਾ ਹੈ। Link ਪੁਰਾਣੀ usage ਜੋੜਦਾ ਹੈ; unlink ਪੁਰਾਣੀ usage ਰੱਖਦਾ ਹੈ।
 
-`v.ai({ prompt, input? })` ਤੁਰੰਤ request ID ਵਾਪਸ ਕਰਦਾ ਹੈ। Handler ਵਿੱਚ call ਕਰੋ, rule registration ਵੇਲੇ ਨਹੀਂ। `input` ਕੋਈ ਵੀ JSON value ਹੋ ਸਕਦੀ ਹੈ; prompt/input ਹਰ ਇੱਕ20KB ਤੱਕ। Replies `ai` event ਵਿੱਚ `{requestId, ok, text, citations,
-error}` ਹੁੰਦੇ ਹਨ। ਸਫਲ text ਵੱਧ ਤੋਂ ਵੱਧ48KB; citations `{url,title}`। Web-search ਜਵਾਬ ਦਿਖਾਉਣ ਵੇਲੇ source links ਦਿੱਖਣਯੋਗ ਅਤੇ clickable ਰੱਖੋ। Search model ਲਈ ਹਮੇਸ਼ਾ ਉਪਲਬਧ ਹੈ। ਨਿਰਧਾਰਤ app deadline ਨਹੀਂ, concurrency ਸੀਮਤ ਹੈ, provider fallback/automatic retry ਨਹੀਂ। Reply data ਹੈ, JavaScript ਵਜੋਂ execute ਨਹੀਂ; ਮੌਜੂਦਾ actions ਕਦੋਂ ਲੈਣੇ ਹਨ rule ਤੈਅ ਕਰਦਾ ਹੈ।
+`v.ai({ prompt, input? })` ਤੁਰੰਤ request ID ਵਾਪਸ ਕਰਦਾ ਹੈ। Handler ਵਿੱਚ call ਕਰੋ, rule registration ਵੇਲੇ ਨਹੀਂ। `input` ਕੋਈ ਵੀ JSON value ਹੋ ਸਕਦੀ ਹੈ; prompt/input ਹਰ ਇੱਕ20KB ਤੱਕ। Replies `ai` event ਵਿੱਚ `{requestId, ok, text, citations, error}` ਹੁੰਦੇ ਹਨ। ਸਫਲ text ਵੱਧ ਤੋਂ ਵੱਧ48KB; citations `{url,title}`। Web-search ਜਵਾਬ ਦਿਖਾਉਣ ਵੇਲੇ source links ਦਿੱਖਣਯੋਗ ਅਤੇ clickable ਰੱਖੋ। Search model ਲਈ ਹਮੇਸ਼ਾ ਉਪਲਬਧ ਹੈ। ਨਿਰਧਾਰਤ app deadline ਨਹੀਂ, concurrency ਸੀਮਤ ਹੈ, provider fallback/automatic retry ਨਹੀਂ। Reply data ਹੈ, JavaScript ਵਜੋਂ execute ਨਹੀਂ; ਮੌਜੂਦਾ actions ਕਦੋਂ ਲੈਣੇ ਹਨ rule ਤੈਅ ਕਰਦਾ ਹੈ।
 
 `ask` ਬਟਨ ਅਤੇ `note` field ਵਾਲੇ panel ਲਈ:
 

@@ -165,12 +165,12 @@ Snooze বা তার panel button চালু করা পাঁচ মি�
 }
 ```
 
+
 ## চলমান নিয়ম থেকে AI কল
 
 প্রতিটি custom group **AI calls**-এ একটি connection/model ও reasoning effort বেছে নেয়। Mac ও browser rule একই API ব্যবহার করে; browser request-এর জন্য Mac Vault connected থাকতে হবে, provider credential সেখানেই থাকে। Linked group নির্বাচন ও ঐচ্ছিক দৈনিক request cap ভাগ করে। ফাঁকা মানে group cap নেই; account limit থাকে। Cap UTC দিন ধরে, restart-এ স্থায়ী এবং ব্যর্থসহ submitted attempt গোনে। Link করলে আগের usage যোগ হয়; unlink করলেও আগের usage থাকে।
 
-`v.ai({ prompt, input? })` সঙ্গে সঙ্গে request ID দেয়। Registration-এ নয়, handler-এর মধ্যে কল করুন। `input` যেকোনো JSON; prompt/input প্রত্যেকটি সর্বোচ্চ20KB। উত্তর `ai` event-এ আসে: `{requestId, ok, text, citations,
-error}`। সফল text সর্বোচ্চ48KB; citation `{url,title}`। Web search-এর উত্তর দেখালে source link দৃশ্যমান ও clickable রাখুন। Model-এর জন্য search সর্বদা উপলভ্য। নির্দিষ্ট app deadline নেই; bounded concurrency থাকে; provider fallback বা auto retry নেই। উত্তর data, JavaScript হিসেবে execute হয় না; বিদ্যমান action নেবে কি না rule ঠিক করে।
+`v.ai({ prompt, input? })` সঙ্গে সঙ্গে request ID দেয়। Registration-এ নয়, handler-এর মধ্যে কল করুন। `input` যেকোনো JSON; prompt/input প্রত্যেকটি সর্বোচ্চ20KB। উত্তর `ai` event-এ আসে: `{requestId, ok, text, citations, error}`। সফল text সর্বোচ্চ48KB; citation `{url,title}`। Web search-এর উত্তর দেখালে source link দৃশ্যমান ও clickable রাখুন। Model-এর জন্য search সর্বদা উপলভ্য। নির্দিষ্ট app deadline নেই; bounded concurrency থাকে; provider fallback বা auto retry নেই। উত্তর data, JavaScript হিসেবে execute হয় না; বিদ্যমান action নেবে কি না rule ঠিক করে।
 
 `ask` বোতাম ও `note` field-সহ panel-এর জন্য:
 

@@ -165,12 +165,12 @@ Steam ถูกบล็อก ยกเว้นช่วงพักห้า�
 }
 ```
 
+
 ## การเรียก AI จากกฎที่กำลังทำงาน
 
 แต่ละ custom group เลือก connection/model และ reasoning effort ใน **AI calls** กฎ Mac และ browser ใช้ API เดียวกัน; browser request ต้องเชื่อม Mac Vault และ credentials ของ provider อยู่ที่นั่น กลุ่มที่เชื่อมกันแชร์ตัวเลือกและ daily cap แบบเลือกได้ ค่าว่างหมายถึงไม่จำกัดระดับกลุ่ม แต่ข้อจำกัดบัญชียังใช้ cap คิดตามวัน UTC อยู่หลัง restart และนับทุก attempt ที่ส่งรวมถึงที่ล้มเหลว Link รวม usage เดิม; unlink เก็บ usage ที่ผ่านมา
 
-`v.ai({ prompt, input? })` คืน request ID ทันที เรียกใน handler ไม่ใช่ตอนลงทะเบียน rule `input` เป็น JSON ใดก็ได้; prompt/input จำกัดอย่างละ20KB คำตอบมาใน `ai` event: `{requestId, ok, text, citations,
-error}` ข้อความสำเร็จไม่เกิน48KB; citations เป็น `{url,title}` เก็บลิงก์แหล่งที่มาให้มองเห็นและคลิกได้เมื่อแสดงคำตอบจาก web search Search มีให้โมเดลเสมอ ไม่มี app deadline คงที่และจำกัด concurrency; ไม่มี provider fallback หรือ auto retry คำตอบเป็นข้อมูล ไม่ถูก execute เป็น JavaScript และ rule ตัดสินใจว่าจะใช้ action เดิมใด
+`v.ai({ prompt, input? })` คืน request ID ทันที เรียกใน handler ไม่ใช่ตอนลงทะเบียน rule `input` เป็น JSON ใดก็ได้; prompt/input จำกัดอย่างละ20KB คำตอบมาใน `ai` event: `{requestId, ok, text, citations, error}` ข้อความสำเร็จไม่เกิน48KB; citations เป็น `{url,title}` เก็บลิงก์แหล่งที่มาให้มองเห็นและคลิกได้เมื่อแสดงคำตอบจาก web search Search มีให้โมเดลเสมอ ไม่มี app deadline คงที่และจำกัด concurrency; ไม่มี provider fallback หรือ auto retry คำตอบเป็นข้อมูล ไม่ถูก execute เป็น JavaScript และ rule ตัดสินใจว่าจะใช้ action เดิมใด
 
 สำหรับแผงที่มีปุ่ม `ask` และช่อง `note`:
 

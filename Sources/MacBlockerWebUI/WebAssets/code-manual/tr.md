@@ -165,12 +165,12 @@ Steam, Snooze veya panel düğmesiyle başlatılan beş dakikalık duraklama dı
 }
 ```
 
+
 ## Çalışan kuraldan AI çağrıları
 
 Her custom group **AI calls** içinde bir connection/model ve reasoning effort seçer. Mac ve tarayıcı kuralları aynı API'yi kullanır; tarayıcı istekleri bağlı Mac Vault gerektirir ve provider kimlik bilgileri orada kalır. Bağlı gruplar seçimi ve isteğe bağlı günlük sınırı paylaşır. Boş değer grup sınırı olmadığı anlamına gelir; hesap limitleri geçerlidir. Sınır UTC gününe göre hesaplanır, restart'ta korunur ve başarısızlar dahil gönderilen denemeleri sayar. Link mevcut kullanımı birleştirir; unlink önceki kullanımı saklar.
 
-`v.ai({ prompt, input? })` hemen request ID döndürür. Kuralı kaydederken değil, handler içinde çağırın. `input` herhangi bir JSON olabilir; prompt/input ayrı ayrı20KB ile sınırlıdır. Yanıtlar `ai` event'leriyle gelir: `{requestId, ok, text, citations,
-error}`. Başarılı metin en çok48KB; citation `{url,title}`. Web arama yanıtlarında kaynak bağlantılarını görünür ve tıklanabilir tutun. Search modele daima açıktır. Sabit app deadline yoktur, concurrency sınırlıdır; provider fallback veya otomatik retry yoktur. Yanıtlar veridir, JavaScript olarak çalıştırılmaz; mevcut eylemleri kural seçer.
+`v.ai({ prompt, input? })` hemen request ID döndürür. Kuralı kaydederken değil, handler içinde çağırın. `input` herhangi bir JSON olabilir; prompt/input ayrı ayrı20KB ile sınırlıdır. Yanıtlar `ai` event'leriyle gelir: `{requestId, ok, text, citations, error}`. Başarılı metin en çok48KB; citation `{url,title}`. Web arama yanıtlarında kaynak bağlantılarını görünür ve tıklanabilir tutun. Search modele daima açıktır. Sabit app deadline yoktur, concurrency sınırlıdır; provider fallback veya otomatik retry yoktur. Yanıtlar veridir, JavaScript olarak çalıştırılmaz; mevcut eylemleri kural seçer.
 
 `ask` düğmesi ve `note` alanı olan bir panel için:
 

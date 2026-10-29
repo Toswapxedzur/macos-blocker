@@ -165,12 +165,12 @@ Steam jest blokowany, z wyjątkiem pięciominutowej pauzy uruchomionej przez Sno
 }
 ```
 
+
 ## Wywołania AI z działającej reguły
 
 Każda custom group wybiera w **AI calls** połączenie/model i reasoning effort. Reguły Mac i przeglądarki używają tego samego API; żądania przeglądarki wymagają połączonego Mac Vault, a dane dostawcy pozostają tam. Połączone grupy współdzielą wybór i opcjonalny limit dzienny. Pusta wartość oznacza brak limitu grupy, obowiązują limity konta. Limit używa dnia UTC, przetrwa restart i liczy wysłane próby, również nieudane. Link łączy dotychczasowe użycie; unlink zachowuje wcześniejsze.
 
-`v.ai({ prompt, input? })` natychmiast zwraca request ID. Wywołaj wewnątrz handlera, nie podczas rejestracji reguły. `input` może być dowolnym JSON; prompt/input mają limit20KB każdy. Odpowiedź przychodzi jako event `ai`: `{requestId, ok, text, citations,
-error}`. Tekst sukcesu do48KB; cytaty `{url,title}`. Zachowaj widoczne, klikalne linki źródłowe przy wyświetlaniu odpowiedzi z wyszukiwania Web. Search jest zawsze dostępne dla modelu. Brak stałego terminu aplikacji, współbieżność jest ograniczona; brak fallbacku dostawcy i automatycznej ponownej próby. Odpowiedzi są danymi, nie są wykonywane jako JavaScript. Reguła decyduje, które istniejące działania podjąć.
+`v.ai({ prompt, input? })` natychmiast zwraca request ID. Wywołaj wewnątrz handlera, nie podczas rejestracji reguły. `input` może być dowolnym JSON; prompt/input mają limit20KB każdy. Odpowiedź przychodzi jako event `ai`: `{requestId, ok, text, citations, error}`. Tekst sukcesu do48KB; cytaty `{url,title}`. Zachowaj widoczne, klikalne linki źródłowe przy wyświetlaniu odpowiedzi z wyszukiwania Web. Search jest zawsze dostępne dla modelu. Brak stałego terminu aplikacji, współbieżność jest ograniczona; brak fallbacku dostawcy i automatycznej ponownej próby. Odpowiedzi są danymi, nie są wykonywane jako JavaScript. Reguła decyduje, które istniejące działania podjąć.
 
 Dla panelu z przyciskiem `ask` i polem `note`:
 

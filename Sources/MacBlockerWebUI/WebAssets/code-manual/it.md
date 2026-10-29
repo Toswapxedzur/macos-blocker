@@ -165,12 +165,12 @@ Steam è bloccato tranne durante una pausa di cinque minuti attivata da Snooze o
 }
 ```
 
+
 ## Chiamate IA da una regola in esecuzione
 
 Ogni custom group sceglie una connessione/modello e reasoning effort in **AI calls**. Le regole Mac e browser usano la stessa API; le richieste browser richiedono Mac Vault collegato e le credenziali provider restano lì. I gruppi collegati condividono la selezione e un limite giornaliero facoltativo. Campo vuoto significa nessun limite di gruppo, ma restano i limiti account. Il limite usa il giorno UTC, persiste al riavvio e conta i tentativi inviati inclusi quelli falliti. Link combina l’uso già fatto; unlink mantiene l’uso precedente.
 
-`v.ai({ prompt, input? })` restituisce subito un request ID. Chiamala dentro un handler, non durante la registrazione della regola. `input` può essere qualsiasi valore JSON; prompt/input sono limitati a20KB ciascuno. Le risposte arrivano come eventi `ai`: `{requestId, ok, text, citations,
-error}`. Testo riuscito massimo48KB; citazioni `{url,title}`. Mantieni visibili e cliccabili i link alle fonti nelle risposte della ricerca Web. Search è sempre disponibile al modello. Nessuna deadline fissa dell’app, concorrenza limitata, nessun fallback provider o retry automatico. Le risposte sono dati, non vengono eseguite come JavaScript; la regola decide quali azioni esistenti intraprendere.
+`v.ai({ prompt, input? })` restituisce subito un request ID. Chiamala dentro un handler, non durante la registrazione della regola. `input` può essere qualsiasi valore JSON; prompt/input sono limitati a20KB ciascuno. Le risposte arrivano come eventi `ai`: `{requestId, ok, text, citations, error}`. Testo riuscito massimo48KB; citazioni `{url,title}`. Mantieni visibili e cliccabili i link alle fonti nelle risposte della ricerca Web. Search è sempre disponibile al modello. Nessuna deadline fissa dell’app, concorrenza limitata, nessun fallback provider o retry automatico. Le risposte sono dati, non vengono eseguite come JavaScript; la regola decide quali azioni esistenti intraprendere.
 
 Per un pannello con un pulsante `ask` e un campo `note`:
 

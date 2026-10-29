@@ -165,12 +165,12 @@ Steam bị chặn trừ khoảng tạm dừng năm phút được kích hoạt b
 }
 ```
 
+
 ## Lời gọi AI từ quy tắc đang chạy
 
 Mỗi custom group chọn một connection/model và reasoning effort trong **AI calls**. Quy tắc Mac và trình duyệt dùng cùng API; request trình duyệt cần Mac Vault kết nối, thông tin nhà cung cấp được giữ tại đó. Nhóm liên kết chia sẻ lựa chọn và daily cap tùy chọn. Để trống nghĩa là không giới hạn ở nhóm; giới hạn tài khoản vẫn áp dụng. Cap theo ngày UTC, tồn tại qua khởi động lại và đếm mọi lần gửi kể cả lỗi. Link cộng usage hiện có; unlink giữ usage trước đó.
 
-`v.ai({ prompt, input? })` trả request ID ngay. Gọi bên trong handler, không gọi lúc đăng ký quy tắc. `input` nhận mọi giá trị JSON; prompt/input tối đa20KB mỗi phần. Phản hồi đến trong event `ai`: `{requestId, ok, text, citations,
-error}`. Văn bản thành công tối đa48KB; citation `{url,title}`. Giữ liên kết nguồn hiển thị và có thể nhấp khi trình bày câu trả lời từ web search. Search luôn sẵn có cho mô hình. Không có deadline cố định của app; concurrency có giới hạn; không fallback nhà cung cấp hoặc tự retry. Phản hồi là dữ liệu, không thực thi như JavaScript; quy tắc quyết định có dùng hành động hiện có nào.
+`v.ai({ prompt, input? })` trả request ID ngay. Gọi bên trong handler, không gọi lúc đăng ký quy tắc. `input` nhận mọi giá trị JSON; prompt/input tối đa20KB mỗi phần. Phản hồi đến trong event `ai`: `{requestId, ok, text, citations, error}`. Văn bản thành công tối đa48KB; citation `{url,title}`. Giữ liên kết nguồn hiển thị và có thể nhấp khi trình bày câu trả lời từ web search. Search luôn sẵn có cho mô hình. Không có deadline cố định của app; concurrency có giới hạn; không fallback nhà cung cấp hoặc tự retry. Phản hồi là dữ liệu, không thực thi như JavaScript; quy tắc quyết định có dùng hành động hiện có nào.
 
 Ví dụ bảng có nút `ask` và trường `note`:
 

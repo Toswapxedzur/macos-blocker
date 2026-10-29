@@ -165,12 +165,12 @@ Steam diblokir kecuali selama jeda lima menit yang dipicu Snooze atau tombol pan
 }
 ```
 
+
 ## Panggilan AI dari aturan berjalan
 
 Setiap custom group memilih satu connection/model dan reasoning effort di **AI calls**. Mac dan browser rule menggunakan API sama; request browser memerlukan Mac Vault terhubung, kredensial provider tetap di sana. Grup tertaut berbagi pilihan dan optional daily request cap. Kosong berarti tanpa cap grup, tetapi limit akun tetap berlaku. Cap memakai hari UTC, bertahan setelah restart, menghitung semua attempt terkirim termasuk gagal. Link menggabungkan usage yang ada; unlink mempertahankan usage sebelumnya.
 
-`v.ai({ prompt, input? })` langsung mengembalikan request ID. Panggil di dalam handler, bukan saat mendaftarkan rule. `input` boleh berupa JSON apa pun; prompt/input masing-masing dibatasi20KB. Balasan hadir sebagai event `ai`: `{requestId, ok, text, citations,
-error}`. Teks sukses maksimal48KB; citation `{url,title}`. Pertahankan link sumber yang terlihat dan dapat diklik saat menampilkan jawaban web-search. Search selalu tersedia bagi model. Tidak ada deadline app tetap; concurrency terbatas; tidak ada provider fallback atau retry otomatis. Respons adalah data, tidak dieksekusi sebagai JavaScript. Rule menentukan tindakan yang sudah ada.
+`v.ai({ prompt, input? })` langsung mengembalikan request ID. Panggil di dalam handler, bukan saat mendaftarkan rule. `input` boleh berupa JSON apa pun; prompt/input masing-masing dibatasi20KB. Balasan hadir sebagai event `ai`: `{requestId, ok, text, citations, error}`. Teks sukses maksimal48KB; citation `{url,title}`. Pertahankan link sumber yang terlihat dan dapat diklik saat menampilkan jawaban web-search. Search selalu tersedia bagi model. Tidak ada deadline app tetap; concurrency terbatas; tidak ada provider fallback atau retry otomatis. Respons adalah data, tidak dieksekusi sebagai JavaScript. Rule menentukan tindakan yang sudah ada.
 
 Untuk panel dengan tombol `ask` dan field `note`:
 

@@ -165,12 +165,12 @@ Steam wird blockiert, außer während einer fünfminütigen Pause, ausgelöst du
 }
 ```
 
+
 ## KI-Aufrufe aus einer laufenden Regel
 
 Jede benutzerdefinierte Gruppe wählt unter **AI calls** eine Verbindung/ein Modell und Reasoning effort. Mac- und Browserregeln verwenden dieselbe API. Browseranfragen benötigen ein verbundenes Mac Vault; Anbieterdaten bleiben dort. Verknüpfte Gruppen teilen Auswahl und optionales Tageslimit. Leer bedeutet kein Gruppenlimit; Kontolimits gelten weiter. Das Limit gilt pro UTC-Tag, bleibt nach Neustart bestehen und zählt gesendete Versuche einschließlich Fehlern. Verknüpfen addiert bisherigen Verbrauch; Trennen behält ihn.
 
-`v.ai({ prompt, input? })` liefert sofort eine Request-ID. Innerhalb eines Handlers aufrufen, nicht bei der Registrierung. `input` kann jeder JSON-Wert sein; prompt und input sind je auf20KB begrenzt. Antworten kommen als `ai`-Events: `{requestId, ok, text, citations,
-error}`. Erfolgstext höchstens48KB; Zitate `{url,title}`. Bei Websuche sichtbare, anklickbare Quellenlinks beibehalten. Suche ist für das Modell immer verfügbar. Keine feste App-Frist, begrenzte Gleichzeitigkeit, kein Provider-Fallback und keine automatische Wiederholung. Antworten sind Daten und werden nicht als JavaScript ausgeführt; die Regel entscheidet über bestehende Aktionen.
+`v.ai({ prompt, input? })` liefert sofort eine Request-ID. Innerhalb eines Handlers aufrufen, nicht bei der Registrierung. `input` kann jeder JSON-Wert sein; prompt und input sind je auf20KB begrenzt. Antworten kommen als `ai`-Events: `{requestId, ok, text, citations, error}`. Erfolgstext höchstens48KB; Zitate `{url,title}`. Bei Websuche sichtbare, anklickbare Quellenlinks beibehalten. Suche ist für das Modell immer verfügbar. Keine feste App-Frist, begrenzte Gleichzeitigkeit, kein Provider-Fallback und keine automatische Wiederholung. Antworten sind Daten und werden nicht als JavaScript ausgeführt; die Regel entscheidet über bestehende Aktionen.
 
 Für ein Panel mit einer `ask`-Schaltfläche und einem `note`-Feld:
 

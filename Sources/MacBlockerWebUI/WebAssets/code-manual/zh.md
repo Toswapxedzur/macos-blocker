@@ -165,12 +165,12 @@ file.data = { requestId: string, op: string, path: string, ok: boolean,
 }
 ```
 
+
 ## 运行中规则的 AI 调用
 
 每个 custom group 在 **AI calls** 中选择一个 connection/model 和 reasoning effort。Mac 与浏览器规则使用同一 API；浏览器请求需要连接 Mac Vault，提供商凭据保存在那里。链接组共享选择和可选的每日请求上限。留空表示组级不限额，账户限制仍适用。上限按 UTC 日计算，重启后保留，并统计已提交的尝试（包括失败）。Link 合并现有用量；unlink 保留之前的用量。
 
-`v.ai({ prompt, input? })` 立即返回 request ID。请在 handler 中调用，不要在注册规则时调用。`input` 可以是任意 JSON 值；prompt/input 各限20KB。回复通过 `ai` 事件到达：`{requestId, ok, text, citations,
-error}`。成功文本最多48KB；citations 是 `{url,title}`。展示网页搜索答案时保留可见、可点击的来源链接。模型始终可以使用搜索。没有固定的 app 截止时间，并发数受限；不会回退到其他提供商或自动重试。回复是数据，不会作为 JavaScript 执行；规则决定采取哪些现有操作。
+`v.ai({ prompt, input? })` 立即返回 request ID。请在 handler 中调用，不要在注册规则时调用。`input` 可以是任意 JSON 值；prompt/input 各限20KB。回复通过 `ai` 事件到达：`{requestId, ok, text, citations, error}`。成功文本最多48KB；citations 是 `{url,title}`。展示网页搜索答案时保留可见、可点击的来源链接。模型始终可以使用搜索。没有固定的 app 截止时间，并发数受限；不会回退到其他提供商或自动重试。回复是数据，不会作为 JavaScript 执行；规则决定采取哪些现有操作。
 
 包含 `ask` 按钮和 `note` 字段的面板示例：
 
