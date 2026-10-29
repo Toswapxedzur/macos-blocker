@@ -63,6 +63,29 @@ final class APIKeyClassificationTests: XCTestCase {
         XCTAssertFalse(String(decoding: try JSONEncoder().encode(group), as: UTF8.self).contains("fixture-key"))
         await client.shutdown()
     }
+    func testHTTP400LeavesOnlyItsItemUnresolvedAndNextItemRuns() async throws {
+        let profile = APIKeyProviderProfile(id: "fixture", type: .gemini, credential: "fixture-key-not-real")
+        let counter = AttemptCounter(), success = try response(.gemini)
+        let http = URLSessionProviderHTTPClient { request in
+            let attempt = await counter.next()
+            return (attempt == 1 ? Data() : success,
+                HTTPURLResponse(url: request.url!, statusCode: attempt == 1 ? 400 : 200, httpVersion: nil, headerFields: nil)!)
+        }
+        let client = APIKeyClassificationClient(profiles: { _ in profile }, http: http)
+        let group = ClassifierTypeAsset(name: "Fixture", treeID: "t", treeRevision: 1, datasetID: "d", datasetRevision: 1,
+            classificationProvider: .apiKey, apiKey: .init(profileID: profile.id, model: "gemini-3.1-flash-lite"))
+        let engine = try await client.resolveCloudEngine(for: group)
+        do { _ = try await engine.classify(item); XCTFail("HTTP 400 must leave this item unresolved") }
+        catch { XCTAssertEqual(error as? ProviderTestHTTPError, .status(400)) }
+        let held = await client.status()
+        XCTAssertTrue(held.failedProfileIDs.isEmpty)
+        XCTAssertEqual(held.requestsToday, 1)
+        let next = try await engine.classify(item)
+        XCTAssertEqual(next.tags.map(\.name), ["Games"])
+        let completed = await client.status()
+        XCTAssertEqual(completed.requestsToday, 2)
+        await client.shutdown()
+    }
     func testTransientServerFailureRetriesThreeDispatchedAttemptsWithoutRequestDeadline() async throws {
         let profile = APIKeyProviderProfile(id: "fixture", type: .gemini, credential: "fixture-key-not-real",
             taggingRetryPolicy: .init(intervalSeconds: 1, maximumAttempts: 3))

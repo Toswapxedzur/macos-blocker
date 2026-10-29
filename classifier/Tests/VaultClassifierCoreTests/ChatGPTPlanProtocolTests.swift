@@ -107,6 +107,7 @@ final class ChatGPTPlanProtocolTests: XCTestCase {
         for status in [204, 302, 400, 401, 429, 500] {
             let response = try XCTUnwrap(HTTPURLResponse(url: url, statusCode: status, httpVersion: "HTTP/2", headerFields: [:]))
             XCTAssertThrowsError(try ChatGPTHTTP.validateResponse(response, streaming: true)) { error in
+                if status == 400 { XCTAssertEqual(error as? ChatGPTPlanError, .rejectedRequest) }
                 if status == 401 { XCTAssertEqual(error as? CloudClassificationError, .signInRequired) }
                 if status == 429 { XCTAssertEqual(error as? ChatGPTPlanError, .usageUnavailable) }
             }

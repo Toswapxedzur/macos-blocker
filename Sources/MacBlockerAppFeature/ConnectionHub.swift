@@ -1498,6 +1498,7 @@ final class ConnectionHub: ObservableObject {
         }
         if removed != nil { broadcastPeersLocked() }
         lock.unlock()
+        if removed != nil { Task { @MainActor in RuleAIService.shared.cancelInvalidRequests() } }
         for completion in strandedBrowserCompletions { completion(.failure("browser-unavailable")) }
     }
 
@@ -1539,6 +1540,7 @@ final class ConnectionHub: ObservableObject {
                 self.lock.lock(); defer { self.lock.unlock() }
                 try self.setRosterLocked(program: program, infos: infos, document: document, save: save)
             }
+            Task { @MainActor in RuleAIService.shared.cancelInvalidRequests() }
             return nil
         } catch GroupStoreError.invalidInput(let reason) { return reason }
         catch { return "local-storage-unavailable" }
@@ -1558,7 +1560,12 @@ final class ConnectionHub: ObservableObject {
         guard let raw, let data = try? JSONSerialization.data(withJSONObject: raw),
               let configuration = try? JSONDecoder().decode(RuleAIConfiguration.self, from: data) else { return nil }
         let members = cluster.map { value in value.memberGroupIds.map { $0.key + ":" + $0.value }.sorted() } ?? [program + ":" + groupID]
-        return RuleAIContext(configuration: configuration, members: members, revision: info.aiEpoch + ":" + (cluster.map { $0.id + ":" + $0.aiEpoch } ?? "unlinked"))
+        // A browser reconnect creates a new response destination even if the
+        // group's settings are byte-for-byte unchanged.
+        let peerRevision = Self.browserPrograms.contains(program)
+            ? (peers.values.first { $0.connected && $0.program == program }?.id ?? "offline") : "local"
+        return RuleAIContext(configuration: configuration, members: members,
+                             revision: info.aiEpoch + ":" + (cluster.map { $0.id + ":" + $0.aiEpoch } ?? "unlinked") + ":" + peerRevision)
     }
 
     private static func rosterInfos(_ groups: [[String: Any]]) -> [GroupInfo] {

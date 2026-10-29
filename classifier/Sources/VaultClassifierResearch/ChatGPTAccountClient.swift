@@ -343,7 +343,7 @@ public actor ChatGPTAccountClient: CloudClassificationEngineResolving {
             usage.requests += 1
             try store.write(JSONEncoder().encode(usage), name: "usage.json") // Every dispatched attempt counts.
             let id = UUID()
-            let work = Task { try await http.inference(request, token: token, maximumTextBytes: maximumTextBytes, withoutDeadline: holdFailures) }
+            let work = Task { try await http.inference(request, token: token, maximumTextBytes: maximumTextBytes, withoutDeadline: true) }
             activeRequests[id] = work
             do {
                 let output = try await withTaskCancellationHandler(operation: { try await work.value }, onCancel: { work.cancel() })
@@ -370,7 +370,10 @@ public actor ChatGPTAccountClient: CloudClassificationEngineResolving {
                 }
                 // A sibling may have failed before this request was cancelled.
                 // Only explicit Retry/disconnect may clear that failure hold.
-                if !(error is CancellationError) { issue = error.localizedDescription; failureHold = holdFailures || failureHold }
+                if !(error is CancellationError) {
+                    issue = error.localizedDescription
+                    failureHold = failureHold || (holdFailures && (error as? ChatGPTPlanError) != .rejectedRequest)
+                }
                 throw error
             }
         }

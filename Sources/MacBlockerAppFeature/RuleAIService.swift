@@ -26,14 +26,27 @@ final class RuleAIService {
     private let models: () -> [[String: Any]]
     private let validate: (RuleAIConfiguration) -> Bool
     private let generate: (RuleAIConfiguration, RuleAIInput) async throws -> RuleAIReply
-    private let timeoutNanoseconds: UInt64
+    private struct ActiveCall {
+        let program: String
+        let groupID: String
+        let context: RuleAIContext
+        let task: Task<RuleAIReply, Error>
+    }
+    private var activeCalls: [UUID: ActiveCall] = [:]
     private var inFlight = 0
     private var stopped = false
-    init(usage: RuleAIUsage, context: @escaping (String, String) -> RuleAIContext?, models: @escaping () -> [[String: Any]], validate: @escaping (RuleAIConfiguration) -> Bool, generate: @escaping (RuleAIConfiguration, RuleAIInput) async throws -> RuleAIReply, timeoutNanoseconds: UInt64 = 70_000_000_000) {
-        self.usage = usage; self.context = context; self.models = models; self.validate = validate; self.generate = generate; self.timeoutNanoseconds = timeoutNanoseconds
+    init(usage: RuleAIUsage, context: @escaping (String, String) -> RuleAIContext?, models: @escaping () -> [[String: Any]], validate: @escaping (RuleAIConfiguration) -> Bool, generate: @escaping (RuleAIConfiguration, RuleAIInput) async throws -> RuleAIReply) {
+        self.usage = usage; self.context = context; self.models = models; self.validate = validate; self.generate = generate
     }
     func modelOptions() -> [String: Any] { ["ok": !stopped, "models": stopped ? [] : models()] }
-    func shutdown() { stopped = true }
+    func shutdown() { stopped = true; activeCalls.values.forEach { $0.task.cancel() } }
+    /// A disconnected peer or edited group has no destination for its old
+    /// answer. Cancel its provider work rather than occupying a slot forever.
+    func cancelInvalidRequests() {
+        for call in activeCalls.values where context(call.program, call.groupID) != call.context {
+            call.task.cancel()
+        }
+    }
     func request(program: String, groupID: String, payload: String) async -> [String: Any] {
         do {
             guard !stopped else { throw RuleAIError.unavailable }
@@ -41,15 +54,12 @@ final class RuleAIService {
             let input = try RuleAIInput(payload: payload)
             guard let captured = context(program, groupID), validate(captured.configuration) else { throw RuleAIError.invalidConfiguration }
             try usage.reserve(members: captured.members, limit: captured.configuration.dailyRequestLimit)
-            inFlight += 1; defer { inFlight -= 1 }
-            let generate = self.generate, timeout = timeoutNanoseconds
-            let reply = try await withThrowingTaskGroup(of: RuleAIReply.self) { group in
-                group.addTask { @MainActor in try await generate(captured.configuration, input) }
-                group.addTask { try await Task.sleep(nanoseconds: timeout); throw RuleAIError.timeout }
-                defer { group.cancelAll() }
-                guard let result = try await group.next() else { throw RuleAIError.unavailable }
-                return result
-            }
+            let id = UUID(), generate = self.generate
+            let work = Task { @MainActor in try await generate(captured.configuration, input) }
+            activeCalls[id] = ActiveCall(program: program, groupID: groupID, context: captured, task: work)
+            inFlight += 1
+            defer { activeCalls[id] = nil; inFlight -= 1 }
+            let reply = try await withTaskCancellationHandler(operation: { try await work.value }, onCancel: { work.cancel() })
             guard !stopped, !Task.isCancelled, context(program, groupID) == captured else { throw RuleAIError.unavailable }
             let data = try JSONEncoder().encode(reply)
             var object = try JSONSerialization.jsonObject(with: data) as! [String: Any]

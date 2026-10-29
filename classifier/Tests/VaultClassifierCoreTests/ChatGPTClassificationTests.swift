@@ -63,6 +63,7 @@ final class ChatGPTClassificationTests: XCTestCase {
         let completed: [String:Any] = ["type":"response.completed","response":["status":"completed","output":[["type":"message","role":"assistant","content":[["type":"output_text","text":"A generic answer","annotations":[["type":"url_citation","url":"https://example.com/source","title":"Source"]]]]]]]]
         let bytes=Data("data: ".utf8)+(try JSONSerialization.data(withJSONObject:completed))+Data("\n\n".utf8)
         let http=ChatGPTHTTPClient {request,consume in
+            XCTAssertTrue(request.timeoutInterval.isInfinite)
             let body=try XCTUnwrap(JSONSerialization.jsonObject(with:XCTUnwrap(request.httpBody)) as? [String:Any])
             XCTAssertNil(body["max_output_tokens"],"the subscription route rejects API token-limit fields")
             XCTAssertNil(body["text"],"generic output cannot inherit the tagging schema")
@@ -186,6 +187,28 @@ final class ChatGPTClassificationTests: XCTestCase {
         XCTAssertEqual(calls.count, 2)
         let serialized = String(decoding: try JSONEncoder().encode(coordinator.snapshot()), as: UTF8.self)
         XCTAssertFalse(serialized.contains("test-only-access")); XCTAssertFalse(serialized.contains("test-only-refresh"))
+        await client.shutdown()
+    }
+    func testHTTP400DoesNotHoldChatGPTAccountOrPreventNextItem() async throws {
+        let root = try root(); defer { try? FileManager.default.removeItem(at: root) }
+        try credentialFixture(root)
+        let calls = CloudCalls(), stream = successfulStream()
+        let client = try ChatGPTAccountClient(directory: root, http: .init { request, consume in
+            calls.record(request)
+            if calls.count == 1 { throw ChatGPTPlanError.rejectedRequest }
+            try consume(stream)
+        })
+        let account = await client.status()
+        let engine = ChatGPTClassificationEngine(client: client,
+            configuration: .init(accountID: account.accountID, model: "fixture"), modelVersion: "fixture/v1")
+        do { _ = try await engine.classify(item()); XCTFail("HTTP 400 must leave the item unresolved") }
+        catch { XCTAssertEqual(error as? ChatGPTPlanError, .rejectedRequest) }
+        let afterFailure = await client.status()
+        XCTAssertFalse(afterFailure.needsRetry)
+        XCTAssertEqual(afterFailure.requestsToday, 1)
+        let next = try await engine.classify(item())
+        XCTAssertEqual(next.tags.first?.name, "Games")
+        XCTAssertEqual(calls.count, 2)
         await client.shutdown()
     }
     func testTransientSubscriptionFailureRetriesAndCountsEveryAttempt() async throws {

@@ -13,6 +13,7 @@ final class RuleAIGenerationTests: XCTestCase {
             let response: [String:Any] = provider == .gemini ? ["candidates":[["finishReason":"STOP","content":["parts":[["text":"A summary"]]]]]] : ["status":"completed","output":[["type":"message","content":[["type":"output_text","text":"A summary"]]]]]
             let bytes=try JSONSerialization.data(withJSONObject:response)
             let http=URLSessionProviderHTTPClient { request in
+                XCTAssertTrue(request.timeoutInterval.isInfinite)
                 XCTAssertEqual(request.url?.host,host)
                 XCTAssertEqual(request.value(forHTTPHeaderField:header),provider == .gemini ? "fixture-only-key" : "Bearer fixture-only-key")
                 let body=try XCTUnwrap(JSONSerialization.jsonObject(with:XCTUnwrap(request.httpBody)) as? [String:Any])

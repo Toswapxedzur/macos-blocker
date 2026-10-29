@@ -160,7 +160,7 @@ public enum ChatGPTPlanProtocol {
 
 public enum ChatGPTPlanError: Error, LocalizedError, Equatable, Sendable {
     case invalidAuthorization, authorizationDeclined, invalidRequest, invalidResponse
-    case incompleteStream, failedResponse, transientResponse, usageUnavailable, responseTooLarge
+    case incompleteStream, failedResponse, rejectedRequest, transientResponse, usageUnavailable, responseTooLarge
 
     public var errorDescription: String? {
         switch self {
@@ -170,6 +170,7 @@ public enum ChatGPTPlanError: Error, LocalizedError, Equatable, Sendable {
         case .invalidResponse: return "ChatGPT returned an invalid response."
         case .incompleteStream: return "ChatGPT did not finish the response."
         case .failedResponse: return "ChatGPT could not complete the request."
+        case .rejectedRequest: return "ChatGPT rejected this request. The item is available for Retry."
         case .transientResponse: return "ChatGPT is temporarily unavailable."
         case .usageUnavailable: return "ChatGPT plan usage is currently unavailable or has reached its limit."
         case .responseTooLarge: return "The ChatGPT response exceeded the local response limit."

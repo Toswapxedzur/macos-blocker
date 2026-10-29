@@ -6,20 +6,44 @@ import VaultClassifierCore
 
 @MainActor
 final class RuleAIServiceTests: XCTestCase {
-    func testTimeoutCancelsProviderAndReleasesTheConcurrencySlot() async throws {
+    func testGenerationWaitsWithoutDeadlineAndReleasesItsConcurrencySlot() async throws {
         let directory=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer {try? FileManager.default.removeItem(at:directory)}
         let context=RuleAIContext(configuration:.init(providerModel:"api:fixture:model"),members:["mac:a"],revision:"one")
-        var slow=true,cancelled=false
+        var continuation:CheckedContinuation<RuleAIReply,Error>?,finished=false,calls=0
         let service=RuleAIService(usage:RuleAIUsage(url:directory.appendingPathComponent("usage.json")),context:{_,_ in context},models:{[]},validate:{_ in true},generate:{_,_ in
-            if slow {do {try await Task.sleep(nanoseconds:10_000_000_000)} catch {cancelled=true;throw error}}
-            return try RuleAIReply(text:"ready")
-        },timeoutNanoseconds:10_000_000)
-        let first=await service.request(program:"mac",groupID:"a",payload:#"{"prompt":"x"}"#)
-        XCTAssertEqual(first["error"] as? String,RuleAIError.timeout.rawValue);XCTAssertTrue(cancelled)
-        slow=false
+            calls += 1
+            if calls == 1 {return try await withCheckedThrowingContinuation {continuation=$0}}
+            return try RuleAIReply(text:"ready again")
+        })
+        let first=Task {let result=await service.request(program:"mac",groupID:"a",payload:#"{"prompt":"x"}"#);finished=true;return result}
+        for _ in 0..<100 where continuation == nil {await Task.yield()}
+        XCTAssertNotNil(continuation)
+        try await Task.sleep(nanoseconds:80_000_000)
+        XCTAssertFalse(finished)
+        continuation?.resume(returning:try RuleAIReply(text:"ready"))
+        let firstResult=await first.value
+        XCTAssertEqual(firstResult["ok"] as? Bool,true)
         let second=await service.request(program:"mac",groupID:"a",payload:#"{"prompt":"x"}"#)
         XCTAssertEqual(second["ok"] as? Bool,true)
+    }
+    func testChangedContextCancelsOutstandingProviderWork() async throws {
+        let directory=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer {try? FileManager.default.removeItem(at:directory)}
+        var context:RuleAIContext?=RuleAIContext(configuration:.init(providerModel:"api:fixture:model"),members:["chrome:a"],revision:"one")
+        var started=false,cancelled=false
+        let service=RuleAIService(usage:RuleAIUsage(url:directory.appendingPathComponent("usage.json")),context:{_,_ in context},models:{[]},validate:{_ in true},generate:{_,_ in
+            started=true
+            do {try await Task.sleep(nanoseconds:30_000_000_000)} catch {cancelled=true;throw error}
+            return try RuleAIReply(text:"obsolete")
+        })
+        let first=Task {await service.request(program:"chrome",groupID:"a",payload:#"{"prompt":"x"}"#)}
+        for _ in 0..<100 where !started {await Task.yield()}
+        XCTAssertTrue(started)
+        context=nil;service.cancelInvalidRequests()
+        let firstResult=await first.value
+        XCTAssertEqual(firstResult["error"] as? String,RuleAIError.unavailable.rawValue)
+        XCTAssertTrue(cancelled)
     }
     func testOnlyTwoCallsCanBeActiveAndBusyDoesNotReserveAllowance() async throws {
         let directory=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)

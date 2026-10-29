@@ -59,7 +59,7 @@ public actor APIKeyClassificationClient: CloudClassificationEngineResolving {
         let credential = ProviderCredentialRecord(values: [field: key]); try credential.validate(for: descriptor)
         let id = UUID(), http = self.http
         let task = Task<RuleAIReply, Error> {
-            let result = try await http.send(plan: request.plan, body: request.body, credential: credential, timeout: 60)
+            let result = try await http.send(plan: request.plan, body: request.body, credential: credential, timeout: .infinity)
             try Task.checkCancellation()
             return try RuleAIGeneration.parse(result.data, format: request.plan.bodyFormat)
         }
@@ -114,7 +114,11 @@ public actor APIKeyClassificationClient: CloudClassificationEngineResolving {
             try Task.checkCancellation()
             return try ChatGPTClassificationEngine.parse(text, requests: batch)
         } catch {
-            if !(error is CancellationError) && !Task.isCancelled && !stopped { failed.insert(profileID) }
+            // A provider can reject one item's evidence with HTTP 400. Leave
+            // that item unresolved for Retry without holding the connection or
+            // preventing independent items from running.
+            let rejectedItem = (error as? ProviderTestHTTPError) == .status(400)
+            if !(error is CancellationError) && !Task.isCancelled && !stopped && !rejectedItem { failed.insert(profileID) }
             throw error
         }
     }

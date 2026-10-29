@@ -22,7 +22,6 @@ public enum RuleAIError: String, Error, Sendable {
     case invalidConfiguration = "ai-not-configured"
     case invalidInput = "ai-invalid-input"
     case busy = "ai-busy"
-    case timeout = "ai-timeout"
     case usageLimit = "ai-daily-limit"
     case unavailable = "ai-unavailable"
     case failed = "ai-request-failed"
