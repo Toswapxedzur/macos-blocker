@@ -1540,7 +1540,6 @@ final class ConnectionHub: ObservableObject {
                 self.lock.lock(); defer { self.lock.unlock() }
                 try self.setRosterLocked(program: program, infos: infos, document: document, save: save)
             }
-            Task { @MainActor in RuleAIService.shared.cancelInvalidRequests() }
             return nil
         } catch GroupStoreError.invalidInput(let reason) { return reason }
         catch { return "local-storage-unavailable" }
@@ -1604,6 +1603,9 @@ final class ConnectionHub: ObservableObject {
         if !affected.isEmpty || discarded { persistClustersLocked() }
         for cluster in affected { broadcastClusterLocked(clusterJSONObject(cluster)) }
         broadcastToPeersLocked(["kind": "rosters", "rosters": rostersJSONObjectLocked()])
+        // All roster paths, including native document reconciliation, pass
+        // here. The task runs after the caller releases the hub lock.
+        Task { @MainActor in RuleAIService.shared.cancelInvalidRequests() }
     }
 
     private func withMembershipDocument<T>(_ operation: ([String: Any]?, ([String: Any]) throws -> Void) throws -> T) throws -> T {
@@ -1660,6 +1662,7 @@ final class ConnectionHub: ObservableObject {
         for (program, id) in cluster.memberGroupIds {
             if let index = rosters[program]?.firstIndex(where: { $0.id == id }) { rosters[program]?[index].aiEpoch = UUID().uuidString }
         }
+        Task { @MainActor in RuleAIService.shared.cancelInvalidRequests() }
     }
 
     private func removeMemberLocked(_ cluster: ClusterState, program: String) {
