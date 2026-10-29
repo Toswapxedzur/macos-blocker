@@ -238,7 +238,11 @@ public actor ChatGPTAccountClient: CloudClassificationEngineResolving {
         try store.write(JSONEncoder().encode(Welcome(schemaVersion: 1, accounts: next)), name: "welcome.json")
         welcomeAccounts = next; onChange()
     }
-    func recordClassificationFailure(_ error: Error) { failureHold = true; issue = error.localizedDescription; onChange() }
+    private static func holdsConnection(_ error: Error) -> Bool {
+        if let cloud = error as? CloudClassificationError { return [.signInRequired, .usageLimit].contains(cloud) }
+        if let plan = error as? ChatGPTPlanError { return [.invalidAuthorization, .accountUnavailable, .usageUnavailable].contains(plan) }
+        return false
+    }
     public func setDailyRequestLimit(_ value: Int?) { dailyRequestLimit = value }
     public func setTaggingRetryPolicy(_ value: TaggingRetryPolicy) { if value.isValid { taggingRetryPolicy = value } }
 
@@ -331,7 +335,10 @@ public actor ChatGPTAccountClient: CloudClassificationEngineResolving {
             do { token = try await accessToken() }
             catch {
                 if pending != generation, !isShuttingDown { throw CloudClassificationError.signInRequired }
-                if !(error is CancellationError) { issue = error.localizedDescription; failureHold = holdFailures || failureHold }
+                if !(error is CancellationError) {
+                    issue = error.localizedDescription
+                    failureHold = failureHold || (holdFailures && Self.holdsConnection(error))
+                }
                 throw error
             }
             // A renewal can suspend this actor; recheck connection, hold and
@@ -372,7 +379,7 @@ public actor ChatGPTAccountClient: CloudClassificationEngineResolving {
                 // Only explicit Retry/disconnect may clear that failure hold.
                 if !(error is CancellationError) {
                     issue = error.localizedDescription
-                    failureHold = failureHold || (holdFailures && (error as? ChatGPTPlanError) != .rejectedRequest)
+                    failureHold = failureHold || (holdFailures && Self.holdsConnection(error))
                 }
                 throw error
             }

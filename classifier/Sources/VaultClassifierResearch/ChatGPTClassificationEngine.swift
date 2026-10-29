@@ -35,8 +35,7 @@ struct ChatGPTClassificationEngine: BatchClassificationEngine {
         try Task.checkCancellation()
         let plan = try Self.prepare(batch, configuration: configuration)
         let text = try await client.classify(configuration: configuration, request: plan)
-        do { return try Self.parse(text, requests: batch) }
-        catch { await client.recordClassificationFailure(error); throw error }
+        return try Self.parse(text, requests: batch)
     }
 
     static func prepare(_ requests: [LLMClassificationRequest], configuration: ChatGPTClassificationSettings) throws -> ChatGPTPlanProtocol.Request {

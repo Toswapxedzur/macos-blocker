@@ -211,6 +211,27 @@ final class ChatGPTClassificationTests: XCTestCase {
         XCTAssertEqual(calls.count, 2)
         await client.shutdown()
     }
+    func testExhaustedTransientFailureDoesNotHoldChatGPTAccount() async throws {
+        let root = try root(); defer { try? FileManager.default.removeItem(at: root) }
+        try credentialFixture(root)
+        let calls = CloudCalls(), stream = successfulStream()
+        let client = try ChatGPTAccountClient(directory: root,
+            taggingRetryPolicy: .init(intervalSeconds: 1, maximumAttempts: 1), http: .init { request, consume in
+                calls.record(request)
+                if calls.count == 1 { throw ChatGPTPlanError.transientResponse }
+                try consume(stream)
+            })
+        let account = await client.status()
+        let engine = ChatGPTClassificationEngine(client: client,
+            configuration: .init(accountID: account.accountID, model: "fixture"), modelVersion: "fixture/v1")
+        do { _ = try await engine.classify(item()); XCTFail("This item must remain unresolved") }
+        catch { XCTAssertEqual(error as? ChatGPTPlanError, .transientResponse) }
+        let afterFailure = await client.status()
+        XCTAssertFalse(afterFailure.needsRetry)
+        let next = try await engine.classify(item())
+        XCTAssertEqual(next.tags.first?.name, "Games")
+        await client.shutdown()
+    }
     func testTransientSubscriptionFailureRetriesAndCountsEveryAttempt() async throws {
         let root = try root(); defer { try? FileManager.default.removeItem(at: root) }
         try credentialFixture(root)

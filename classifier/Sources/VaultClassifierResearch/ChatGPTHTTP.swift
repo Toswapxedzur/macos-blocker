@@ -66,6 +66,7 @@ public enum ChatGPTHTTP {
             let status = (response as? HTTPURLResponse)?.statusCode
             if status == 400 { throw ChatGPTPlanError.rejectedRequest }
             if status == 401 { throw CloudClassificationError.signInRequired }
+            if status == 402 || status == 403 { throw ChatGPTPlanError.accountUnavailable }
             if status == 429 { throw ChatGPTPlanError.usageUnavailable }
             if status == 408 || (500...599).contains(status ?? 0) { throw ChatGPTPlanError.transientResponse }
             throw ChatGPTPlanError.failedResponse

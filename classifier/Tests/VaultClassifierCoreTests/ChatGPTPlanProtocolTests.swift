@@ -104,11 +104,12 @@ final class ChatGPTPlanProtocolTests: XCTestCase {
 
     func testStreamHTTPStatusFailuresCannotBeAcceptedAsSuccessfulBodies() throws {
         let url = URL(string: "https://api.openai.com/v1/responses")!
-        for status in [204, 302, 400, 401, 429, 500] {
+        for status in [204, 302, 400, 401, 402, 403, 429, 500] {
             let response = try XCTUnwrap(HTTPURLResponse(url: url, statusCode: status, httpVersion: "HTTP/2", headerFields: [:]))
             XCTAssertThrowsError(try ChatGPTHTTP.validateResponse(response, streaming: true)) { error in
                 if status == 400 { XCTAssertEqual(error as? ChatGPTPlanError, .rejectedRequest) }
                 if status == 401 { XCTAssertEqual(error as? CloudClassificationError, .signInRequired) }
+                if status == 402 || status == 403 { XCTAssertEqual(error as? ChatGPTPlanError, .accountUnavailable) }
                 if status == 429 { XCTAssertEqual(error as? ChatGPTPlanError, .usageUnavailable) }
             }
         }

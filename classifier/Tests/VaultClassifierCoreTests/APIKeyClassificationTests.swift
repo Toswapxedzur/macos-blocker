@@ -52,7 +52,7 @@ final class APIKeyClassificationTests: XCTestCase {
         }
         let client = APIKeyClassificationClient(profiles: { _ in profile }, http: http)
         let group = ClassifierTypeAsset(name: "Fixture", treeID: "t", treeRevision: 1, datasetID: "d", datasetRevision: 1,
-            classificationProvider: .apiKey, apiKey: .init(profileID: profile.id, model: "fixture"))
+            classificationProvider: .apiKey, apiKey: .init(profileID: profile.id, model: "grok-4.6-fixture"))
         let engine = try await client.resolveCloudEngine(for: group)
         for _ in 0..<3 { do { _ = try await engine.classify(item); XCTFail("must fail") } catch {} }
         let held = await client.status(); XCTAssertEqual(held.requestsToday, 1)
@@ -84,6 +84,27 @@ final class APIKeyClassificationTests: XCTestCase {
         XCTAssertEqual(next.tags.map(\.name), ["Games"])
         let completed = await client.status()
         XCTAssertEqual(completed.requestsToday, 2)
+        await client.shutdown()
+    }
+    func testExhaustedServerFailureDoesNotHoldOtherItems() async throws {
+        let profile = APIKeyProviderProfile(id: "fixture", type: .gemini, credential: "fixture-key-not-real",
+            taggingRetryPolicy: .init(intervalSeconds: 1, maximumAttempts: 1))
+        let counter = AttemptCounter(), success = try response(.gemini)
+        let http = URLSessionProviderHTTPClient { request in
+            let attempt = await counter.next()
+            return (attempt == 1 ? Data() : success,
+                HTTPURLResponse(url: request.url!, statusCode: attempt == 1 ? 503 : 200, httpVersion: nil, headerFields: nil)!)
+        }
+        let client = APIKeyClassificationClient(profiles: { _ in profile }, http: http)
+        let group = ClassifierTypeAsset(name: "Fixture", treeID: "t", treeRevision: 1, datasetID: "d", datasetRevision: 1,
+            classificationProvider: .apiKey, apiKey: .init(profileID: profile.id, model: "gemini-3.1-flash-lite"))
+        let engine = try await client.resolveCloudEngine(for: group)
+        do { _ = try await engine.classify(item); XCTFail("This item must remain unresolved") }
+        catch { XCTAssertEqual(error as? ProviderTestHTTPError, .status(503)) }
+        let afterFailure = await client.status()
+        XCTAssertTrue(afterFailure.failedProfileIDs.isEmpty)
+        let next = try await engine.classify(item)
+        XCTAssertEqual(next.tags.map(\.name), ["Games"])
         await client.shutdown()
     }
     func testTransientServerFailureRetriesThreeDispatchedAttemptsWithoutRequestDeadline() async throws {

@@ -72,6 +72,13 @@ public actor APIKeyClassificationClient: CloudClassificationEngineResolving {
         if day != today { today = day; requests = 0 }
     }
     private func recordAttempt() { resetDay(); requests += 1 }
+    private static func holdsConnection(_ error: Error) -> Bool {
+        if let http = error as? ProviderTestHTTPError, case .status(let status) = http {
+            return [401, 402, 403, 429].contains(status)
+        }
+        return (error as? ProviderTestProtocolError) == .missingCredential
+            || (error as? CloudClassificationError) == .usageLimit
+    }
     func classify(profileID: String, configuration: APIKeyClassificationSettings, requests batch: [LLMClassificationRequest]) async throws -> [LLMClassificationResult] {
         while active.count + generationActive.count >= 2 { try Task.checkCancellation(); try await Task.sleep(nanoseconds: 20_000_000) }
         try Task.checkCancellation()
@@ -114,11 +121,9 @@ public actor APIKeyClassificationClient: CloudClassificationEngineResolving {
             try Task.checkCancellation()
             return try ChatGPTClassificationEngine.parse(text, requests: batch)
         } catch {
-            // A provider can reject one item's evidence with HTTP 400. Leave
-            // that item unresolved for Retry without holding the connection or
-            // preventing independent items from running.
-            let rejectedItem = (error as? ProviderTestHTTPError) == .status(400)
-            if !(error is CancellationError) && !Task.isCancelled && !stopped && !rejectedItem { failed.insert(profileID) }
+            // Only account, credential and quota failures hold a connection.
+            // An item rejection or exhausted transient attempt remains local.
+            if !Task.isCancelled && !stopped && Self.holdsConnection(error) { failed.insert(profileID) }
             throw error
         }
     }
