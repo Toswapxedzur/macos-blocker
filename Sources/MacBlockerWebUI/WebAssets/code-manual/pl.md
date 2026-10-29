@@ -47,12 +47,13 @@ Nazwane obiekty przetrwają Run i ponowne uruchomienie w zarezerwowanym `v.state
 
 ## API
 
-- `on(type, handler)` → boolean. Rejestruje `handler(ev)`; wiele handlers działa w kolejności rejestracji. False oznacza nieprawidłowe argumenty lub osiągnięcie limitu handlerów. `ev = { type: string, now: number, data }`; `now` to milisekundy Unix.
+- `on(type, handler)` → wartość logiczna. Rejestruje `handler(ev)`; wiele handlerów działa w kolejności rejestracji. False oznacza nieprawidłowe argumenty lub osiągnięcie limitu handlerów. `ev = { type: string, now: number, origin: "host" | "user" | "rule", data }`; `now` to milisekundy Unix. Wejście z panelu natywnego ma `origin: "user"`; `v.emit` ma `origin: "rule"`.
 - `v.state`: modyfikowalny obiekt JSON, zapisywany po event dispatch. Inicjalizuj brakujące fields zamiast nadpisywać istniejący state. Przypisanie non-object lub tablicy resetuje go do `{}`; aktualizacje niepodlegające serializacji lub zbyt duże nie są zapisywane.
 - `v.log(...values)`: dopisuje wpisy do Log tej grupy. Błędy wykonania i dostarczenia pojawiają się jako jawne wpisy błędów w tym samym strumieniu. Logs/Clear są niezależne dla grup. Błędy ładowania pojawiają się także w statusie Run; częściowo wykonane zdarzenia nie są automatycznie powtarzane.
 - `v.emit(type, data)`: umieszcza kopię JSON `data` w kolejce handlers tej grupy po bieżącym evencie, ze świeżym `now`; to nie jest wywołanie synchroniczne.
 - `v.panel(id, spec)`: zastępuje nazwany pływający panel grupy; null `spec` go usuwa. Zobacz Panels.
 - `v.file(op, path, payload?)` → string request ID. Zobacz Files.
+- `v.store(request)` → ciąg z identyfikatorem żądania. Zobacz Rekordy grupy.
 - `v.block(appId, on)`: true utrzymuje blokadę aplikacji, false usuwa blokadę tej grupy. Blokady włączonych grup łączą się; to wywołanie nie odblokuje celu innej grupy. Blokowanie żąda normalnego zamknięcia i ponawia je w odstępie ustawionym w Settings; nie zapobiega uruchomieniu procesu ani nie gwarantuje, że aplikacja zaakceptuje Quit.
 - `v.quit(appId)`: jedna prośba o normalne zamknięcie zgodnie z tą samą ochroną/zasadami ponawiania; bez stałej blokady.
 - `v.open(appId)`: prosi macOS o otwarcie zainstalowanej aplikacji; nie ma callbacku powodzenia.
@@ -139,7 +140,7 @@ Nieużywane result fields są null; sukces ma pusty error. Błędy obejmują inv
 | `{op:"list", prefix?, after?, limit?}` | posortowane `entries` i `next` |
 | `{op:"clear", prefix?}` | liczba `deleted` |
 
-Rekord ma postać `{value, revision, version, updatedAt}`. Nieprzezroczysta `revision` zmienia się przy rzeczywistym zapisie; `version` to metadane wywołującego. `list` zwraca nagłówki bez wartości; `get` odczytuje rekord, a `after: next` pobiera następną stronę. Bez `ifRevision` put/delete są bezwarunkowe; `null` wymaga nieobecnego klucza, ciąg revision dokładnej zgodności. Konflikt zwraca `ok:false`, `error:"store-conflict"` i bieżący `record`, co zapobiega nadpisaniu informacji użytkownika przez spóźnioną automatyczną odpowiedź. `v.context.revision` to nieprzezroczysty znacznik konfiguracji, który reguła może uwzględnić w swojej wersji. Framework nie narzuca polityki cache.
+Rekord ma postać `{value, revision, version, updatedAt}`. Nieprzezroczysta revision zmienia się przy rzeczywistym zapisie; `version` to metadane wywołującego. `list` zwraca nagłówki bez wartości; `get` odczytuje rekord, a `after: next` pobiera następną stronę. Bez `put`/`delete`, `ifRevision` put/delete są bezwarunkowe; `null` wymaga nieobecnego klucza, ciąg revision dokładnej zgodności. Konflikt zwraca `ok:false`, `error:"store-conflict"` i bieżący `record`, co zapobiega nadpisaniu informacji użytkownika przez spóźnioną automatyczną odpowiedź. `v.context.revision` to nieprzezroczysty znacznik konfiguracji, który reguła może uwzględnić w swojej wersji. Framework nie narzuca polityki cache.
 
 Limity: klucz 1–2048 znaków, wersja ≤128, wartość JSON ≤64KiB, głębokość ≤32, 10000 kluczy na grupę, cały dokument16MiB. `list` zwraca maksymalnie100 nagłówków i96KiB na stronę. Maks.32 żądania na grupę i128 rozpoczęć/sekundę łącznie; przeciążenie zgłasza `store-busy` raz na grupę na sekundę i odrzuca dalsze żądania. Błędy magazynu zwracają `ok:false`; przyszły/uszkodzony dokument pozostaje zachowany i zgłasza `store-unavailable`. Brak automatycznych ponowień i usuwania. Używaj ticks do terminów.
 
@@ -168,7 +169,10 @@ Steam jest blokowany, z wyjątkiem pięciominutowej pauzy uruchomionej przez Sno
 
 Każda custom group wybiera w **AI calls** połączenie/model i reasoning effort. Reguły Mac i przeglądarki używają tego samego API; żądania przeglądarki wymagają połączonego Mac Vault, a dane dostawcy pozostają tam. Połączone grupy współdzielą wybór i opcjonalny limit dzienny. Pusta wartość oznacza brak limitu grupy, obowiązują limity konta. Limit używa dnia UTC, przetrwa restart i liczy wysłane próby, również nieudane. Link łączy dotychczasowe użycie; unlink zachowuje wcześniejsze.
 
-`v.ai({ prompt, input? })` natychmiast zwraca request ID. Wywołaj wewnątrz handlera, nie podczas rejestracji reguły. `input` może być dowolnym JSON; prompt/input mają limit20KB każdy. Odpowiedź przychodzi jako event `ai`: `{requestId, ok, text, citations, error}`. Tekst sukcesu do48KB; cytaty `{url,title}`. Zachowaj widoczne, klikalne linki źródłowe przy wyświetlaniu odpowiedzi z wyszukiwania Web. Search jest zawsze dostępne dla modelu. Brak stałego terminu aplikacji, współbieżność jest ograniczona; brak fallbacku dostawcy i automatycznej ponownej próby. Odpowiedzi są danymi, nie są wykonywane jako JavaScript. Reguła decyduje, które istniejące działania podjąć.
+`v.ai({ prompt, input? })` natychmiast zwraca request ID. Wywołaj wewnątrz handlera, nie podczas rejestracji reguły. `input` może być dowolnym JSON; prompt/input mają limit20KB każdy. Odpowiedź przychodzi jako event `ai`: `{requestId, ok, text, citations,
+error}`. Tekst sukcesu do48KB; cytaty `{url,title}`. Zachowaj widoczne, klikalne linki źródłowe przy wyświetlaniu odpowiedzi z wyszukiwania Web. Search jest zawsze dostępne dla modelu. Brak stałego terminu aplikacji, współbieżność jest ograniczona; brak fallbacku dostawcy i automatycznej ponownej próby. Odpowiedzi są danymi, nie są wykonywane jako JavaScript. Reguła decyduje, które istniejące działania podjąć.
+
+Dla panelu z przyciskiem `ask` i polem `note`:
 
 ```javascript
 (on, v) => {

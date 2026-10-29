@@ -47,12 +47,13 @@ Benoemde objecten overleven Run en herstarten in het gereserveerde `v.state.$vau
 
 ## API
 
-- `on(type, handler)` → boolean. Registreert `handler(ev)`; meerdere handlers werken in registratievolgorde. False betekent ongeldige argumenten of dat de handlerlimiet is bereikt. `ev = { type: string, now: number, data }`; `now` is Unix-milliseconden.
+- `on(type, handler)` → boolean. Registreert `handler(ev)`; meerdere handlers worden in registratievolgorde uitgevoerd. False betekent ongeldige argumenten of de handlerlimiet bereikt. `ev = { type: string, now: number, origin: "host" | "user" | "rule", data }`; `now` is Unix-tijd in milliseconden. Native paneelinvoer heeft `origin: "user"`; `v.emit` heeft `origin: "rule"`.
 - `v.state`: wijzigbaar JSON-object, opgeslagen na eventdispatch. Initialiseer ontbrekende fields in plaats van bestaande state te overschrijven. Toewijzing van een non-object of array reset naar `{}`; niet-serialiseerbare/te grote updates worden niet opgeslagen.
 - `v.log(...values)`: voegt entries toe aan de Log van deze groep. Uitvoerings- en leveringsfouten verschijnen als expliciete foutentries in dezelfde feed. Logs/Clear zijn per groep onafhankelijk. Laadfouten staan ook in de Run-status; gedeeltelijk uitgevoerde events worden niet automatisch herhaald.
 - `v.emit(type, data)`: zet een JSON-kopie van `data` in de wachtrij voor de handlers van deze groep na het huidige event, met een nieuwe `now`; dit is geen synchrone aanroep.
 - `v.panel(id, spec)`: vervangt het benoemde zwevende panel van deze groep; null `spec` verwijdert het. Zie Panels.
 - `v.file(op, path, payload?)` → request-ID-string. Zie Files.
+- `v.store(request)` → tekenreeks met request-ID. Zie Groepsrecords.
 - `v.block(appId, on)`: true houdt een app-blokkering actief, false verwijdert die van deze groep. Blokkeringen van ingeschakelde groepen worden gecombineerd; deze aanroep kan het doel van een andere groep niet deblokkeren. Blokkeren vraagt om normaal afsluiten en probeert opnieuw na het interval in Settings; het voorkomt geen processtart en garandeert niet dat een app Quit accepteert.
 - `v.quit(appId)`: één normaal afsluitverzoek onder hetzelfde beveiligings-/herhaalbeleid; geen doorlopende blokkering.
 - `v.open(appId)`: vraagt macOS een geïnstalleerde app te openen; geen succescallback.
@@ -139,7 +140,7 @@ Ongebruikte result fields zijn null; succes heeft een lege error. Fouten omvatte
 | `{op:"list", prefix?, after?, limit?}` | gesorteerde `entries` en `next` |
 | `{op:"clear", prefix?}` | aantal `deleted` |
 
-Een record bevat `{value, revision, version, updatedAt}`. De ondoorzichtige `revision` verandert bij een echte schrijfoperatie; `version` is metadata van de aanroeper. `list` retourneert headers zonder waarden; gebruik `get` om er een te lezen en `after: next` voor de volgende pagina. Zonder `ifRevision` zijn put/delete onvoorwaardelijk; `null` vereist een ontbrekende sleutel, een revision-string een exacte overeenkomst. Een conflict retourneert `ok:false`, `error:"store-conflict"` en de huidige `record`. Zo overschrijft een late automatische reactie geen gebruikersfeedback. `v.context.revision` is een ondoorzichtige configuratiemarker die een regel in zijn versie kan opnemen. Het framework legt geen cachebeleid op.
+Een record bevat `{value, revision, version, updatedAt}`. De ondoorzichtige revision verandert bij een echte schrijfoperatie; `version` is metadata van de aanroeper. `list` retourneert headers zonder waarden; gebruik `get` om er een te lezen en `after: next` voor de volgende pagina. Zonder `put`/`delete`, `ifRevision` zijn put/delete onvoorwaardelijk; `null` vereist een ontbrekende sleutel, een revision-string een exacte overeenkomst. Een conflict retourneert `ok:false`, `error:"store-conflict"` en de huidige `record`. Zo overschrijft een late automatische reactie geen gebruikersfeedback. `v.context.revision` is een ondoorzichtige configuratiemarker die een regel in zijn versie kan opnemen. Het framework legt geen cachebeleid op.
 
 Limieten: sleutel 1–2048 tekens, versie ≤128, JSON-waarde ≤64KiB, diepte ≤32, 10000 sleutels per groep, volledig document16MiB. `list` retourneert maximaal100 headers en96KiB per pagina. Maximaal32 verzoeken per groep en128 starts per seconde totaal. Bij overbelasting meldt het systeem één `store-busy` per groep per seconde en laat overige verzoeken vallen. Opslagfouten geven `ok:false`; toekomstige of beschadigde documenten blijven behouden en melden `store-unavailable`. Geen automatische retry of verwijdering. Gebruik ticks voor deadlines.
 
@@ -168,7 +169,10 @@ Steam wordt geblokkeerd, behalve tijdens een pauze van vijf minuten gestart door
 
 Elke custom group kiest onder **AI calls** een verbinding/model en reasoning effort. Mac- en browserregels gebruiken dezelfde API; browserverzoeken vereisen een verbonden Mac Vault en providergegevens blijven daar. Gekoppelde groepen delen de keuze en een optionele dagelijkse limiet. Leeg betekent geen groepslimiet; accountlimieten blijven gelden. De limiet gebruikt UTC-dagen, blijft na herstart bestaan en telt ingediende pogingen, ook mislukte. Link combineert bestaand gebruik; unlink behoudt eerder gebruik.
 
-`v.ai({ prompt, input? })` retourneert direct een request-ID. Roep dit binnen een handler aan, niet bij registratie. `input` mag elke JSON-waarde zijn; prompt en input zijn elk maximaal20KB. Antwoorden komen als `ai`-events: `{requestId, ok, text, citations, error}`. Succesvolle tekst maximaal48KB; citaties `{url,title}`. Behoud zichtbare, klikbare bronlinks bij antwoorden op basis van web search. Search is altijd beschikbaar voor het model. Geen vaste app-deadline; concurrency is begrensd; geen provider-fallback of automatische retry. Antwoorden zijn gegevens, geen uitvoerbare JavaScript; de regel beslist welke bestaande acties worden uitgevoerd.
+`v.ai({ prompt, input? })` retourneert direct een request-ID. Roep dit binnen een handler aan, niet bij registratie. `input` mag elke JSON-waarde zijn; prompt en input zijn elk maximaal20KB. Antwoorden komen als `ai`-events: `{requestId, ok, text, citations,
+error}`. Succesvolle tekst maximaal48KB; citaties `{url,title}`. Behoud zichtbare, klikbare bronlinks bij antwoorden op basis van web search. Search is altijd beschikbaar voor het model. Geen vaste app-deadline; concurrency is begrensd; geen provider-fallback of automatische retry. Antwoorden zijn gegevens, geen uitvoerbare JavaScript; de regel beslist welke bestaande acties worden uitgevoerd.
+
+Voor een paneel met een `ask`-knop en een `note`-veld:
 
 ```javascript
 (on, v) => {

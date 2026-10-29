@@ -47,12 +47,13 @@ Objek bernama bertahan melewati Run dan restart dalam `v.state.$vaultTime` yang 
 
 ## API
 
-- `on(type, handler)` → boolean. Mendaftarkan `handler(ev)`; beberapa handler berjalan sesuai urutan pendaftaran. False berarti argumen tidak valid atau batas handler tercapai. `ev = { type: string, now: number, data }`; `now` adalah Unix milliseconds.
+- `on(type, handler)` → boolean. Mendaftarkan `handler(ev)`; beberapa handler berjalan sesuai urutan pendaftaran. False berarti argumen tidak valid atau batas handler tercapai. `ev = { type: string, now: number, origin: "host" | "user" | "rule", data }`; `now` adalah milidetik Unix. Input panel native memiliki `origin: "user"`; `v.emit` memiliki `origin: "rule"`.
 - `v.state`: objek JSON yang dapat diubah, disimpan setelah dispatch. Inisialisasi field hilang alih-alih menimpa state lama. Nilai non-object atau array meresetnya menjadi `{}`; update tak dapat diserialisasi/terlalu besar tidak disimpan.
 - `v.log(...values)`: menambahkan ke Log grup ini. Kegagalan eksekusi dan pengiriman muncul sebagai entri kesalahan eksplisit dalam feed yang sama. Logs/Clear terpisah per grup. Kesalahan pemuatan juga muncul di status Run; peristiwa yang baru dijalankan sebagian tidak dijalankan ulang secara otomatis.
 - `v.emit(type, data)`: mengantrekan salinan JSON `data` untuk handler grup ini setelah peristiwa saat ini, dengan `now` baru; bukan panggilan sinkron.
 - `v.panel(id, spec)`: mengganti panel mengambang bernama milik grup; `spec` null menghapusnya. Lihat Panel.
 - `v.file(op, path, payload?)` → string ID permintaan. Lihat Files.
+- `v.store(request)` → string ID permintaan. Lihat Catatan grup.
 - `v.block(appId, on)`: true mempertahankan blok app, false menghapus blok grup ini. Blok digabung antarkelompok aktif; pemanggilan ini tidak dapat membuka target grup lain. Pemblokiran meminta quit biasa dan mencoba ulang sesuai interval Setelan; tidak mencegah proses dimulai atau menjamin app menerima Quit.
 - `v.quit(appId)`: satu permintaan quit biasa dengan kebijakan perlindungan/coba ulang yang sama; tanpa blok berkelanjutan.
 - `v.open(appId)`: meminta macOS membuka app terpasang; tanpa callback sukses.
@@ -139,7 +140,7 @@ Field hasil yang tak dipakai bernilai null; sukses memiliki error kosong. Kegaga
 | `{op:"list", prefix?, after?, limit?}` | `entries` terurut dan `next` |
 | `{op:"clear", prefix?}` | jumlah `deleted` |
 
-Record berbentuk `{value, revision, version, updatedAt}`. `revision` opaque berubah pada write nyata; `version` adalah metadata caller. `list` memberi header tanpa value; gunakan `get` untuk membaca dan `after: next` untuk halaman berikutnya. Tanpa `ifRevision`, put/delete unconditional; `null` mensyaratkan key tidak ada, string revision harus cocok persis. Ketidakcocokan memberi `ok:false`, `error:"store-conflict"` dan `record` kini. Ini mencegah balasan otomatis tertunda menimpa feedback pengguna. `v.context.revision` adalah marker konfigurasi rule opaque yang dapat disertakan dalam version; framework tidak menentukan kebijakan cache.
+Record berbentuk `{value, revision, version, updatedAt}`. revision opaque berubah pada write nyata; `version` adalah metadata caller. `list` memberi header tanpa value; gunakan `get` untuk membaca dan `after: next` untuk halaman berikutnya. Tanpa `put`/`delete`, `ifRevision`, put/delete unconditional; `null` mensyaratkan key tidak ada, string revision harus cocok persis. Ketidakcocokan memberi `ok:false`, `error:"store-conflict"` dan `record` kini. Ini mencegah balasan otomatis tertunda menimpa feedback pengguna. `v.context.revision` adalah marker konfigurasi rule opaque yang dapat disertakan dalam version; framework tidak menentukan kebijakan cache.
 
 Batas: key 1–2048 karakter, version ≤128, JSON value ≤64KiB, depth ≤32, 10000 key per grup, dokumen penuh16MiB. `list` paling banyak100 header dan96KiB per halaman. Maksimum32 request per grup dan128 start per detik total; overload mengirim satu `store-busy` per grup per detik dan membuang sisanya. Storage error memberi `ok:false`; dokumen future/malformed dipertahankan dan melaporkan `store-unavailable`. Tidak ada retry/eviction otomatis. Gunakan ticks untuk deadline.
 
@@ -168,7 +169,10 @@ Steam diblokir kecuali selama jeda lima menit yang dipicu Snooze atau tombol pan
 
 Setiap custom group memilih satu connection/model dan reasoning effort di **AI calls**. Mac dan browser rule menggunakan API sama; request browser memerlukan Mac Vault terhubung, kredensial provider tetap di sana. Grup tertaut berbagi pilihan dan optional daily request cap. Kosong berarti tanpa cap grup, tetapi limit akun tetap berlaku. Cap memakai hari UTC, bertahan setelah restart, menghitung semua attempt terkirim termasuk gagal. Link menggabungkan usage yang ada; unlink mempertahankan usage sebelumnya.
 
-`v.ai({ prompt, input? })` langsung mengembalikan request ID. Panggil di dalam handler, bukan saat mendaftarkan rule. `input` boleh berupa JSON apa pun; prompt/input masing-masing dibatasi20KB. Balasan hadir sebagai event `ai`: `{requestId, ok, text, citations, error}`. Teks sukses maksimal48KB; citation `{url,title}`. Pertahankan link sumber yang terlihat dan dapat diklik saat menampilkan jawaban web-search. Search selalu tersedia bagi model. Tidak ada deadline app tetap; concurrency terbatas; tidak ada provider fallback atau retry otomatis. Respons adalah data, tidak dieksekusi sebagai JavaScript. Rule menentukan tindakan yang sudah ada.
+`v.ai({ prompt, input? })` langsung mengembalikan request ID. Panggil di dalam handler, bukan saat mendaftarkan rule. `input` boleh berupa JSON apa pun; prompt/input masing-masing dibatasi20KB. Balasan hadir sebagai event `ai`: `{requestId, ok, text, citations,
+error}`. Teks sukses maksimal48KB; citation `{url,title}`. Pertahankan link sumber yang terlihat dan dapat diklik saat menampilkan jawaban web-search. Search selalu tersedia bagi model. Tidak ada deadline app tetap; concurrency terbatas; tidak ada provider fallback atau retry otomatis. Respons adalah data, tidak dieksekusi sebagai JavaScript. Rule menentukan tindakan yang sudah ada.
+
+Untuk panel dengan tombol `ask` dan field `note`:
 
 ```javascript
 (on, v) => {

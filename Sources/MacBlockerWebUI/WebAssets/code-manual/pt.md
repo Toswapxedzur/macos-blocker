@@ -47,12 +47,13 @@ Os objetos com nome sobrevivem a Run e à reinicialização no campo reservado `
 
 ## API
 
-- `on(type, handler)` → boolean. Registra `handler(ev)`; vários handlers executam na ordem de inscrição. False indica argumentos inválidos ou limite de handlers atingido. `ev = { type: string, now: number, data }`; `now` é Unix em milissegundos.
+- `on(type, handler)` → boolean. Registra `handler(ev)`; vários handlers são executados na ordem de registro. False indica argumentos inválidos ou limite de handlers atingido. `ev = { type: string, now: number, origin: "host" | "user" | "rule", data }`; `now` são milissegundos Unix. A entrada do painel nativo tem `origin: "user"`; `v.emit` tem `origin: "rule"`.
 - `v.state`: objeto JSON mutável, salvo depois do event dispatch. Inicialize fields ausentes em vez de sobrescrever o state atual. Atribuir non-object ou array redefine para `{}`; atualizações não serializáveis/grandes demais não são salvas.
 - `v.log(...values)`: adiciona entradas ao Log deste grupo. Falhas de execução e entrega aparecem como entradas de erro explícitas no mesmo fluxo. Logs/Clear são independentes por grupo. Erros de carregamento também aparecem no status Run; eventos parcialmente executados não são repetidos automaticamente.
 - `v.emit(type, data)`: coloca uma cópia JSON de `data` na fila de handlers deste grupo após o event atual, com novo `now`; não é chamada síncrona.
 - `v.panel(id, spec)`: substitui o panel flutuante nomeado deste grupo; `spec` null o remove. Consulte Panels.
 - `v.file(op, path, payload?)` → string request ID. Consulte Files.
+- `v.store(request)` → string de ID da solicitação. Consulte Registros do grupo.
 - `v.block(appId, on)`: true mantém o bloqueio de um app; false remove o bloqueio deste grupo. Bloqueios de grupos habilitados se combinam; a chamada não pode desbloquear o alvo de outro grupo. O bloqueio solicita um encerramento normal e tenta novamente no intervalo de Settings; não impede a inicialização do processo nem garante que o app aceite Quit.
 - `v.quit(appId)`: uma solicitação normal de encerramento, sob a mesma política de proteção/tentativa; sem bloqueio contínuo.
 - `v.open(appId)`: pede ao macOS para abrir um app instalado; sem callback de sucesso.
@@ -139,7 +140,7 @@ result fields não usados são null; sucesso tem error vazio. Falhas incluem inv
 | `{op:"list", prefix?, after?, limit?}` | `entries` ordenadas e `next` |
 | `{op:"clear", prefix?}` | contagem `deleted` |
 
-Cada registro é `{value, revision, version, updatedAt}`. A `revision` opaca muda numa gravação real; `version` é metadado do chamador. `list` retorna cabeçalhos sem valores; use `get` para ler e `after: next` para a página seguinte. Sem `ifRevision`, put/delete são incondicionais; `null` exige chave ausente e string de revisão exige correspondência exata. Conflito retorna `ok:false`, `error:"store-conflict"` e o `record` atual, impedindo resposta automática atrasada de substituir feedback do usuário. `v.context.revision` é um marcador opaco de configuração que a regra pode incluir em sua versão. O framework não impõe política de cache.
+Cada registro é `{value, revision, version, updatedAt}`. A revision opaca muda numa gravação real; `version` é metadado do chamador. `list` retorna cabeçalhos sem valores; use `get` para ler e `after: next` para a página seguinte. Sem `put`/`delete`, `ifRevision`, put/delete são incondicionais; `null` exige chave ausente e string de revisão exige correspondência exata. Conflito retorna `ok:false`, `error:"store-conflict"` e o `record` atual, impedindo resposta automática atrasada de substituir feedback do usuário. `v.context.revision` é um marcador opaco de configuração que a regra pode incluir em sua versão. O framework não impõe política de cache.
 
 Limites: chave 1–2048 caracteres, versão ≤128, valor JSON ≤64KiB, profundidade ≤32, 10000 chaves por grupo, documento inteiro16MiB. `list` retorna até100 cabeçalhos e96KiB por página. No máximo32 pedidos por grupo e128 inícios/segundo no total. Sobrecarga informa `store-busy` uma vez por grupo por segundo e descarta os demais. Erros de armazenamento retornam `ok:false`; documento futuro/malformado é preservado e sinaliza `store-unavailable`. Não há retry nem eviction automáticos. Use ticks para prazos.
 
@@ -168,7 +169,10 @@ Steam é bloqueado, exceto durante uma pausa de cinco minutos iniciada pelo Snoo
 
 Cada custom group escolhe conexão/modelo e reasoning effort em **AI calls**. Regras Mac e navegador usam a mesma API; pedidos do navegador exigem Mac Vault conectado e as credenciais do provedor ficam lá. Grupos vinculados compartilham seleção e limite diário opcional. Em branco significa sem limite do grupo; limites da conta continuam valendo. O limite usa o dia UTC, persiste após reinício e conta tentativas enviadas, inclusive falhas. Link combina uso existente; unlink mantém o uso anterior.
 
-`v.ai({ prompt, input? })` retorna um request ID imediatamente. Chame dentro de um handler, não ao registrar a regra. `input` pode ser qualquer JSON; prompt/input limitados a20KB cada. Respostas chegam como eventos `ai`: `{requestId, ok, text, citations, error}`. Texto de sucesso até48KB; citations `{url,title}`. Preserve links de fonte visíveis e clicáveis ao exibir respostas da pesquisa Web. Search está sempre disponível ao modelo. Não há prazo fixo do app; concorrência limitada; sem fallback de provedor ou retry automático. Respostas são dados, nunca executadas como JavaScript. A regra decide quais ações existentes tomar.
+`v.ai({ prompt, input? })` retorna um request ID imediatamente. Chame dentro de um handler, não ao registrar a regra. `input` pode ser qualquer JSON; prompt/input limitados a20KB cada. Respostas chegam como eventos `ai`: `{requestId, ok, text, citations,
+error}`. Texto de sucesso até48KB; citations `{url,title}`. Preserve links de fonte visíveis e clicáveis ao exibir respostas da pesquisa Web. Search está sempre disponível ao modelo. Não há prazo fixo do app; concorrência limitada; sem fallback de provedor ou retry automático. Respostas são dados, nunca executadas como JavaScript. A regra decide quais ações existentes tomar.
+
+Para um painel com um botão `ask` e um campo `note`:
 
 ```javascript
 (on, v) => {

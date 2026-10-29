@@ -47,12 +47,13 @@ Adlandırılmış nesneler, ayrılmış `v.state.$vaultTime` alanında Run ve ye
 
 ## API
 
-- `on(type, handler)` → boolean. `handler(ev)` kaydeder; handlers kayıt sırasıyla çalışır. False, geçersiz arguments veya handler limitine ulaşıldığı anlamına gelir. `ev = { type: string, now: number, data }`; `now` Unix milisaniyesidir.
+- `on(type, handler)` → boolean. `handler(ev)` kaydeder; birden çok handler kayıt sırasıyla çalışır. False, geçersiz bağımsız değişkenleri veya handler sınırına ulaşıldığını belirtir. `ev = { type: string, now: number, origin: "host" | "user" | "rule", data }`; `now` Unix milisaniyesidir. Yerel panel girdisinde `origin: "user"`; `v.emit` için `origin: "rule"` bulunur.
 - `v.state`: event dispatch sonrasında kaydedilen değiştirilebilir JSON object. Mevcut state üzerine yazmak yerine eksik fields değerlerini başlatın. Non-object veya array atamak `{}` değerine sıfırlar; serileştirilemeyen/aşırı büyük güncellemeler kaydedilmez.
 - `v.log(...values)`: bu grubun Log kaydına ekleme yapar. Yürütme ve iletim hataları aynı akışta açık hata girdileri olarak görünür. Logs/Clear her grup için bağımsızdır. Yükleme hataları Run durumunda da görünür; kısmen yürütülmüş olaylar otomatik olarak yeniden oynatılmaz.
 - `v.emit(type, data)`: geçerli event sonrasında bu grubun handlers değerlerine `data` öğesinin JSON kopyasını yeni bir `now` ile kuyruğa alır; eşzamanlı çağrı değildir.
 - `v.panel(id, spec)`: grubun adlandırılmış floating panel değerini değiştirir; null `spec` paneli kaldırır. Panels'e bakın.
 - `v.file(op, path, payload?)` → request ID string. Files'a bakın.
+- `v.store(request)` → istek kimliği dizesi. Grup kayıtlarına bakın.
 - `v.block(appId, on)`: true uygulama engelini sürdürür, false grubun engelini kaldırır. Etkin grupların engelleri birleşir; bu çağrı başka grubun hedefini engelden çıkaramaz. Engelleme normal kapatma ister ve Settings aralığında yeniden dener; process launch değerini engellemez veya uygulamanın Quit'ı kabul edeceğini garanti etmez.
 - `v.quit(appId)`: aynı koruma/yeniden deneme ilkesiyle bir normal kapatma isteği; sürekli engelleme değildir.
 - `v.open(appId)`: macOS'tan yüklü bir uygulamayı açmasını ister; başarı callback'i yoktur.
@@ -139,7 +140,7 @@ Kullanılmayan result fields null; başarıda error boş olur. Hatalara invalid-
 | `{op:"list", prefix?, after?, limit?}` | sıralı `entries` ve `next` |
 | `{op:"clear", prefix?}` | `deleted` sayısı |
 
-Her kayıt `{value, revision, version, updatedAt}` biçimindedir. Opaque `revision` gerçek yazmada değişir; `version` çağıranın metadata'sıdır. `list` değerler olmadan başlıkları döndürür; okumak için `get`, sonraki sayfa için `after: next` kullanın. `ifRevision` yoksa put/delete koşulsuzdur; `null` anahtarın bulunmamasını, revision metni tam eşleşmeyi şart koşar. Uyuşmazlık `ok:false`, `error:"store-conflict"` ve güncel `record` döndürür; geciken otomatik yanıtın kullanıcı geri bildirimini ezmesini önler. `v.context.revision` kuralın sürümüne katabileceği opaque yapılandırma işaretidir; framework cache politikası dayatmaz.
+Her kayıt `{value, revision, version, updatedAt}` biçimindedir. Opaque revision gerçek yazmada değişir; `version` çağıranın metadata'sıdır. `list` değerler olmadan başlıkları döndürür; okumak için `get`, sonraki sayfa için `after: next` kullanın. `put`/`delete`, `ifRevision` yoksa put/delete koşulsuzdur; `null` anahtarın bulunmamasını, revision metni tam eşleşmeyi şart koşar. Uyuşmazlık `ok:false`, `error:"store-conflict"` ve güncel `record` döndürür; geciken otomatik yanıtın kullanıcı geri bildirimini ezmesini önler. `v.context.revision` kuralın sürümüne katabileceği opaque yapılandırma işaretidir; framework cache politikası dayatmaz.
 
 Sınırlar: key 1–2048 karakter, version ≤128, JSON value ≤64KiB, depth ≤32, grup başına10000 key, tüm belge16MiB. `list` sayfa başına en çok100 başlık ve96KiB döndürür. Grup başına32 request, toplam saniyede128 başlangıç. Aşırı yükte grup başına saniyede bir `store-busy` hatası bildirilir ve fazlası atılır. Storage hatası `ok:false` döndürür; gelecekteki/bozuk belge korunup `store-unavailable` bildirilir. Otomatik retry/eviction yoktur. Deadline için ticks kullanın.
 
@@ -168,7 +169,10 @@ Steam, Snooze veya panel düğmesiyle başlatılan beş dakikalık duraklama dı
 
 Her custom group **AI calls** içinde bir connection/model ve reasoning effort seçer. Mac ve tarayıcı kuralları aynı API'yi kullanır; tarayıcı istekleri bağlı Mac Vault gerektirir ve provider kimlik bilgileri orada kalır. Bağlı gruplar seçimi ve isteğe bağlı günlük sınırı paylaşır. Boş değer grup sınırı olmadığı anlamına gelir; hesap limitleri geçerlidir. Sınır UTC gününe göre hesaplanır, restart'ta korunur ve başarısızlar dahil gönderilen denemeleri sayar. Link mevcut kullanımı birleştirir; unlink önceki kullanımı saklar.
 
-`v.ai({ prompt, input? })` hemen request ID döndürür. Kuralı kaydederken değil, handler içinde çağırın. `input` herhangi bir JSON olabilir; prompt/input ayrı ayrı20KB ile sınırlıdır. Yanıtlar `ai` event'leriyle gelir: `{requestId, ok, text, citations, error}`. Başarılı metin en çok48KB; citation `{url,title}`. Web arama yanıtlarında kaynak bağlantılarını görünür ve tıklanabilir tutun. Search modele daima açıktır. Sabit app deadline yoktur, concurrency sınırlıdır; provider fallback veya otomatik retry yoktur. Yanıtlar veridir, JavaScript olarak çalıştırılmaz; mevcut eylemleri kural seçer.
+`v.ai({ prompt, input? })` hemen request ID döndürür. Kuralı kaydederken değil, handler içinde çağırın. `input` herhangi bir JSON olabilir; prompt/input ayrı ayrı20KB ile sınırlıdır. Yanıtlar `ai` event'leriyle gelir: `{requestId, ok, text, citations,
+error}`. Başarılı metin en çok48KB; citation `{url,title}`. Web arama yanıtlarında kaynak bağlantılarını görünür ve tıklanabilir tutun. Search modele daima açıktır. Sabit app deadline yoktur, concurrency sınırlıdır; provider fallback veya otomatik retry yoktur. Yanıtlar veridir, JavaScript olarak çalıştırılmaz; mevcut eylemleri kural seçer.
+
+`ask` düğmesi ve `note` alanı olan bir panel için:
 
 ```javascript
 (on, v) => {

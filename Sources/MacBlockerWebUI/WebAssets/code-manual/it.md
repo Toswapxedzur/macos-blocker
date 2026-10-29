@@ -47,12 +47,13 @@ Gli oggetti con nome sopravvivono a Run e al riavvio nel campo riservato `v.stat
 
 ## API
 
-- `on(type, handler)` → boolean. Registra `handler(ev)`; più handlers vengono eseguiti nell'ordine di registrazione. False indica argomenti non validi o limite degli handlers raggiunto. `ev = { type: string, now: number, data }`; `now` è Unix in millisecondi.
+- `on(type, handler)` → booleano. Registra `handler(ev)`; più handler vengono eseguiti nell’ordine di registrazione. False indica argomenti non validi o il raggiungimento del limite di handler. `ev = { type: string, now: number, origin: "host" | "user" | "rule", data }`; `now` è in millisecondi Unix. L’input dei pannelli nativi ha `origin: "user"`; `v.emit` ha `origin: "rule"`.
 - `v.state`: oggetto JSON modificabile, salvato dopo l'event dispatch. Inizializza i fields mancanti senza sovrascrivere lo state esistente. Assegnare un non-object o un array lo reimposta a `{}`; aggiornamenti non serializzabili/troppo grandi non vengono salvati.
 - `v.log(...values)`: aggiunge voci al Log di questo gruppo. Gli errori di esecuzione e consegna appaiono come voci di errore esplicite nello stesso flusso. Logs/Clear sono indipendenti per gruppo. Gli errori di caricamento appaiono anche nello stato Run; gli eventi eseguiti parzialmente non vengono ripetuti automaticamente.
 - `v.emit(type, data)`: mette in coda una copia JSON di `data` per gli handlers del gruppo dopo l'event corrente, con un nuovo `now`; non è una chiamata sincrona.
 - `v.panel(id, spec)`: sostituisce il panel floating nominato del gruppo; `spec` null lo rimuove. Vedi Panels.
 - `v.file(op, path, payload?)` → stringa request ID. Vedi Files.
+- `v.store(request)` → stringa con l’ID della richiesta. Vedi Record di gruppo.
 - `v.block(appId, on)`: true mantiene il blocco dell'app, false rimuove quello del gruppo. I blocchi dei gruppi abilitati si combinano; la chiamata non può sbloccare l'obiettivo di un altro gruppo. Il blocco richiede una chiusura normale e riprova all'intervallo di Settings; non impedisce l'avvio del processo né garantisce che l'app accetti Quit.
 - `v.quit(appId)`: una richiesta di chiusura normale secondo la stessa policy di protezione/tentativo; non è un blocco continuo.
 - `v.open(appId)`: chiede a macOS di aprire un'app installata; non restituisce callback di successo.
@@ -139,7 +140,7 @@ I result fields inutilizzati sono null; il successo ha error vuoto. Gli errori i
 | `{op:"list", prefix?, after?, limit?}` | `entries` ordinate e `next` |
 | `{op:"clear", prefix?}` | conteggio `deleted` |
 
-Ogni record è `{value, revision, version, updatedAt}`. `revision` opaco cambia con una scrittura reale; `version` è metadato scelto dal chiamante. `list` restituisce header senza valori; usa `get` per leggerne uno e `after: next` per la pagina successiva. Senza `ifRevision`, put/delete sono incondizionati; `null` richiede chiave assente e una stringa revision una corrispondenza esatta. Un conflitto restituisce `ok:false`, `error:"store-conflict"` e il `record` attuale, evitando che una risposta automatica tardiva sovrascriva il feedback utente. `v.context.revision` è un marker opaco della configurazione che la regola può includere nella propria versione; il framework non impone politiche cache.
+Ogni record è `{value, revision, version, updatedAt}`. revision opaco cambia con una scrittura reale; `version` è metadato scelto dal chiamante. `list` restituisce header senza valori; usa `get` per leggerne uno e `after: next` per la pagina successiva. Senza `put`/`delete`, `ifRevision`, put/delete sono incondizionati; `null` richiede chiave assente e una stringa revision una corrispondenza esatta. Un conflitto restituisce `ok:false`, `error:"store-conflict"` e il `record` attuale, evitando che una risposta automatica tardiva sovrascriva il feedback utente. `v.context.revision` è un marker opaco della configurazione che la regola può includere nella propria versione; il framework non impone politiche cache.
 
 Limiti: chiave 1–2048 caratteri, version ≤128, valore JSON ≤64KiB, profondità ≤32, 10000 chiavi per gruppo e documento completo16MiB. `list` restituisce al massimo100 header e96KiB per pagina. Massimo32 richieste per gruppo e128 avvii al secondo complessivi; overload segnala un `store-busy` per gruppo al secondo e scarta le altre richieste. Errori di storage restituiscono `ok:false`; un documento futuro o malformato viene conservato e segnala `store-unavailable`. Nessun retry o eviction automatici; usa ticks per le deadline.
 
@@ -168,7 +169,10 @@ Steam è bloccato tranne durante una pausa di cinque minuti attivata da Snooze o
 
 Ogni custom group sceglie una connessione/modello e reasoning effort in **AI calls**. Le regole Mac e browser usano la stessa API; le richieste browser richiedono Mac Vault collegato e le credenziali provider restano lì. I gruppi collegati condividono la selezione e un limite giornaliero facoltativo. Campo vuoto significa nessun limite di gruppo, ma restano i limiti account. Il limite usa il giorno UTC, persiste al riavvio e conta i tentativi inviati inclusi quelli falliti. Link combina l’uso già fatto; unlink mantiene l’uso precedente.
 
-`v.ai({ prompt, input? })` restituisce subito un request ID. Chiamala dentro un handler, non durante la registrazione della regola. `input` può essere qualsiasi valore JSON; prompt/input sono limitati a20KB ciascuno. Le risposte arrivano come eventi `ai`: `{requestId, ok, text, citations, error}`. Testo riuscito massimo48KB; citazioni `{url,title}`. Mantieni visibili e cliccabili i link alle fonti nelle risposte della ricerca Web. Search è sempre disponibile al modello. Nessuna deadline fissa dell’app, concorrenza limitata, nessun fallback provider o retry automatico. Le risposte sono dati, non vengono eseguite come JavaScript; la regola decide quali azioni esistenti intraprendere.
+`v.ai({ prompt, input? })` restituisce subito un request ID. Chiamala dentro un handler, non durante la registrazione della regola. `input` può essere qualsiasi valore JSON; prompt/input sono limitati a20KB ciascuno. Le risposte arrivano come eventi `ai`: `{requestId, ok, text, citations,
+error}`. Testo riuscito massimo48KB; citazioni `{url,title}`. Mantieni visibili e cliccabili i link alle fonti nelle risposte della ricerca Web. Search è sempre disponibile al modello. Nessuna deadline fissa dell’app, concorrenza limitata, nessun fallback provider o retry automatico. Le risposte sono dati, non vengono eseguite come JavaScript; la regola decide quali azioni esistenti intraprendere.
+
+Per un pannello con un pulsante `ask` e un campo `note`:
 
 ```javascript
 (on, v) => {

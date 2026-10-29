@@ -47,12 +47,13 @@ Linked custom group-এ একই object ID একটি স্থানীয�
 
 ## API
 
-- `on(type, handler)` → boolean। `handler(ev)` নিবন্ধন করে; একাধিক handler registration order-এ চলে। False মানে invalid argument বা handler limit। `ev = { type: string, now: number, data }`; `now` Unix milliseconds।
+- `on(type, handler)` → boolean। `handler(ev)` নিবন্ধন করে; একাধিক handler registration order-এ চলে। False মানে invalid argument বা handler limit। `ev = { type: string, now: number, origin: "host" | "user" | "rule", data }`; `now` Unix milliseconds। Native panel input-এ `origin: "user"`; `v.emit`-এ `origin: "rule"` থাকে।
 - `v.state`: mutable JSON object, event dispatch-এর পরে সংরক্ষিত। পুরনো state না মুছে missing field initialize করুন। Object নয় বা array দিলে `{}` হয়; nonserializable/oversized update save হয় না।
 - `v.log(...values)`: এই group-এর Log-এ যোগ করে। Execution ও delivery failure একই feed-এ স্পষ্ট error entry হিসেবে দেখা যায়। Log/Clear প্রতি group আলাদা। Load error Run status-এও দেখা যায়; আংশিকভাবে চালানো event স্বয়ংক্রিয়ভাবে আবার চালানো হয় না।
 - `v.emit(type, data)`: বর্তমান event-এর পরে group handler-এ `data`-র JSON copy queue করে, নতুন `now`-সহ; synchronous call নয়।
 - `v.panel(id, spec)`: group-এর named floating panel প্রতিস্থাপন করে; null `spec` সরায়। Panels দেখুন।
 - `v.file(op, path, payload?)` → request ID string। Files দেখুন।
+- `v.store(request)` → request ID string। Group records দেখুন।
 - `v.block(appId, on)`: true app block বজায় রাখে, false এই group-এর block সরায়। Enabled group-এর block একত্র হয়; অন্য group-এর target unblock করা যায় না। Blocking স্বাভাবিক quit চায় এবং Settings interval-এ retry করে; process start ঠেকায় না, app Quit মানবে নিশ্চয়তা দেয় না।
 - `v.quit(appId)`: একই protection/retry নীতিতে একবার normal quit; স্থায়ী block নয়।
 - `v.open(appId)`: macOS-কে installed app খুলতে বলে; success callback নেই।
@@ -139,7 +140,7 @@ Unused result field null; success-এ error ফাঁকা। Failure-এ inval
 | `{op:"list", prefix?, after?, limit?}` | সাজানো `entries` ও `next` |
 | `{op:"clear", prefix?}` | `deleted` সংখ্যা |
 
-প্রতিটি record-এ `{value, revision, version, updatedAt}` থাকে। বাস্তব write হলে opaque `revision` বদলায়; `version` caller-এর metadata। `list` value ছাড়া header ফেরায়; একটি পড়তে `get`, পরের page-এ যেতে `after: next` ব্যবহার করুন। `ifRevision` বাদ দিলে put/delete unconditional; `null` মানে key অনুপস্থিত হতে হবে, revision string হলে exact match চাই। Mismatch-এ `ok:false`, `error:"store-conflict"` ও বর্তমান `record` ফেরে—এটি delayed automatic reply-কে user feedback overwrite করা থেকে আটকায়। `v.context.revision` opaque rule-configuration marker; rule চাইলে নিজের version-এ রাখতে পারে। Framework cache policy নির্ধারণ করে না।
+প্রতিটি record-এ `{value, revision, version, updatedAt}` থাকে। বাস্তব write হলে opaque revision বদলায়; `version` caller-এর metadata। `list` value ছাড়া header ফেরায়; একটি পড়তে `get`, পরের page-এ যেতে `after: next` ব্যবহার করুন। `put`/`delete`, `ifRevision` বাদ দিলে put/delete unconditional; `null` মানে key অনুপস্থিত হতে হবে, revision string হলে exact match চাই। Mismatch-এ `ok:false`, `error:"store-conflict"` ও বর্তমান `record` ফেরে—এটি delayed automatic reply-কে user feedback overwrite করা থেকে আটকায়। `v.context.revision` opaque rule-configuration marker; rule চাইলে নিজের version-এ রাখতে পারে। Framework cache policy নির্ধারণ করে না।
 
 সীমা: key 1–2048 অক্ষর, version ≤128, JSON value ≤64KiB, depth ≤32, প্রতি group 10000 key, পুরো record document 16MiB। `list` প্রতি page-এ সর্বোচ্চ100 header ও96KiB দেয়। প্রতি group 32 এবং মোট প্রতি সেকেন্ডে 128 request start; overload-এ প্রতি group-এ প্রতি সেকেন্ডে একটি `store-busy` error, অতিরিক্ত request drop হয়। Storage error `ok:false`; future/malformed document সংরক্ষণ করে `store-unavailable` জানায়। Auto retry/eviction নেই; deadline-এর জন্য ticks ব্যবহার করুন।
 
@@ -168,7 +169,10 @@ Snooze বা তার panel button চালু করা পাঁচ মি�
 
 প্রতিটি custom group **AI calls**-এ একটি connection/model ও reasoning effort বেছে নেয়। Mac ও browser rule একই API ব্যবহার করে; browser request-এর জন্য Mac Vault connected থাকতে হবে, provider credential সেখানেই থাকে। Linked group নির্বাচন ও ঐচ্ছিক দৈনিক request cap ভাগ করে। ফাঁকা মানে group cap নেই; account limit থাকে। Cap UTC দিন ধরে, restart-এ স্থায়ী এবং ব্যর্থসহ submitted attempt গোনে। Link করলে আগের usage যোগ হয়; unlink করলেও আগের usage থাকে।
 
-`v.ai({ prompt, input? })` সঙ্গে সঙ্গে request ID দেয়। Registration-এ নয়, handler-এর মধ্যে কল করুন। `input` যেকোনো JSON; prompt/input প্রত্যেকটি সর্বোচ্চ20KB। উত্তর `ai` event-এ আসে: `{requestId, ok, text, citations, error}`। সফল text সর্বোচ্চ48KB; citation `{url,title}`। Web search-এর উত্তর দেখালে source link দৃশ্যমান ও clickable রাখুন। Model-এর জন্য search সর্বদা উপলভ্য। নির্দিষ্ট app deadline নেই; bounded concurrency থাকে; provider fallback বা auto retry নেই। উত্তর data, JavaScript হিসেবে execute হয় না; বিদ্যমান action নেবে কি না rule ঠিক করে।
+`v.ai({ prompt, input? })` সঙ্গে সঙ্গে request ID দেয়। Registration-এ নয়, handler-এর মধ্যে কল করুন। `input` যেকোনো JSON; prompt/input প্রত্যেকটি সর্বোচ্চ20KB। উত্তর `ai` event-এ আসে: `{requestId, ok, text, citations,
+error}`। সফল text সর্বোচ্চ48KB; citation `{url,title}`। Web search-এর উত্তর দেখালে source link দৃশ্যমান ও clickable রাখুন। Model-এর জন্য search সর্বদা উপলভ্য। নির্দিষ্ট app deadline নেই; bounded concurrency থাকে; provider fallback বা auto retry নেই। উত্তর data, JavaScript হিসেবে execute হয় না; বিদ্যমান action নেবে কি না rule ঠিক করে।
+
+`ask` বোতাম ও `note` field-সহ panel-এর জন্য:
 
 ```javascript
 (on, v) => {
