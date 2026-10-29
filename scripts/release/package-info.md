@@ -3,6 +3,7 @@
 - `build_app.sh`: builds the release Mac app and bundles resources and native host.
 - `verify-macos-runtime.py`: checks the app architecture, minimum OS and self-contained dependencies; rejects retired llama/ggml/OpenMP libraries.
 - `test-packaging.py`: Mini2 fixtures with actual Mach-O executables; verify cloud-only packaging, retired-runtime refusal, SwiftPM output selection and Safari-safe uninstall.
+- `check-localizations.py`: checks the fixed Mac locale set, catalog keys/placeholders, guide sections, links and literal rule examples.
 - `sign_app.sh`: requires and embeds an authorized production App Group profile for Safari pairing before release signing.
 - `create_dmg.sh`: assembles and signs the installer disk image.
 - `notarize_dmg.sh`: submits/staples the disk image through Apple's notarization service.
