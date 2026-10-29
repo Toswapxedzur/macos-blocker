@@ -1,5 +1,4 @@
 import Foundation
-import CoreFoundation
 
 /// Credential-free group configuration, shared by linked custom groups.
 public struct RuleAIConfiguration: Codable, Equatable, Sendable {
