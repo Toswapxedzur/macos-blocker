@@ -7,6 +7,11 @@ window.runDropdownLayoutTests = async () => {
   testState.assets.providerModelCatalogs['provider-1']=['fixture-model'];
   testState.assets.classificationModelCapabilities={'api:provider-1:fixture-model':{searchCompatible:true,reasoningEfforts:['default','low','medium','high']}};
   pushSnapshot();q('[data-action="selectType"]').click();await wait();
+  const panel=q('.classifier-type-panel');
+  const sections=[panel.querySelector(':scope > .classifier-applicable-platform-section'),panel.querySelector(':scope > .classifier-ai-section'),panel.querySelector(':scope > .classifier-tagging-form > .classifier-tagging'),q('.classifier-tree-section')];
+  check(sections.every(node=>node?.classList.contains('section-card')) && !panel.classList.contains('section-card'),'group uses four sibling Vault sections');
+  check(new Set(sections.map(node=>getComputedStyle(node).backgroundColor)).size===4,'group sections use distinct Vault tints');
+  check(sections.every((node,index)=>!index || node.getBoundingClientRect().top-sections[index-1].getBoundingClientRect().bottom>=10),'group sections keep visible spacing');
   const form=q('[data-form-id="cloud-provider-group-1"]');
   const effort=form.querySelector('[data-field="reasoningEffort"]'), button=effort.closest('label').querySelector('.vui-select-button');
   const manage=form.querySelector('[data-action="openConnections"]');
@@ -23,6 +28,8 @@ window.runDropdownLayoutTests = async () => {
   q('[data-action="openUtilityPanel"]').click();await wait();
   check(q('[data-tagging-connections]').querySelector('[data-field="connectionType"]').options.length===4,'Settings retains four connection choices');
   check(!q('[data-workspace="knowledge"], .utility-research-section, .utility-dictionary-section, [data-contribution-first]'),'dormant features expose no controls');
+  testState.assets.trees[0].nodes=[];pushSnapshot();await wait();
+  check(q('.classifier-tree-section .tree-map').getBoundingClientRect().height<=160,'empty tag tree stays compact');
   check(uiErrors.length===0,'provider controls produce no renderer errors');
   return results;
 };

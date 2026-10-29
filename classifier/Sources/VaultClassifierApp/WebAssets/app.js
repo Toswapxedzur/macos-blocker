@@ -515,7 +515,7 @@
     const efforts = reasoningChoices(selected);
     if (!efforts.some(([value]) => value === effort)) efforts.push([effort, `${t(`cloud.reasoning.${effort}`)} · ${t("cloud.unavailable")}`]);
     const retry = account.needsRetry || account.failedItems || state.assets?.apiKeyClassification?.failedProfileIDs?.length;
-    return `<section class="classifier-type-section" data-form-id="cloud-provider-${esc(type.id)}" data-autosave-action="saveClassificationProvider" data-type-id="${esc(type.id)}">${valueSelectField("cloud.provider", "", "providerModel", selected, choices)}${valueSelectField("cloud.reasoning", "cloud.reasoningHint", "reasoningEffort", effort, efforts)}<div class="action-row"><button type="button" class="secondary" data-action="openConnections">${tx("connections.manage")}</button>${retry ? `<button type="button" class="secondary" data-action="retryChatGPTClassifications">${tx("cloud.retry")}</button>` : ""}</div>${configured ? `<p class="small-copy">${tx(type.classificationProvider === "apiKey" ? "connections.apiBilling" : "cloud.usingPlan")}</p><p class="small-copy" data-search-always>${tx("cloud.searchAlways")}</p>` : ""}</section>`;
+    return `<section class="section-card classifier-type-section classifier-ai-section" data-form-id="cloud-provider-${esc(type.id)}" data-autosave-action="saveClassificationProvider" data-type-id="${esc(type.id)}">${valueSelectField("cloud.provider", "", "providerModel", selected, choices)}${valueSelectField("cloud.reasoning", "cloud.reasoningHint", "reasoningEffort", effort, efforts)}<div class="action-row"><button type="button" class="secondary" data-action="openConnections">${tx("connections.manage")}</button>${retry ? `<button type="button" class="secondary" data-action="retryChatGPTClassifications">${tx("cloud.retry")}</button>` : ""}</div>${configured ? `<p class="small-copy">${tx(type.classificationProvider === "apiKey" ? "connections.apiBilling" : "cloud.usingPlan")}</p><p class="small-copy" data-search-always>${tx("cloud.searchAlways")}</p>` : ""}</section>`;
   }
 
   function connectionsSection() {
@@ -636,7 +636,8 @@
   }
 
   // A classifier type's own tag tree (the tree belongs to its type: made and
-  // deleted with it). The canvas is as tall as its tags (at most 520 px) and
+  // deleted with it). The empty canvas stays compact; a populated canvas is
+  // as tall as its tags (at most 520 px) and
   // shows no scroll bars (owner 2026-09-30): drag empty space or use the
   // trackpad to pan a tree wider than the panel.
   const graphModels = new Map();
@@ -710,7 +711,7 @@
       }]));
       const panelState = activeTagPanel?.treeID === tree.id ? activeTagPanel : null;
       const contentWidth = [...positions.values()].reduce((max, position) => Math.max(max, position.x + 126), 0) + 28;
-      const contentHeight = Math.max(240, [...positions.values()].reduce((max, position) => Math.max(max, position.y + 22), 0) + 28,
+      const contentHeight = Math.max(nodes.length ? 240 : 144, [...positions.values()].reduce((max, position) => Math.max(max, position.y + 22), 0) + 28,
         panelState ? 380 : 0);  // room for the popover, placed in view below
       const selectedNodeID = selectedTagNode?.treeID === tree.id ? selectedTagNode.nodeID : "";
       const popoverNode = panelState?.nodeID ? nodeByID.get(panelState.nodeID) : null;
@@ -864,15 +865,14 @@
       });
       const tagging = classifierType.tagging || { minimumConfidence: 4, houseRules: "" };
       const taggingFormID = `classifier-tagging-form-${classifierType.id}`;
-      const taggingSection = `<section class="classifier-type-section classifier-tagging" data-tagging-section><div class="section-header"><div><h3>${tx("cloud.tagging")}</h3></div></div>${selectField("tagging.minimumConfidence", "tagging.minimumConfidenceHint", "minimumConfidence", String(tagging.minimumConfidence), CONFIDENCE_CHOICES)}${textareaField("bridge.localModelHouseRules", "bridge.localModelHouseRulesCopy", "houseRules", tagging.houseRules, 'rows="4" maxlength="4000"')}</section>`;
+      const taggingSection = `<section class="section-card gold classifier-type-section classifier-tagging" data-tagging-section><div class="section-header"><div><h3>${tx("cloud.tagging")}</h3></div></div>${selectField("tagging.minimumConfidence", "tagging.minimumConfidenceHint", "minimumConfidence", String(tagging.minimumConfidence), CONFIDENCE_CHOICES)}${textareaField("bridge.localModelHouseRules", "bridge.localModelHouseRulesCopy", "houseRules", tagging.houseRules, 'rows="4" maxlength="4000"')}</section>`;
 
       return `<section class="classifier-type-panel" data-form-id="${esc(formID)}" data-type-id="${esc(classifierType.id)}" data-autosave-action="configureClassifierType">
-        <div class="classifier-name-row">${field("bridge.typeName", "", "name", classifierType.name, "text", 'maxlength="128"')}</div>
-        <section class="classifier-type-section classifier-applicable-platform-section"><span class="field-label" ${infoAttrs("bridge.applicablePlatform")}>${tx("bridge.applicablePlatform")}</span>${platformChoices(chosen, classifierType.id)}<p class="small-copy" data-info="bridge.platformsFixed">${tx("bridge.platformsFixed")}</p>${platformNotes.map((note) => `<p class="small-copy">${esc(note)}</p>`).join("")}</section>
-        <div class="action-row classifier-tagging-control"><button type="button" class="secondary" data-action="setClassifierTypePaused" data-type-id="${esc(classifierType.id)}" data-paused="${classifierType.isPaused !== true}">${tx(classifierType.isPaused === true ? "classification.resume" : "classification.pause")}</button>${statusPill(tx(classifierType.isPaused === true ? "classification.paused" : state.settings?.classificationEnabled === false ? "classification.disabled" : "classification.active"), classifierType.isPaused === true || state.settings?.classificationEnabled === false ? "muted" : "cyan")}</div>
-        <p class="small-copy" data-info="bridge.autoSave">${tx("bridge.autoSave")}</p>
+        <div class="classifier-group-header"><div class="classifier-name-row">${field("bridge.typeName", "", "name", classifierType.name, "text", 'maxlength="128"')}</div>
+          <div class="action-row classifier-tagging-control"><button type="button" class="secondary" data-action="setClassifierTypePaused" data-type-id="${esc(classifierType.id)}" data-paused="${classifierType.isPaused !== true}">${tx(classifierType.isPaused === true ? "classification.resume" : "classification.pause")}</button>${statusPill(tx(classifierType.isPaused === true ? "classification.paused" : state.settings?.classificationEnabled === false ? "classification.disabled" : "classification.active"), classifierType.isPaused === true || state.settings?.classificationEnabled === false ? "muted" : "cyan")}</div></div>
+        <section class="section-card cyan classifier-type-section classifier-applicable-platform-section"><span class="field-label" ${infoAttrs("bridge.applicablePlatform")}>${tx("bridge.applicablePlatform")}</span>${platformChoices(chosen, classifierType.id)}<p class="small-copy" data-info="bridge.platformsFixed">${tx("bridge.platformsFixed")}</p>${platformNotes.map((note) => `<p class="small-copy">${esc(note)}</p>`).join("")}</section>
         ${cloudProviderSection(classifierType)}
-        <div data-form-id="${esc(taggingFormID)}" data-autosave-action="saveClassifierTypeTagging" data-type-id="${esc(classifierType.id)}">
+        <div class="classifier-tagging-form" data-form-id="${esc(taggingFormID)}" data-autosave-action="saveClassifierTypeTagging" data-type-id="${esc(classifierType.id)}">
           ${taggingSection}
         </div>
 
@@ -885,12 +885,11 @@
     const selectedType = selectedTypeID ? classifierTypes.find((type) => type.id === selectedTypeID) : null;
     if (selectedType) {
       // The type (its name is the editable title) and its tag tree, in one scroll.
-      const section = (labelKey, inner) => `<section class="type-section"><h3 class="type-section-title">${tx(labelKey)}</h3>${inner}</section>`;
       return `<div class="workspace classifier-type-workspace">
         <div class="type-detail-body">
           ${notice(state.issue, "red")}
-          <section class="type-section">${typeForm(selectedType)}</section>
-          ${section("bridge.tabTree", tagTreeWorkspace(selectedType.treeID))}
+          ${typeForm(selectedType)}
+          <section class="section-card pink classifier-tree-section"><h3 class="classifier-tree-title">${tx("bridge.tabTree")}</h3>${tagTreeWorkspace(selectedType.treeID)}</section>
         </div></div>`;
     }
     // Nothing selected: '+ New type' creates directly and the sidebar lists the

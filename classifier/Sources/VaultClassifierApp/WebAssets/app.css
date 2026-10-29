@@ -174,17 +174,6 @@ h3 { font-size: 14px; }
 .header-language { display: block; width: 132px; }
 .header-language select { min-height: 28px; padding: 5px 30px 5px 8px; border-radius: 8px; background-color: #fff; font-size: 12px; font-weight: 600; }
 
-.classifier-type-panel::before {
-  position: absolute;
-  top: 12px;
-  bottom: 12px;
-  left: 0;
-  width: 4px;
-  border-radius: 0 999px 999px 0;
-  content: "";
-}
-.classifier-type-panel::before { background: rgba(30, 58, 138, 0.28); }
-
 .deletion-dialog {
   position: relative;
   z-index: 1;
@@ -337,13 +326,20 @@ h3 { font-size: 14px; }
 
 .classifier-type-panels { display: grid; gap: 14px; }
 .classifier-type-panel {
-  position: relative;
-  overflow: hidden;
-  border: 0;
-  border-radius: 12px;
-  background: var(--navy-100);
-  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.05);
+  display: grid;
+  gap: 14px;
 }
+
+.classifier-group-header {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px 16px;
+  padding: 2px 0;
+}
+
+.classifier-group-header .classifier-name-row { flex: 1 1 280px; min-width: 0; }
+.classifier-group-header .classifier-tagging-control { flex: 0 0 auto; }
 
 .classifier-type-head {
   display: flex;
@@ -365,8 +361,7 @@ h3 { font-size: 14px; }
   border-bottom: 1px solid var(--line);
 }
 
-.classifier-type-section { padding: 14px 14px 14px 18px; border-bottom: 1px solid var(--line); }
-.classifier-type-section:last-child { border-bottom: 0; }
+.classifier-type-section { padding: 14px 14px 14px 18px; }
 .classifier-type-section .section-header { margin-bottom: 10px; }
 .resident-model-note { margin: 8px 0 12px; color: var(--muted); }
 /* A type's platforms: editable at creation, then a read-only checklist. */
@@ -510,10 +505,6 @@ h3 { font-size: 14px; }
 .type-detail-head .eyebrow { color: var(--muted); }
 .type-detail-head h2 { margin: 4px 0 2px; }
 .type-detail-body { display: flex; flex-direction: column; gap: 24px; }
-.type-section { display: flex; flex-direction: column; gap: 10px; }
-.type-section-title { margin: 0; color: color-mix(in srgb, var(--muted) 82%, transparent); font-size: 11px; font-weight: 600; letter-spacing: 0.04em; }
-/* Embedded (scoped) workspaces drop their own outer padding/scroll. */
-.type-section > .workspace { padding: 0; }
 .tree-workspace-scoped { gap: 12px; }
 
 .workspace { display: flex; flex-direction: column; gap: 14px; max-width: none; }
@@ -613,9 +604,14 @@ textarea:focus {
 
 .action-row { align-items: center; flex-wrap: wrap; gap: 8px; }
 
-.classifier-type-section[data-autosave-action="saveClassificationProvider"] > .action-row {
-  margin-top: 10px;
-}
+.classifier-ai-section > .field,
+.classifier-tagging > .field { display: block; }
+
+.classifier-ai-section > .field + .field,
+.classifier-tagging > .field + .field { margin-top: 12px; }
+
+.classifier-ai-section > .action-row { margin-top: 12px; }
+.classifier-ai-section > .small-copy:first-of-type { margin-top: 8px; }
 
 .primary,
 .secondary,
@@ -836,7 +832,7 @@ textarea:focus {
 /* The type's name is its editable title (like a group's name in the editor). */
 .classifier-name-row {
   display: block;
-  padding: 14px 14px 4px 18px;
+  padding: 0;
 }
 
 .classifier-name-row .field-label {
@@ -860,9 +856,12 @@ textarea:focus {
   background: #f1f5f9;
 }
 
-.classifier-type-panel > .action-row {
-  padding: 4px 14px 12px 18px;
-}
+.classifier-type-delete { padding: 0 0 2px; }
+
+.classifier-tree-title { margin-bottom: 10px; }
+.classifier-tree-section .tree-panel { background: transparent; box-shadow: none; }
+.classifier-tree-section .tree-map { border-radius: 10px; background: #fff; }
+.classifier-tree-section .tree-canvas-hint { padding: 8px 0 0; background: transparent; }
 
 .classifier-group-more {
   padding: 14px 14px 14px 18px;
