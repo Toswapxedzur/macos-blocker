@@ -18,6 +18,11 @@ final class MacBundledResourcesTests: XCTestCase {
 
     func testActualBundledJavaScriptAndMissingResource() throws {
         let url = try XCTUnwrap(RuntimeResources.url(name: "group-actions", ext: "js"))
+        let runningTest = try XCTUnwrap(Bundle.allBundles.first { $0.bundleURL.lastPathComponent == "macosBlockerPackageTests.xctest" })
+        let expected = runningTest.bundleURL.deletingLastPathComponent()
+            .appendingPathComponent("macosBlocker_MacBlockerCore.bundle/Resources/group-actions.js")
+        XCTAssertEqual(url.standardizedFileURL.path, expected.standardizedFileURL.path,
+                       "The test must use its own built resources even when an installed Vault app is loaded")
         XCTAssertTrue(try String(contentsOf: url).contains("CBGroupActions"))
         XCTAssertNil(RuntimeResources.url(name: "not-a-resource", ext: "js"))
     }
