@@ -71,6 +71,9 @@ snooze: {}
 panel: { panelId: string, controlId: string, eventName: string,
          value: string, values: { [controlId: string]: string } }
 file: see Files
+record: { requestId: string, ok: boolean, op?: string, key?: string,
+          record?: Record | null, entries?: Header[], next?: string | null,
+          deleted?: number, error?: string }
 App = { appId: string, name: string }
 ```
 
@@ -144,3 +147,45 @@ Steam diblokir kecuali selama jeda lima menit yang dipicu Snooze atau tombol pan
   on("tick", ev => v.block("com.valvesoftware.steam", ev.now >= v.state.pauseUntil));
 }
 ```
+
+## Group records
+
+`v.store(request)` memulai operasi record JSON asinkron di dalam handler. Record bersifat privat bagi grup, bertahan melewati Run dan restart, lalu dihapus bersama grup. Grup tertaut memiliki store terpisah. Rule memilih key, value, version, invalidasi cache, dan prioritas feedback. Mac dan browser rule memakai API sama, tetapi store tiap app/browser terpisah.
+
+| Request | Result |
+|---|---|
+| `{op:"get", key}` | `record` atau `null` |
+| `{op:"put", key, value, version?, ifRevision?}` | `record` tersimpan |
+| `{op:"delete", key, ifRevision?}` | `record: null` |
+| `{op:"list", prefix?, after?, limit?}` | `entries` terurut dan `next` |
+| `{op:"clear", prefix?}` | jumlah `deleted` |
+
+Record berbentuk `{value, revision, version, updatedAt}`. `revision` opaque berubah pada write nyata; `version` adalah metadata caller. `list` memberi header tanpa value; gunakan `get` untuk membaca dan `after: next` untuk halaman berikutnya. Tanpa `ifRevision`, put/delete unconditional; `null` mensyaratkan key tidak ada, string revision harus cocok persis. Ketidakcocokan memberi `ok:false`, `error:"store-conflict"` dan `record` kini. Ini mencegah balasan otomatis tertunda menimpa feedback pengguna. `v.context.revision` adalah marker konfigurasi rule opaque yang dapat disertakan dalam version; framework tidak menentukan kebijakan cache.
+
+Batas: key 1–2048 karakter, version ≤128, JSON value ≤64KiB, depth ≤32, 10000 key per grup, dokumen penuh16MiB. `list` paling banyak100 header dan96KiB per halaman. Maksimum32 request per grup dan128 start per detik total; overload mengirim satu `store-busy` per grup per detik dan membuang sisanya. Storage error memberi `ok:false`; dokumen future/malformed dipertahankan dan melaporkan `store-unavailable`. Tidak ada retry/eviction otomatis. Gunakan ticks untuk deadline.
+
+## AI calls from a running rule
+
+Setiap custom group memilih satu connection/model dan reasoning effort di **AI calls**. Mac dan browser rule menggunakan API sama; request browser memerlukan Mac Vault terhubung, kredensial provider tetap di sana. Grup tertaut berbagi pilihan dan optional daily request cap. Kosong berarti tanpa cap grup, tetapi limit akun tetap berlaku. Cap memakai hari UTC, bertahan setelah restart, menghitung semua attempt terkirim termasuk gagal. Link menggabungkan usage yang ada; unlink mempertahankan usage sebelumnya.
+
+`v.ai({ prompt, input? })` langsung mengembalikan request ID. Panggil di dalam handler, bukan saat mendaftarkan rule. `input` boleh berupa JSON apa pun; prompt/input masing-masing dibatasi20KB. Balasan hadir sebagai event `ai`: `{requestId, ok, text, citations, error}`. Teks sukses maksimal48KB; citation `{url,title}`. Pertahankan link sumber yang terlihat dan dapat diklik saat menampilkan jawaban web-search. Search selalu tersedia bagi model. Tidak ada deadline app tetap; concurrency terbatas; tidak ada provider fallback atau retry otomatis. Respons adalah data, tidak dieksekusi sebagai JavaScript. Rule menentukan tindakan yang sudah ada.
+
+```javascript
+(on, v) => {
+  let pending = null;
+  on("panel", ({ data }) => {
+    if (data.controlId !== "ask" || pending) return;
+    pending = v.ai({ prompt: "Summarize this text.", input: data.values?.note ?? "" });
+  });
+  on("ai", ({ data }) => {
+    if (data.requestId !== pending) return;
+    pending = null;
+    if (!data.ok) { v.log("AI request failed:", data.error); return; }
+    v.log(data.text, data.citations);
+  });
+}
+```
+
+Call yang masih berjalan tidak diputar ulang setelah restart. Run, disable/re-enable, dan delete membuang balasan usang; browser terputus melaporkan `ai-unavailable`. Error lain: `ai-not-configured`, `ai-invalid-input`, `ai-busy`, `ai-daily-limit`, `ai-request-failed`, `ai-usage-storage-unavailable`. Call gagal tidak menimpa hasil lama yang dipertahankan rule. Batas state tetap64KB.
+
+Temukan pilihan bebas kredensial dengan `rule_ai_models` di Mac atau `settings-rule-ai-models` di browser; konfigurasi `ruleAI` melalui jalur set-group yang ada. Field: `providerModel`, `accountID`, `reasoningEffort` (`default`, `low`, `medium`, `high`), `dailyRequestLimit` (null atau1–100000). Gunakan pilihan yang dikembalikan; jangan taruh key atau URL provider di source rule.

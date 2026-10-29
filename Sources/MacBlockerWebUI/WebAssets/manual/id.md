@@ -1,139 +1,73 @@
-# Panduan pengguna Mac Vault
+# Manual pengguna Mac Vault
 
-Mac Vault memiliki tiga halaman: **Vault** memblokir aplikasi native, **Klasifikasi** memberi tag pada konten browser yang didukung, dan **Aktivitas** menampilkan penggunaan yang direkam. Ekstensi browser mengumpulkan konten yang didukung dan menerapkan pemblokiran browser. Pasang dan hubungkan di browser yang Anda gunakan.
+Mac Vault memiliki tiga halaman: **Vault** memblokir app native, **Content tagging** memberi tag pada konten browser yang didukung, dan **Activity** menampilkan penggunaan yang direkam. Ekstensi browser mengumpulkan konten yang didukung dan menerapkan pemblokiran browser. Instal dan hubungkan di browser yang digunakan.
 
 ## Mulai cepat
 
-1. Di **Vault**, tambahkan grup pemblokiran dan target Apps, lalu pilih aplikasi dengan pemilih +.
-2. Pilih perilaku pemblokiran grup dan aktifkan.
-3. Di **Klasifikasi**, buat grup, pilih platform, lalu tambahkan tag beserta deskripsinya.
-4. Pilih tingkat model lokal dan unduh jika perlu. Aktifkan tagging di setelan Klasifikasi dan lanjutkan grup.
-5. Buka konten yang didukung di browser terhubung. Atur filter tag di grup pemblokiran browser jika tag ingin mengendalikan pemblokiran.
+1. Di **Vault**, tambahkan blocking group dan target Apps, lalu pilih app dengan pemilih +.
+2. Pilih perilaku pemblokiran dan aktifkan grup.
+3. Di **Content tagging**, buat grup, pilih platformnya, dan tambahkan tag beserta deskripsi.
+4. Buka Settings → **AI connections**, pilih ChatGPT subscription, OpenAI API, Gemini API, atau Grok API. Hubungkan akun atau masukkan key dan ambil model, lalu pilih koneksi/model di grup. Aktifkan tagging dan lanjutkan grup.
+5. Buka konten yang didukung di browser terhubung. Tambahkan filter tag ke browser blocking group jika tag hendak mengendalikan pemblokiran.
 
-## Grup pemblokiran
+## Blocking groups
 
-**Grup pemblokiran** menerapkan kebijakan pemblokiran. **Grup Klasifikasi** memberi tag pada konten; grup ini sendiri tidak memblokir apa pun.
+**Blocking group** menerapkan kebijakan pemblokiran. **Content tagging group** memberi tag pada konten dan tidak memblokir sendiri. Tambahkan dan namai grup, pilih target di **Applies to**, tentukan kapan pemblokiran berlaku dan atur jadwal atau batas waktu, lalu aktifkan. Edit biasa tersimpan otomatis. Error berarti perubahan ditolak; perbaiki field lalu coba lagi. Menonaktifkan grup menghentikan kebijakan dengan tetap menyimpan konfigurasinya; **Delete group** menghapusnya. Seret grup untuk mengurutkan. Beberapa grup dapat berlaku untuk target sama; snooze satu grup tidak mengangkat blokir grup lain. **Export** menyalin konfigurasi; **Import** mengganti konfigurasi grup terpilih setelah konfirmasi.
 
-1. Tambahkan grup pemblokiran dan beri nama.
-2. Pilih target pada **Berlaku untuk**.
-3. Pilih kapan pemblokiran berlaku, lalu atur jadwal atau jatah waktu.
-4. Aktifkan grup. Targetnya berbagi kebijakan grup tersebut.
+### Time allowance and schedule
 
-Perubahan rutin tersimpan otomatis. Pesan kesalahan berarti perubahan tidak diterima; perbaiki kolom lalu coba lagi. Nonaktifkan grup untuk menghentikan kebijakannya sambil mempertahankan konfigurasi. **Hapus grup** menghapusnya. Seret grup untuk mengubah urutan. Beberapa grup dapat berlaku untuk satu target; menunda satu grup tidak menghapus pemblokiran grup lain.
+**Block immediately** berlaku saat grup aktif cocok dan jadwalnya berjalan. **Block when the time allowance is used** mengizinkan penggunaan sampai jatah habis. Atur jatah dalam menit dan interval reset dalam jam. Batas bergulir menghitung penggunaan dalam window sebelumnya. Reset tengah malam memulai periode baru pada tengah malam lokal, termasuk batas bergulir. Pilih hari aktif dan window waktu lokal opsional, satu per baris, misalnya **09:00-12:00**. Daftar window kosong berlaku sepanjang hari terpilih. Window harus berakhir setelah dimulai pada hari yang sama; pisahkan jadwal semalam ke beberapa hari.
 
-**Ekspor** menyalin konfigurasi grup. **Impor** mengganti konfigurasi grup terpilih setelah konfirmasi.
+### Snooze
 
-### Jatah waktu dan jadwal
+Atur snooze di tiap blocking group. **Pause blocking** menangguhkan kebijakan selama durasi jeda. **Add to the time allowance** menambahkan menit yang dapat dipakai pada grup dengan batas waktu. Hanya allowance tambahan yang dipakai dihitung sebagai waktu snooze. Tambahan yang tidak dipakai kedaluwarsa saat reset berikutnya; untuk batas bergulir setelah satu window, atau lebih cepat pada tengah malam jika diaktifkan. **Activation delay** menunda snooze sementara pemblokiran tetap berjalan. **Cooldown** adalah jeda setelah snooze berakhir sebelum permintaan berikutnya. **Required confirmations** menentukan jumlah langkah konfirmasi. Snooze pada grup beku hanya tersedia jika diizinkan sebelum dibekukan.
 
-**Blokir segera** berlaku setiap kali grup aktif cocok dan jadwalnya berjalan. **Blokir setelah jatah waktu habis** mengizinkan penggunaan yang cocok hingga jatahnya habis.
+### Freeze and PIN
 
-Atur jatah dalam menit dan interval reset dalam jam. Batas bergulir menghitung penggunaan dalam jendela sebelumnya. Reset tengah malam memulai periode baru pada tengah malam waktu setempat, termasuk untuk batas bergulir.
+**Freeze** mencegah edit biasa. Membuka freeze memerlukan sepuluh konfirmasi dengan jarak lima detik, waktu tunggu yang ditentukan, dan PIN enam digit. **Wait before unfreezing** menerima 0–72 jam; 0 berarti tanpa jeda. Saat beku, waktu tunggu dapat diperpanjang dan PIN dapat ditambahkan jika belum ada; syarat tidak dapat dilonggarkan sampai grup dibuka. Penghapusan juga mematuhi sisa waktu tunggu dan PIN.
 
-Pilih hari aktif dan jendela waktu lokal opsional, satu per baris, seperti **09:00-12:00**. Daftar jendela kosong berlaku sepanjang hari yang dipilih. Jendela harus berakhir setelah waktu mulainya pada hari yang sama; bagi jadwal semalam menjadi beberapa hari.
+### Linked groups
 
-### Penundaan sementara
-
-Atur penundaan di setiap grup pemblokiran. **Jeda pemblokiran** menangguhkan kebijakan grup selama durasi jeda. **Tambahkan ke jatah waktu** menambah menit pakai ke grup dengan batas waktu. Hanya jatah tambahan yang digunakan yang dihitung sebagai waktu tunda. Jatah tambahan yang tidak dipakai kedaluwarsa saat reset berikutnya; untuk batas bergulir, setelah satu jendela atau lebih cepat pada tengah malam jika diaktifkan.
-
-**Tunda aktivasi** menunda awal jeda sementara pemblokiran tetap berjalan. **Masa jeda** adalah waktu tunggu setelah penundaan berakhir sebelum permintaan berikutnya. **Konfirmasi wajib** menentukan jumlah langkah konfirmasi. Grup yang dibekukan hanya dapat ditunda jika diizinkan sebelum dibekukan.
-
-### Kunci pengeditan dan PIN
-
-**Bekukan** mencegah pengeditan rutin. Untuk mencairkan, diperlukan sepuluh konfirmasi dengan jarak lima detik, ditambah waktu tunggu yang diatur dan PIN enam digit jika tersedia. **Tunggu sebelum mencairkan** menerima 0–72 jam; 0 berarti tanpa waktu tunggu tambahan.
-
-Saat grup dibekukan, waktu tunggu dapat diperpanjang dan PIN dapat ditambahkan jika belum ada. Syarat itu tidak dapat dilonggarkan sebelum grup dicairkan. Penghapusan juga tunduk pada waktu tunggu tersisa dan PIN.
-
-### Grup tertaut
-
-Gunakan **Tautkan** untuk menghubungkan grup yang dipilih secara eksplisit di program Vault lain. Grup tertaut berbagi nama, setelan kebijakan yang didukung, target, penggunaan, dan syarat pembekuan. Tiap program mengedit dan menerapkan jenis target yang didukungnya; entri target lain tetap tersedia bagi program tertaut. Membatalkan tautan mempertahankan setiap grup dan setelannya.
-
-Jika anggota tertaut offline, pengeditan mungkin tidak tersedia. Buka Mac Vault dan browser tertaut untuk menyambung kembali. Kebijakan tersimpan lokal dapat terus berlaku saat anggota offline.
+Gunakan **Link** untuk menghubungkan grup yang dipilih secara eksplisit dari program Vault lain. Grup berbagi nama, pengaturan kebijakan yang didukung, target, penggunaan, dan kondisi freeze. Tiap program mengedit dan menerapkan jenis target yang didukungnya; entri target lain tetap tersedia bagi program tertaut. **Unlink** memisahkan tetapi mempertahankan grup dan pengaturannya. Jika anggota offline, buka Mac Vault dan browser tertaut untuk menghubungkan kembali. Kebijakan tersimpan lokal dapat tetap berlaku saat anggota offline.
 
 ## Bantuan
 
-Klik **i** kecil di samping kolom untuk melihat penjelasan. Klik di luarnya atau tekan Escape untuk menutup. Daftar berada di dalam kotak yang dapat digulir; gulir kotak untuk melihat entri lainnya. Pencarian memfilter daftar yang terlihat tanpa menghapus entri.
+Klik **i** kecil di samping field untuk melihat penjelasan; klik di luar atau tekan Escape untuk menutup. Daftar berada dalam kotak yang dapat digulir; pencarian menyaring yang terlihat tanpa menghapus entri. [Code manual](../code-manual/id.md) untuk custom rules menjelaskan editor, aktivasi, log, akses file, dan API.
 
-Aturan khusus memiliki [Panduan kode](../code-manual/id.md) tersendiri. Panduan itu menjelaskan editor, aktivasi, log, akses berkas, dan API yang didukung.
+## Native apps
 
-## Aplikasi native
+Gunakan pemilih + pada target Apps untuk memilih app terpasang atau berjalan. Buka lagi untuk memperbarui daftar setelah meluncurkan app dari folder lain. **Block every app except these** menjadikan daftar sebagai allowlist. Mac Vault dapat memblokir app Apple biasa dan browser utuh; Mac Vault dan app yang berbagi bundle identifier tetap dilindungi. App yang diblokir diminta keluar; **Ask a blocked app to quit again every (minutes)** mengatur percobaan ulang. Redirect situs, jeda halaman, dan penyembunyian feed diterapkan ekstensi browser, bukan tindakan app native.
 
-Gunakan pemilih + pada target Apps untuk memilih aplikasi terpasang. **Blokir semua aplikasi kecuali ini** mengubah daftar menjadi daftar izin. Aplikasi sistem, browser, dan Vault sendiri dikecualikan dari pemblokiran aplikasi native.
+## Content tagging
 
-Aplikasi yang diblokir diminta untuk berhenti. **Minta aplikasi yang diblokir berhenti lagi setiap (menit)** mengatur percobaan ulang. Pengalihan situs, jeda halaman, dan penyembunyian feed diterapkan ekstensi browser; semuanya bukan aksi aplikasi native.
+Grup Content tagging memberi tag pada konten platform yang ditetapkan memakai pohon tag dan pengaturan modelnya sendiri. Tiap platform milik satu grup; pilih saat membuat grup, tidak dapat diubah setelahnya. Jadwal dan filter blocking group tidak mengendalikan tagging. Aktifkan tagging di Settings. Gunakan **Pause tagging / Resume tagging** secara terpisah untuk tiap grup. Mematikan recording feed platform di **Activity → Recording** juga menghentikan tagging-nya.
 
-## Klasifikasi
+### Tags and model settings
 
-Grup Klasifikasi memberi tag pada konten dari platform yang ditetapkan dengan pohon tag dan setelan modelnya sendiri. Setiap platform hanya menjadi anggota satu grup. Pilih platform saat membuat grup; sesudahnya tidak dapat diubah. Jadwal dan filter grup pemblokiran tidak mengendalikan tagging.
+Buat tag, jelaskan artinya, dan tetapkan atau hapus parent di pohon. Seret tag untuk memindahkan cabang. Deskripsi jelas membantu model membedakan tag serupa. Pengaturan tiap grup independen. **Minimum confidence** menetapkan tingkat bukti untuk setiap tag prediksi, 1–5. Grup baru mulai di 4 (dukungan kuat). Tidak ada jumlah tag sasaran; item dapat tidak mendapat tag. **Tagging instructions** menyimpan preferensi grup. Edit Content tagging biasa tersimpan otomatis. Setiap grup memakai koneksi, model, dan reasoning effort yang dipilih secara eksplisit.
 
-Aktifkan tagging di setelan Klasifikasi. Gunakan **Jeda tagging / Lanjutkan tagging** terpisah untuk tiap grup. Mematikan rekaman feed platform di **Aktivitas → Rekaman** juga menghentikan tagging-nya.
+### AI connections
 
-### Tag dan setelan model
+Settings memiliki ChatGPT subscription, OpenAI API, Gemini API, dan Grok API. ChatGPT subscription memakai login Vault dan paket yang memenuhi syarat. Key API mengikuti penagihan dan batas penggunaan provider terpilih. Pilih provider dan masukkan key tepat di bawah dropdown bersama. Perubahan key tersimpan otomatis; mengosongkan field menghapus key. Pilih **Fetch model list**, lalu pilih model di grup Content tagging atau custom-rule. Mengambil daftar model tidak otomatis memilihnya.
 
-Buat tag, jelaskan maknanya, lalu atur atau hapus induknya di pohon tag. Seret tag untuk memindahkan cabangnya. Deskripsi yang jelas membantu model membedakan tag serupa. Setiap grup memiliki setelan sendiri.
+**Reasoning effort** mengatur seberapa banyak model berpikir: Model default, Low, Medium, atau High jika didukung. Pilihan baru mulai di Medium; pilihan lama tetap tersimpan. Effort lebih tinggi dapat menambah waktu dan token. Web search selalu aktif untuk tagging; model menentukan kapan menggunakannya. Pilih model yang mendukung search dan structured tagging. Permintaan yang gagal/tidak tersedia mempertahankan hasil cache yang valid; item baru tetap belum terselesaikan sampai memilih **Retry cloud classification**. Vault tidak mengganti provider otomatis. Tiap koneksi memiliki interval retry dan batas percobaan sendiri. Koreksi tag di ekstensi browser: klik **+ tag**, cari dan pilih tag; gunakan kontrol hapus atau pilih tag lalu tekan Delete sekali untuk menghapus. **Untagged** berarti tagging selesai tanpa tag; **Tagging** berarti hasil masih menunggu. Koreksi Anda menjadi acuan item tersebut.
 
-- **Kecepatan ↔ Kualitas** memilih tingkat model lokal. Model besar memakai lebih banyak memori; kecepatan dan hasil bergantung pada Mac dan beban kerja. Unduhan digunakan bersama antarkelompok.
-- **Ketat ↔ Luas** mengatur persyaratan keyakinan dan jumlah tag default.
-- **Tag minimum / Tag maksimum** di Lainnya mengganti jumlah default tersebut. Ketat ↔ Luas tetap mengatur keyakinan untuk tag tambahan. Kosongkan salah satu kolom untuk memakai nilai defaultnya.
-- **Instruksi tagging** menambahkan petunjuk opsional untuk grup ini.
+## Activity
 
-Perubahan Klasifikasi rutin tersimpan otomatis. Tingkat yang dipilih harus diunduh sebelum dapat memberi tag. Grup yang memakai tingkat sama berbagi model yang dimuat; maksimal dua tingkat tetap dimuat sekaligus.
+Activity merekam lokal penggunaan app aktif, kunjungan situs, dan **Content viewed** yang didukung. Grafik mencerminkan data yang direkam; area kosong tidak membuktikan Mac sedang idle. Pilih rentang tanggal. **Timeline** menunjukkan penggunaan menurut jam; **Totals** menjumlah durasi; **Time interval** menggabungkan penggunaan tiap interval menjadi blok vertikal. **Colors** adalah legenda yang dapat diklik untuk memfokuskan grafik pada sumber. Pilih hari untuk melihat penggunaan sejak hari itu.
 
-Koreksi tag item konten di ekstensi browser. Klik **+ tag**, cari tag Klasifikasi yang ada, lalu pilih satu untuk ditambahkan. Gunakan kontrol hapus tag atau pilih tag dan tekan Delete sekali untuk menghapusnya. **Tanpa tag** berarti tagging selesai tanpa tag; **Sedang diberi tag** berarti hasil masih menunggu. Koreksi membantu tagging berikutnya.
+### Activity groups
 
-## Pengetahuan dan riset web
+Buat grup untuk menampilkan app dan situs pilihannya bersama di Usage. **Merge** memakai satu nama dan warna untuk anggota di seluruh Activity. Activity group mengatur penggunaan terekam dan terpisah dari blocking group maupun Content tagging group. Simpan editor Activity group secara eksplisit dengan **Save**.
 
-Pengetahuan menyimpan deskripsi singkat di Mac untuk model tagging lokal. **Sumber konten** mencakup kreator, akun, channel, dan komunitas. Deskripsi sumber menyertai kontennya. **Istilah dikenal** berlaku saat istilah muncul di judul.
+### Recording and retention
 
-Tambahkan sumber atau istilah beserta deskripsinya, atau kosongkan deskripsi untuk meminta riset jika diaktifkan. Saran kreator membantu menemukan sumber yang sudah dikumpulkan Klasifikasi. Daftar dengan enam entri atau lebih memiliki pencarian tepat di atasnya: Istilah dan Sumber konten tiap platform memiliki pencarian terpisah untuk nama, ID, atau deskripsi. Mengedit deskripsi memengaruhi tagging berikutnya; menghapus pengetahuan sumber tidak mencegah riset membuatnya kembali nanti.
+Di **Recording**, hidupkan atau matikan perekaman per kategori atau sumber. **Keep** mengatur lama riwayat disimpan; **Forever** menyimpannya tanpa kedaluwarsa otomatis. Pilihan individual dapat mengikuti pengaturan luas. Mematikan perekaman menghentikan rekaman baru; menghapus riwayat menghapus entri. Feed platform mengumpulkan konten yang ditampilkan pada halaman platform yang didukung, dibuka atau tidak. Feed dengan **Tagging supported** dapat memasok Content tagging saat recording aktif. Retensinya terpisah dari penggunaan app dan situs. Pause pada grup Content tagging tidak otomatis mematikan recording.
 
-### Kamus resmi dan pribadi
+## Settings
 
-Buka **Pengaturan → pengklasifikasi → Kamus resmi** untuk mengatur kamus resmi. **Pengetahuan** menampilkan versi terpasang dan pintasan ke kontrol ini. Vault memeriksa pembaruan saat dimulai; gunakan **Periksa pembaruan** dan tombol unduh untuk memasangnya. Anda tidak memerlukan kunci API AI sendiri.
+Pilih bahasa antarmuka di Settings. Penjelasan field tersedia melalui tombol Info dalam bahasa terpilih.
 
-- **Istilah** diunduh untuk pencarian lokal.
-- **Cache + pencarian online** menyimpan hingga 10.000 entri kreator secara default; batasnya dapat diubah. Jika kreator tidak ada dalam cache, ID publik yang terkait dengan platformnya dikirim ke layanan kamus.
-- **Unduhan penuh · pencarian offline** mencari kreator secara lokal setelah diunduh. Pilih mode ini lalu unduh kamusnya.
+## Saving and troubleshooting
 
-Deskripsi pribadi Anda, termasuk yang dibuat penyedia riset, diprioritaskan daripada deskripsi resmi. Di **Impor / ekspor kamus Anda**, ekspor entri pribadi atau impor file JSON; entri resmi tidak disertakan dalam ekspor pribadi.
-
-**Bantu menyempurnakan kamus kreator** aktif secara default dan dijelaskan sebelum kontribusi pertama. Nonaktifkan di sini untuk menghentikan kontribusi berikutnya dan membatalkan permintaan tertunda. Saat aktif, Vault hanya mengirim sampel ID kreator publik yang belum tersedia dan jumlah pengikut/pelanggan publik yang tersedia; judul, riwayat penelusuran, dan deskripsi pribadi tidak dikirim. Baca pengungkapan untuk batas dan masa penyimpanan. Riset web memiliki persetujuan dan pengaturan penyedia tersendiri.
-
-### Atur penyedia riset
-
-1. Buka **Setelan Klasifikasi → Kunci API & penyedia**.
-2. Pilih jenis penyedia dan **Tambah penyedia**. Ini membuat konfigurasi, bukan menerbitkan kunci API.
-3. Dapatkan kredensial dari penyedia tersebut dan masukkan. Untuk endpoint kustom yang kompatibel, atur juga field endpoint dan protokolnya.
-4. Di **Riset web**, pilih penyedia dengan pencarian web bawaan. Ambil daftar modelnya dan pilih model riset. Gunakan pencarian pada pemilih model untuk mempersempit daftar; segarkan untuk mengambil ulang.
-5. Baca pemberitahuan persetujuan dan aktifkan persetujuan. Pilih **Aktif**, **Nonaktif**, atau **Ikuti setelan Klasifikasi** untuk tiap grup.
-
-**Atur riset web…** membuka setelan jika konfigurasi belum ada. Grup tidak dapat melewati persetujuan riset. **Uji koneksi** memastikan permintaan uji berhasil, bukan bahwa semua model mendukung riset. Model uji penyedia berbeda dari model riset yang dipilih.
-
-Kunci disimpan di folder dukungan aplikasi pada Mac, bukan Keychain sistem. Kunci mengautentikasi permintaan ke penyedia yang dikonfigurasi; Vault tidak mengunggahnya ke server sendiri. Riset mengirim subjek publik yang disanitasi ke penyedia terpilih, bukan isi atau ringkasan konten privat. Baca pemberitahuan persetujuan untuk mengetahui field yang dikirim. Penggunaan penyedia juga mencakup uji koneksi dan permintaan daftar model.
-
-Status riset menampilkan permintaan antrean, jeda percobaan ulang, kegagalan, dan penggunaan token hari ini. **Coba ulang subjek gagal sekarang** mengulangi kegagalan yang memenuhi syarat; tidak melewati batas harian atau persetujuan.
-
-## Aktivitas
-
-Aktivitas merekam penggunaan aplikasi yang diaktifkan, kunjungan situs, dan **Konten dilihat** yang didukung secara lokal. Grafik menunjukkan data rekaman; area kosong tidak membuktikan Mac sedang tidak aktif.
-
-Pilih rentang tanggal. **Linimasa** menampilkan penggunaan pada waktu terjadinya; **Total** menjumlahkan durasi. **Interval waktu** menggabungkan penggunaan dalam tiap interval menjadi blok vertikal. **Warna** adalah legenda yang dapat diklik: pilih sumber untuk memfokuskan grafik. Pilih hari untuk melihat penggunaan sejak hari itu.
-
-### Grup Aktivitas
-
-Buat grup agar aplikasi dan situs terpilih muncul bersama di Penggunaan. **Gabungkan** memakai satu nama dan warna bagi anggotanya di seluruh Aktivitas. Grup Aktivitas mengatur penggunaan tercatat; terpisah dari grup pemblokiran atau Klasifikasi. Simpan editor grup Aktivitas secara eksplisit dengan **Simpan**.
-
-### Rekaman dan retensi
-
-Di **Rekaman**, nyalakan atau matikan rekaman untuk tiap kategori atau sumber. **Simpan selama** mengatur berapa lama riwayat dipertahankan; **Selamanya** menyimpannya tanpa kedaluwarsa otomatis. Pilihan per item dapat mengikuti setelan yang lebih luas. Mematikan rekaman menghentikan rekaman baru; menghapus riwayat menghapus entri yang sudah direkam.
-
-Feed platform mengumpulkan konten yang ditampilkan di halaman platform yang didukung, baik dibuka maupun tidak. Feed berlabel **Tagging didukung** dapat memasok Klasifikasi saat rekaman aktif. Retensinya mengatur konten yang dikumpulkan secara terpisah dari penggunaan aplikasi dan situs. Grup Klasifikasi yang dijeda tidak otomatis mematikan rekaman.
-
-## Pengaturan
-
-Pilih bahasa antarmuka di Setelan. Penjelasan kolom tersedia lewat tombol Info kecil dalam bahasa antarmuka terpilih.
-
-## Penyimpanan dan pemecahan masalah
-
-Perubahan Vault dan Klasifikasi yang rutin tersimpan otomatis. Pengeditan grup Aktivitas memakai **Simpan**. Menambah, menghapus, mengunduh model, menguji koneksi, dan mengambil daftar model tetap merupakan tindakan eksplisit.
-
-Jika tag hilang, periksa koneksi browser, sakelar tagging global, status jeda grup, rekaman platform, dan unduhan model. Jika riset tidak berjalan, periksa persetujuan, pilihan grup, kredensial penyedia, model riset, dan status riset. Jika grup tertaut tak dapat diedit, sambungkan kembali programnya atau cairkan seperti yang ditunjukkan.
+Edit Vault dan Content tagging biasa tersimpan otomatis. Editor Activity group memerlukan **Save**. Tambah, hapus, tes koneksi dan pengambilan daftar model adalah tindakan eksplisit. Jika tag hilang, periksa koneksi browser, sakelar tagging global, status pause, recording platform, koneksi/model terpilih dan kredensial. Untuk permintaan AI gagal, periksa koneksi/model, kredensial, batas penggunaan provider dan Log grup. Jika linked group tidak dapat diedit, hubungkan ulang programnya atau buka freeze sesuai petunjuk.

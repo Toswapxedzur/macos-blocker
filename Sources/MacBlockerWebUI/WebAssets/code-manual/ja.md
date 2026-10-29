@@ -71,6 +71,9 @@ snooze: {}
 panel: { panelId: string, controlId: string, eventName: string,
          value: string, values: { [controlId: string]: string } }
 file: see Files
+record: { requestId: string, ok: boolean, op?: string, key?: string,
+          record?: Record | null, entries?: Header[], next?: string | null,
+          deleted?: number, error?: string }
 App = { appId: string, name: string }
 ```
 
@@ -144,3 +147,45 @@ Snoozeまたはパネルボタンで起動する5分間の一時停止中を除�
   on("tick", ev => v.block("com.valvesoftware.steam", ev.now >= v.state.pauseUntil));
 }
 ```
+
+## グループレコード
+
+`v.store(request)` はハンドラー内で非同期の JSON レコード操作を開始します。レコードはグループ専用で、Run や再起動後も保持され、グループ削除時に削除されます。リンク済みグループのストアは別々です。キー、値、バージョン、キャッシュ無効化、フィードバックの優先順位はルールが決めます。Mac とブラウザーのルールは同じ API を使いますが、アプリ/ブラウザーごとにストアは別です。
+
+| Request | Result |
+|---|---|
+| `{op:"get", key}` | `record` または `null` |
+| `{op:"put", key, value, version?, ifRevision?}` | 保存された `record` |
+| `{op:"delete", key, ifRevision?}` | `record: null` |
+| `{op:"list", prefix?, after?, limit?}` | ソート済み `entries` と `next` |
+| `{op:"clear", prefix?}` | `deleted` 件数 |
+
+レコードは `{value, revision, version, updatedAt}` です。不透明な `revision` は実際の書き込みで変わります。`version` は呼び出し側のメタデータです。`list` は値を含まないヘッダーを返します。1件の読み出しには `get`、次ページには `after: next` を使います。`ifRevision` 省略時の put/delete は無条件です。`null` はキーが存在しないこと、revision 文字列は完全一致を条件にします。不一致は `ok:false`、`error:"store-conflict"`、現在の `record` を返します。遅延した自動応答がユーザーのフィードバックを上書きするのを防げます。`v.context.revision` はルール設定の不透明なマーカーで、ルール独自のバージョンに含められます。フレームワークはキャッシュ方針を定めません。
+
+上限: キー1～2048文字、version ≤128、JSON値 ≤64KiB、深さ≤32、グループあたり10000キー、レコード文書全体16MiB。`list` は1ページあたり最大100ヘッダー、96KiB。グループあたり32要求、全体で毎秒128開始まで。過負荷時はグループごとに毎秒1回 `store-busy` を返し、残りを破棄します。ストレージエラーは `ok:false`。将来形式または不正な文書は保持して `store-unavailable` を報告します。自動再試行/削除はありません。期限には ticks を使います。
+
+## 実行中ルールからの AI 呼び出し
+
+各 custom group は **AI calls** で接続/モデルと reasoning effort を選択します。Mac とブラウザーのルールは同じ API を使います。ブラウザー要求には Mac Vault 接続が必要で、プロバイダー認証情報はそこに保持されます。リンク済みグループは選択と任意の日次上限を共有します。空欄はグループ上限なしですが、アカウント制限は適用されます。上限は UTC 日で計算し、再起動後も維持、失敗を含む送信試行を数えます。Link は既存使用量を合算し、Unlink 後も過去分は保持されます。
+
+`v.ai({ prompt, input? })` は即時に request ID を返します。ルール登録時でなくハンドラー内で呼びます。`input` は任意の JSON 値で、prompt/input はそれぞれ20KBまでです。応答は `ai` イベント `{requestId, ok, text, citations, error}` で届きます。成功テキストは最大48KB、引用は `{url,title}`。Web 検索の回答を表示する際はソースリンクを見えるクリック可能な状態に保ちます。検索は常にモデルから利用可能です。アプリの固定期限はなく、並行処理は制限されます。プロバイダーフォールバックや自動再試行はありません。応答はデータであり JavaScript として実行されません。既存アクションを取るかはルールが決めます。
+
+```javascript
+(on, v) => {
+  let pending = null;
+  on("panel", ({ data }) => {
+    if (data.controlId !== "ask" || pending) return;
+    pending = v.ai({ prompt: "Summarize this text.", input: data.values?.note ?? "" });
+  });
+  on("ai", ({ data }) => {
+    if (data.requestId !== pending) return;
+    pending = null;
+    if (!data.ok) { v.log("AI request failed:", data.error); return; }
+    v.log(data.text, data.citations);
+  });
+}
+```
+
+未完了呼び出しは再起動後に再送されません。Run、無効化/再有効化、削除は古い応答を破棄します。未接続ブラウザーは `ai-unavailable` を返します。その他のエラー: `ai-not-configured`, `ai-invalid-input`, `ai-busy`, `ai-daily-limit`, `ai-request-failed`, `ai-usage-storage-unavailable`。失敗した呼び出しはルールが保持した前の結果を上書きしません。state 上限は64KBのままです。
+
+認証情報なしの候補は Mac の `rule_ai_models`、ブラウザーの `settings-rule-ai-models` で取得し、既存の set-group 経路から `ruleAI` を設定します。フィールドは `providerModel`, `accountID`, `reasoningEffort` (`default`, `low`, `medium`, `high`), `dailyRequestLimit` (null または1～100000) です。返された候補を使い、キーやプロバイダー URL をルールソースに書かないでください。

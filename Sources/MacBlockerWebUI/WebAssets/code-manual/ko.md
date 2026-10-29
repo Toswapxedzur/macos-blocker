@@ -71,6 +71,9 @@ snooze: {}
 panel: { panelId: string, controlId: string, eventName: string,
          value: string, values: { [controlId: string]: string } }
 file: see Files
+record: { requestId: string, ok: boolean, op?: string, key?: string,
+          record?: Record | null, entries?: Header[], next?: string | null,
+          deleted?: number, error?: string }
 App = { appId: string, name: string }
 ```
 
@@ -144,3 +147,45 @@ Snooze 또는 패널 버튼으로 시작되는 5분 일시 중지 중에만 Stea
   on("tick", ev => v.block("com.valvesoftware.steam", ev.now >= v.state.pauseUntil));
 }
 ```
+
+## 그룹 레코드
+
+`v.store(request)`는 handler 안에서 비동기 JSON 레코드 작업을 시작합니다. 레코드는 그룹 전용이며 Run 및 재시작 후에도 유지되고 그룹을 삭제하면 제거됩니다. 연결된 그룹은 별도 store를 사용합니다. 키, 값, 버전, 캐시 무효화, 피드백 우선순위는 규칙이 결정합니다. Mac과 브라우저 규칙은 같은 API를 쓰지만 앱/브라우저별 저장소는 분리됩니다.
+
+| Request | Result |
+|---|---|
+| `{op:"get", key}` | `record` 또는 `null` |
+| `{op:"put", key, value, version?, ifRevision?}` | 저장된 `record` |
+| `{op:"delete", key, ifRevision?}` | `record: null` |
+| `{op:"list", prefix?, after?, limit?}` | 정렬된 `entries`와 `next` |
+| `{op:"clear", prefix?}` | `deleted` 개수 |
+
+레코드는 `{value, revision, version, updatedAt}`입니다. 불투명한 `revision`은 실제 쓰기 시 바뀌며 `version`은 호출자가 관리하는 메타데이터입니다. `list`는 값 없는 헤더를 돌려줍니다. 하나를 읽으려면 `get`, 다음 페이지는 `after: next`를 사용하세요. `ifRevision` 생략 시 put/delete는 무조건 실행됩니다. `null`은 키가 없어야 하고 revision 문자열은 정확히 일치해야 합니다. 불일치 시 `ok:false`, `error:"store-conflict"`, 현재 `record`가 반환됩니다. 지연된 자동 응답이 사용자 피드백을 덮어쓰지 않게 합니다. `v.context.revision`은 규칙 버전에 포함할 수 있는 불투명한 설정 마커입니다. 프레임워크는 캐시 정책을 강제하지 않습니다.
+
+제한: 키 1–2048자, version ≤128, JSON 값 ≤64KiB, depth ≤32, 그룹당 10000개 키, 전체 문서16MiB. `list`는 페이지당 최대100개 헤더와96KiB를 반환합니다. 그룹당 최대32개 요청, 전체 초당128개 시작입니다. 과부하 시 그룹별 초당 하나의 `store-busy` 오류를 알리고 나머지는 버립니다. 저장 오류는 `ok:false`를 반환합니다. 미래 형식/손상 문서는 보존하고 `store-unavailable`을 알립니다. 자동 재시도나 제거는 없습니다. deadline에는 ticks를 사용하세요.
+
+## 실행 중인 규칙의 AI 호출
+
+각 custom group은 **AI calls**에서 connection/model과 reasoning effort를 선택합니다. Mac과 브라우저 규칙은 같은 API를 사용합니다. 브라우저 요청은 Mac Vault 연결이 필요하며 provider 자격 증명은 그곳에 유지됩니다. 연결된 그룹은 선택 및 선택적 일일 요청 한도를 공유합니다. 빈 값은 그룹 한도 없음이며 계정 제한은 계속 적용됩니다. 한도는 UTC 날짜 기준이고 재시작 후 유지되며 실패를 포함한 제출 시도를 셉니다. Link는 기존 사용량을 합치고 Unlink 후에도 이전 사용량을 유지합니다.
+
+`v.ai({ prompt, input? })`는 즉시 request ID를 반환합니다. 규칙 등록이 아니라 handler 안에서 호출하세요. `input`은 모든 JSON 값이며 prompt/input 각각 최대20KB입니다. 응답은 `ai` 이벤트 `{requestId, ok, text, citations, error}`로 옵니다. 성공 텍스트 최대48KB, citation은 `{url,title}`입니다. 웹 검색 답변을 표시할 때 출처 링크를 보이고 클릭 가능하게 유지하세요. 검색은 모델에 항상 제공됩니다. 앱의 고정 deadline은 없고 동시성은 제한됩니다. provider 대체나 자동 재시도는 없습니다. 응답은 데이터이며 JavaScript로 실행되지 않습니다. 기존 동작을 할지는 규칙이 결정합니다.
+
+```javascript
+(on, v) => {
+  let pending = null;
+  on("panel", ({ data }) => {
+    if (data.controlId !== "ask" || pending) return;
+    pending = v.ai({ prompt: "Summarize this text.", input: data.values?.note ?? "" });
+  });
+  on("ai", ({ data }) => {
+    if (data.requestId !== pending) return;
+    pending = null;
+    if (!data.ok) { v.log("AI request failed:", data.error); return; }
+    v.log(data.text, data.citations);
+  });
+}
+```
+
+대기 중 호출은 재시작 후 재생되지 않습니다. Run, 비활성화/재활성화, 삭제는 오래된 응답을 버립니다. 연결이 끊긴 브라우저는 `ai-unavailable`을 보고합니다. 다른 오류: `ai-not-configured`, `ai-invalid-input`, `ai-busy`, `ai-daily-limit`, `ai-request-failed`, `ai-usage-storage-unavailable`. 실패 호출은 규칙이 유지하기로 한 이전 결과를 덮어쓰지 않습니다. 규칙 state 한도는64KB입니다.
+
+자격 증명 없는 선택지는 Mac의 `rule_ai_models` 또는 브라우저의 `settings-rule-ai-models`로 확인하고 기존 set-group 경로에서 `ruleAI`를 설정합니다. 필드: `providerModel`, `accountID`, `reasoningEffort` (`default`, `low`, `medium`, `high`), `dailyRequestLimit` (null 또는1–100000). 반환된 선택지를 사용하고 규칙 소스에 키나 provider URL을 넣지 마세요.

@@ -1,139 +1,73 @@
-# Mac Vault उपयोगकर्ता मैनुअल
+# Mac Vault उपयोगकर्ता पुस्तिका
 
-Mac Vault में तीन पेज हैं: native apps ब्लॉक करने के लिए **Vault**, समर्थित browser सामग्री टैग करने के लिए **वर्गीकारक**, और दर्ज उपयोग देखने के लिए **गतिविधि**। Browser extension समर्थित सामग्री एकत्र कर browser blocking लागू करता है। जिस browser का उपयोग करते हैं उसमें इसे इंस्टॉल और कनेक्ट करें।
+Mac Vault में तीन पृष्ठ हैं: **Vault** नेटिव ऐप्स को ब्लॉक करता है, **Content tagging** समर्थित ब्राउज़र सामग्री को टैग करता है और **Activity** रिकॉर्ड किया गया उपयोग दिखाता है। ब्राउज़र एक्सटेंशन समर्थित सामग्री एकत्र करके ब्राउज़र ब्लॉकिंग लागू करता है। इसे अपने ब्राउज़र में इंस्टॉल और कनेक्ट करें।
 
 ## तुरंत शुरू करें
 
-1. **Vault** में blocking group और Apps target जोड़ें, फिर + picker से apps चुनें।
-2. समूह का blocking व्यवहार चुनकर उसे सक्षम करें।
-3. **वर्गीकारक** में group बनाएँ, उसके platforms चुनें और विवरण सहित tags जोड़ें।
-4. स्थानीय model tier चुनें और ज़रूरत हो तो डाउनलोड करें। वर्गीकारक settings में tagging सक्षम कर group फिर शुरू करें।
-5. जुड़े browser में समर्थित सामग्री खोलें। Tags से blocking नियंत्रित करनी हो तो browser blocking group में tag filter कॉन्फ़िगर करें।
+1. **Vault** में blocking group और Apps target जोड़ें, फिर + picker से ऐप चुनें।
+2. ब्लॉकिंग व्यवहार चुनकर group सक्षम करें।
+3. **Content tagging** में group बनाएं, उसके platforms चुनें और विवरण सहित tags जोड़ें।
+4. Settings → **AI connections** में ChatGPT subscription, OpenAI API, Gemini API या Grok API चुनें। खाते से जुड़ें या key डालकर model list लाएं, फिर group में connection/model चुनें। Tagging चालू करें और group resume करें।
+5. कनेक्टेड ब्राउज़र में समर्थित सामग्री खोलें। Tags से block नियंत्रित करना हो तो browser blocking group में tag filter सेट करें।
 
-## ब्लॉकिंग समूह
+## Blocking groups
 
-**ब्लॉकिंग समूह** ब्लॉकिंग नीति लागू करता है। **वर्गीकारक समूह** सामग्री को टैग देता है; यह अपने आप कुछ ब्लॉक नहीं करता।
+**Blocking group** ब्लॉकिंग नीति लागू करता है। **Content tagging group** सामग्री को tags देता है; वह स्वयं कुछ ब्लॉक नहीं करता। Group जोड़कर नाम दें, **Applies to** में targets चुनें, ब्लॉकिंग का समय और schedule या time allowance तय करें, फिर enable करें। सामान्य बदलाव अपने-आप सेव होते हैं। Error का अर्थ है बदलाव स्वीकार नहीं हुआ; field ठीक कर पुनः प्रयास करें। Group disable करने से configuration रहते हुए नीति रुकती है; **Delete group** इसे मिटाता है। क्रम बदलने के लिए groups खींचें। एक target पर कई groups लागू हो सकते हैं; एक को snooze करने से दूसरे का block नहीं हटता। **Export** configuration कॉपी करता है; **Import** पुष्टि के बाद चुने group को बदलता है।
 
-1. ब्लॉकिंग समूह जोड़ें और उसे नाम दें।
-2. **इन पर लागू** के अंतर्गत लक्ष्य चुनें।
-3. चुनें कि ब्लॉकिंग कब लागू हो, फिर कोई समय-सारणी या समय-सीमा तय करें।
-4. समूह सक्षम करें। इसके लक्ष्य समूह की नीति साझा करते हैं।
+### Time allowance and schedule
 
-सामान्य संपादन अपने आप सहेजे जाते हैं। त्रुटि का अर्थ है कि बदलाव स्वीकार नहीं हुआ; फ़ील्ड ठीक करके फिर कोशिश करें। कॉन्फ़िगरेशन रखते हुए नीति रोकने के लिए समूह अक्षम करें। **समूह हटाएँ** उसे निकाल देता है। समूहों को खींचकर क्रम बदलें। एक लक्ष्य पर कई समूह लागू हो सकते हैं; एक को थोड़ी देर टालने से दूसरे समूह का ब्लॉक नहीं हटता।
+**Block immediately** तब लागू होता है जब enabled group मेल खाता हो और schedule सक्रिय हो। **Block when the time allowance is used** allowance समाप्त होने तक उपयोग की अनुमति देता है। Allowance मिनट में और reset interval घंटे में तय करें। Rolling limit पिछली window का उपयोग गिनता है। Midnight reset स्थानीय मध्यरात्रि में नया period शुरू करता है, rolling limit पर भी। सक्रिय weekdays और वैकल्पिक local-time windows हर पंक्ति में चुनें, जैसे **09:00-12:00**। खाली window सूची चुने दिनों भर लागू होती है। Window उसी दिन शुरू होने के बाद समाप्त हो; रात-पार schedule को अलग दिनों में बांटें।
 
-**निर्यात** समूह कॉन्फ़िगरेशन की प्रतिलिपि बनाता है। **आयात** पुष्टि के बाद चुने हुए समूह का कॉन्फ़िगरेशन बदल देता है।
+### Snooze
 
-### समय-सीमा और समय-सारणी
+हर blocking group में snooze सेट करें। **Pause blocking** pause duration तक नीति रोकता है। **Add to the time allowance** समय-सीमित group में उपयोग योग्य मिनट जोड़ता है। केवल उपयोग किया गया अतिरिक्त allowance snoozed time गिना जाता है। बचा हुआ extra allowance अगले reset पर समाप्त होता है; rolling limit में एक window बाद, या सक्षम होने पर midnight पर पहले। **Activation delay** block जारी रखते हुए snooze टालता है। **Cooldown** snooze खत्म होने के बाद अगले अनुरोध का इंतज़ार है। **Required confirmations** पुष्टि चरण तय करता है। Frozen group पर snooze तभी उपलब्ध है जब freeze से पहले अनुमति दी गई हो।
 
-**तुरंत ब्लॉक करें** तब लागू होता है जब सक्षम समूह का लक्ष्य मेल खाए और उसकी समय-सारणी सक्रिय हो। **समय-सीमा समाप्त होने पर ब्लॉक करें** सीमा समाप्त होने तक मेल खाते उपयोग की अनुमति देता है।
+### Freeze and PIN
 
-सीमा मिनटों में और रीसेट अंतराल घंटों में सेट करें। रोलिंग सीमा पिछली विंडो के उपयोग को गिनती है। मध्यरात्रि रीसेट स्थानीय समय की मध्यरात्रि पर नई अवधि शुरू करता है, रोलिंग सीमा के लिए भी।
+**Freeze** सामान्य edits रोकता है। Unfreeze के लिए पांच सेकंड के अंतर से दस confirmations, निर्धारित wait और छह अंकों का PIN चाहिए। **Wait before unfreezing** 0–72 घंटे स्वीकार करता है; 0 का अर्थ कोई प्रतीक्षा नहीं। Frozen रहते wait बढ़ाया और PIN जोड़ा जा सकता है, पर unfreeze से पहले शर्तें कमजोर नहीं की जा सकतीं। Delete करते समय भी शेष wait और PIN लागू हैं।
 
-सक्रिय सप्ताह के दिन और वैकल्पिक स्थानीय-समय विंडो चुनें, प्रति पंक्ति एक, जैसे **09:00-12:00**। खाली विंडो सूची चुने हुए दिनों भर लागू होती है। विंडो उसी दिन शुरू होने के बाद समाप्त होनी चाहिए; रात पार करने वाली समय-सारणी को अलग-अलग दिनों में बाँटें।
+### Linked groups
 
-### थोड़ी देर टालना
+**Link** से दूसरे Vault programs के स्पष्ट रूप से चुने groups जोड़ें। वे नाम, समर्थित policy settings, targets, usage और freeze conditions साझा करते हैं। हर program वही target types बदलता और लागू करता है जिन्हें वह support करता है; अन्य target entries linked programs में उपलब्ध रहती हैं। **Unlink** group और settings रखकर अलग करता है। Offline member होने पर Mac Vault और linked browser खोलकर reconnect करें। Member offline होने पर भी स्थानीय saved policy लागू रह सकती है।
 
-हर ब्लॉकिंग समूह में इसे कॉन्फ़िगर करें। **ब्लॉकिंग रोकें** उस समूह की नीति को निर्धारित अवधि के लिए स्थगित करता है। **समय-सीमा में जोड़ें** समय-सीमित समूह में उपयोग योग्य मिनट जोड़ता है। केवल इस्तेमाल की गई अतिरिक्त अवधि ही टाले गए समय में गिनी जाती है। बिना इस्तेमाल की अतिरिक्त अवधि अगले रीसेट पर समाप्त होती है; रोलिंग सीमा में एक विंडो के बाद, या विकल्प चालू हो तो मध्यरात्रि पर उससे पहले।
+## सहायता लें
 
-**सक्रियण विलंब** के दौरान ब्लॉकिंग जारी रहती है और थोड़ी देर टलना बाद में शुरू होता है। **कूलडाउन** इसके समाप्त होने के बाद अगली माँग से पहले की प्रतीक्षा है। **आवश्यक पुष्टियाँ** पुष्टि चरणों की संख्या तय करता है। फ़्रीज़ किए समूह में यह तभी उपलब्ध है जब फ़्रीज़ से पहले अनुमति दी गई हो।
-
-### संपादन लॉक और PIN
-
-**फ़्रीज़** सामान्य संपादन रोकता है। अनफ़्रीज़ करने के लिए दस पुष्टियाँ चाहिए, हर पाँच सेकंड के अंतर पर, साथ ही तय प्रतीक्षा और छह अंकों का PIN, यदि सेट हो। **अनफ़्रीज़ करने से पहले प्रतीक्षा** 0–72 घंटे स्वीकार करता है; 0 का अर्थ कोई अतिरिक्त प्रतीक्षा नहीं।
-
-फ़्रीज़ होने पर प्रतीक्षा बढ़ाई जा सकती है और PIN न हो तो जोड़ा जा सकता है। समूह अनफ़्रीज़ होने तक इन शर्तों को कम नहीं किया जा सकता। हटाने पर भी बची प्रतीक्षा और PIN लागू होते हैं।
-
-### जुड़े हुए समूह
-
-अन्य Vault प्रोग्रामों में स्पष्ट रूप से चुने समूह जोड़ने के लिए **लिंक करें** उपयोग करें। जुड़े समूह अपना नाम, समर्थित नीति सेटिंग, लक्ष्य, उपयोग और फ़्रीज़ शर्तें साझा करते हैं। हर प्रोग्राम समर्थित लक्ष्य प्रकार संपादित और लागू करता है; अन्य लक्ष्य प्रविष्टियाँ जुड़े प्रोग्रामों के लिए उपलब्ध रहती हैं। अनलिंक करने पर हर समूह और उसकी सेटिंग बनी रहती है।
-
-जुड़ा सदस्य ऑफ़लाइन हो तो संपादन अनुपलब्ध हो सकता है। पुनः कनेक्ट करने के लिए Mac Vault और जुड़ा browser खोलें। सदस्य ऑफ़लाइन रहते हुए भी स्थानीय रूप से सहेजी policy लागू रह सकती है।
-
-## सहायता पाएँ
-
-फ़ील्ड के पास छोटा **i** क्लिक करके उसका स्पष्टीकरण देखें। बंद करने के लिए बाहर क्लिक करें या Escape दबाएँ। सूचियाँ स्क्रॉल होने वाले बॉक्स में रहती हैं; अधिक प्रविष्टियाँ देखने के लिए बॉक्स स्क्रॉल करें। खोज प्रविष्टियाँ हटाए बिना दिखाई गई सूची फ़िल्टर करती है।
-
-कस्टम नियमों का अपना [कोड मैनुअल](../code-manual/hi.md) है। इसमें संपादक, सक्रियण, लॉग, फ़ाइल पहुँच और समर्थित API समझाए गए हैं।
+Field के पास छोटा **i** दबाकर explanation देखें; बाहर क्लिक करें या Escape दबाकर बंद करें। Lists scrollable boxes में हैं; search दिखाई देने वाली सूची छांटता है, entries नहीं मिटाता। Custom rules के लिए [Code manual](../code-manual/hi.md) में editor, activation, logs, file access और API है।
 
 ## Native apps
 
-इंस्टॉल apps चुनने के लिए Apps target का + picker उपयोग करें। **इनके अलावा हर app ब्लॉक करें** सूची को allowlist बनाता है। System apps, browsers और Vault खुद native app blocking से बाहर हैं।
+Apps target के + picker से installed या चल रहे apps चुनें। दूसरे folder से app चलाने के बाद सूची refresh करने को picker फिर खोलें। **Block every app except these** सूची को allowlist बनाता है। Mac Vault सामान्य Apple apps और पूरे browsers को block कर सकता है; Mac Vault और समान bundle identifier वाला app सुरक्षित रहते हैं। Blocked app को quit करने को कहा जाता है; **Ask a blocked app to quit again every (minutes)** retry तय करता है। Website redirect, page pause और feed hiding browser extension लागू करता है, native app action नहीं।
 
-Blocked app से बंद होने का अनुरोध किया जाता है। **हर (मिनट) बाद blocked app को फिर बंद करने को कहें** retries नियंत्रित करता है। Website redirects, page pauses और feed hiding browser extension लागू करता है; ये native app actions नहीं बनते।
+## Content tagging
 
-## वर्गीकारक
+Group अपनी platforms की सामग्री को अपने tag tree और model settings से tag करता है। हर platform एक group में होता है; creation के समय चुनें, बाद में बदल नहीं सकते। Blocking schedules/filters tagging नियंत्रित नहीं करते। Settings में tagging enable करें और हर group का **Pause tagging / Resume tagging** अलग करें। **Activity → Recording** में platform feed recording बंद करने से tagging भी बंद होता है।
 
-वर्गीकारक group अपने दिए platforms की सामग्री को अपने tag tree और model settings से टैग करता है। हर platform एक group का होता है। Group बनाते समय platforms चुनें; बाद में नहीं बदल सकते। Blocking group के schedules और filters tagging नियंत्रित नहीं करते।
+### Tags and model settings
 
-वर्गीकारक settings में tagging सक्षम करें। हर group के लिए अलग से **टैगिंग रोकें / टैगिंग फिर शुरू करें** उपयोग करें। **गतिविधि → रिकॉर्डिंग** में platform feed recording बंद करने से उसकी tagging भी रुकती है।
+Tags बनाएं, अर्थ बताएं, tree में parent जोड़ें या हटाएं; drag करने से branch जाती है। स्पष्ट विवरण model को मिलते-जुलते tags अलग करने में मदद करता है। हर group की settings स्वतंत्र हैं। **Minimum confidence** हर अनुमानित tag के evidence grade को 1–5 रखता है; नए groups 4 (strong support) से शुरू होते हैं। कोई लक्ष्य tag count नहीं; item को कोई tag न मिले यह संभव है। **Tagging instructions** group की प्राथमिकताएं रखता है। सामान्य edits auto-save होते हैं। हर group एक स्पष्ट रूप से चुना connection, model और reasoning effort उपयोग करता है।
 
-### Tags और model settings
+### AI connections
 
-Tags बनाएँ, उनके अर्थ बताएँ, और tag tree में parent सेट या हटाएँ। Branch ले जाने के लिए tag खींचें। स्पष्ट विवरण model को समान tags में भेद करने में मदद करता है। हर group की settings स्वतंत्र हैं।
+Settings में ChatGPT subscription, OpenAI API, Gemini API और Grok API हैं। ChatGPT subscription Vault के sign-in और पात्र plan का उपयोग करता है। API keys चुने provider की billing और limits के अधीन हैं। Provider चुनकर साझा dropdown के ठीक नीचे key डालें। Key edit auto-save होती है; field खाली करने से key हटती है। **Fetch model list** चुनें, फिर Content tagging या custom-rule group में model चुनें; models fetch करने से model चुना नहीं जाता।
 
-- **गति ↔ गुणवत्ता** स्थानीय model tier चुनता है। बड़े models अधिक memory लेते हैं; गति और परिणाम Mac तथा workload पर निर्भर हैं। Downloads groups में साझा होते हैं।
-- **सख्त ↔ व्यापक** confidence requirements और default tag count सेट करता है।
-- More में **न्यूनतम tags / अधिकतम tags** उन defaults को बदलते हैं। अतिरिक्त tags का confidence फिर भी सख्त ↔ व्यापक नियंत्रित करता है। Default के लिए कोई field खाली छोड़ें।
-- **टैगिंग निर्देश** इस group के लिए वैकल्पिक निर्देश जोड़ते हैं।
+**Reasoning effort** model की सोच की मात्रा है: जहां उपलब्ध हो Model default, Low, Medium या High। नई selections Medium से शुरू होती हैं; पुरानी saved रहती हैं। अधिक effort में समय और tokens बढ़ सकते हैं। Tagging के लिए web search हमेशा enabled है; model तय करता है कब खोजे। Search और structured tagging समर्थित model चुनें। विफल/अनुपलब्ध requests में valid cached results रखे जाते हैं; नए items तब तक unresolved रहते हैं जब तक **Retry cloud classification** न चुनें। Vault provider अपने-आप नहीं बदलता; हर connection का retry interval और attempt limit अलग है। Browser extension में **+ tag** दबाकर खोजें और tag जोड़ें। हटाने वाले control या चुने tag पर Delete एक बार दबाकर हटाएं। **Untagged** का अर्थ tagging पूरी, कोई tag नहीं; **Tagging** का अर्थ परिणाम लंबित है। आपकी correction उस item के लिए authoritative रहती है।
 
-वर्गीकारक के सामान्य edits अपने आप सहेजे जाते हैं। सामग्री टैग करने से पहले चुना tier डाउनलोड होना चाहिए। एक tier वाले groups loaded model साझा करते हैं; एक साथ अधिकतम दो tiers loaded रहते हैं।
+## Activity
 
-Browser extension में सामग्री वस्तु के tags सुधारें। **+ tag** क्लिक कर वर्गीकारक के मौजूदा tags खोजें और जोड़ने के लिए चुनें। हटाने का नियंत्रण उपयोग करें या tag चुनकर एक बार Delete दबाएँ। **टैग नहीं लगा** का अर्थ tagging पूरी पर कोई tag नहीं; **टैगिंग जारी** का अर्थ परिणाम लंबित है। सुधार आगे की tagging में मदद करते हैं।
+Activity enabled app use, website visits और समर्थित **Content viewed** स्थानीय रूप से रिकॉर्ड करता है। Charts recorded data दिखाते हैं; खाली जगह Mac के idle होने का प्रमाण नहीं। Date range चुनें। **Timeline** दिन के समय के अनुसार उपयोग दिखाता है; **Totals** duration जोड़ता है; **Time interval** प्रत्येक interval में उपयोग को vertical blocks में जोड़ता है। **Colors** clickable legend है; source चुनकर chart focus करें। दिन चुनकर उस दिन से आगे का उपयोग देखें।
 
-## ज्ञान और web research
+### Activity groups
 
-ज्ञान Mac पर स्थानीय tagging model के लिए छोटे विवरण रखता है। **सामग्री स्रोत** में creators, accounts, channels और communities आते हैं। स्रोत के विवरण उसकी सामग्री के साथ उपयोग होते हैं। शीर्षक में term आने पर **ज्ञात terms** लागू होते हैं।
+Usage में चुने apps और websites साथ दिखाने के लिए group बनाएं। **Merge** Activity भर उसके सदस्यों के लिए एक नाम और रंग रखता है। Activity group recorded use व्यवस्थित करता है; blocking और tagging groups से अलग है। Editor को स्पष्ट रूप से **Save** करें।
 
-Source या term और उसका विवरण जोड़ें; research चालू हो तो विवरण खाली छोड़कर शोध माँगें। Creator सुझाव वर्गीकारक द्वारा एकत्र स्रोत खोजने में मदद करते हैं। छह या अधिक प्रविष्टियों वाली सूची में ठीक ऊपर खोज होती है: Terms और हर platform के Content sources में नाम, पहचानकर्ता या विवरण की अलग खोज है। विवरण संपादन भविष्य की tagging बदलता है; source knowledge मिटाने से बाद में शोध द्वारा उसका फिर बनना नहीं रुकता।
+### Recording and retention
 
-### आधिकारिक और व्यक्तिगत शब्दकोश
+**Recording** में हर category या individual source का recording चालू/बंद करें। **Keep** history retention अवधि तय करता है; **Forever** auto-expiry रोकता है। Individual selections बड़ी setting का पालन कर सकती हैं। Recording बंद करने से नई recording रुकती है; history delete करने से recorded entries हटती हैं। Platform feeds supported pages पर दिखी सामग्री एकत्र करते हैं, चाहे page खोला हो या नहीं। **Tagging supported** feed recording चालू होने पर Content tagging को सामग्री दे सकता है। इसका retention app और website usage से अलग है। Tagging group pause करने से recording अपने-आप बंद नहीं होती।
 
-आधिकारिक शब्दकोश कॉन्फ़िगर करने के लिए **सेटिंग्स → क्लासिफ़ायर → आधिकारिक शब्दकोश** खोलें। **ज्ञान** में इंस्टॉल किए गए संस्करण और इन नियंत्रणों का शॉर्टकट दिखता है। Vault शुरू होने पर अपडेट जाँचता है; इंस्टॉल करने के लिए **अपडेट जाँचें** और डाउनलोड बटन उपयोग करें। इसके लिए आपकी अपनी AI API कुंजी नहीं चाहिए।
+## Settings
 
-- **शब्द** स्थानीय खोज के लिए डाउनलोड किए जाते हैं।
-- **कैश + ऑनलाइन खोज** मोड में डिफ़ॉल्ट रूप से अधिकतम 10,000 क्रिएटर प्रविष्टियाँ रखी जाती हैं; सीमा बदली जा सकती है। कैश में क्रिएटर न मिलने पर उसका सार्वजनिक, प्लेटफ़ॉर्म-विशिष्ट ID शब्दकोश सेवा को भेजा जाता है।
-- **पूरा डाउनलोड · ऑफ़लाइन खोज** डाउनलोड के बाद क्रिएटर को स्थानीय रूप से खोजता है। यह मोड चुनकर शब्दकोश डाउनलोड करें।
+Settings में interface language चुनें। चुनी भाषा में field explanations छोटे Info buttons पर मिलती हैं।
 
-आपके निजी विवरण—research provider द्वारा बनाए गए विवरण सहित—आधिकारिक विवरणों से ऊपर प्राथमिकता रखते हैं। **अपना शब्दकोश आयात / निर्यात करें** से निजी प्रविष्टियाँ निर्यात करें या JSON फ़ाइल आयात करें; आधिकारिक प्रविष्टियाँ निजी निर्यात में शामिल नहीं होतीं।
+## Saving and troubleshooting
 
-**क्रिएटर शब्दकोश बेहतर बनाने में मदद करें** डिफ़ॉल्ट रूप से चालू है और पहले योगदान से पहले समझाया जाता है। भविष्य के योगदान रोकने और लंबित अनुरोध रद्द करने के लिए इसे यहाँ बंद करें। चालू होने पर Vault केवल छूटे हुए सार्वजनिक क्रिएटर ID का नमूना और उपलब्ध सार्वजनिक फ़ॉलोअर/सब्सक्राइबर संख्या भेजता है—शीर्षक, ब्राउज़िंग इतिहास या निजी विवरण नहीं। सीमाओं व अवधि के लिए disclosure देखें। Web research की सहमति और provider सेटिंग्स अलग हैं।
-
-### शोध प्रदाता कॉन्फ़िगर करें
-
-1. **वर्गीकारक सेटिंग → API कुंजियाँ और प्रदाता** खोलें।
-2. प्रदाता प्रकार और **प्रदाता जोड़ें** चुनें। इससे configuration बनती है, API key जारी नहीं होती।
-3. प्रदाता से credentials लेकर दर्ज करें। संगत custom endpoint के लिए endpoint और protocol fields भी सेट करें।
-4. **Web research** में built-in web search वाला प्रदाता चुनें। उसकी model सूची लाकर research model चुनें। सूची सीमित करने के लिए model chooser की खोज उपयोग करें; फिर से लाने के लिए refresh करें।
-5. Consent सूचना पढ़कर सहमति सक्षम करें। हर group में **चालू**, **बंद**, या **वर्गीकारक सेटिंग का पालन करें** चुनें।
-
-कॉन्फ़िगरेशन न होने पर **Web research सेट करें…** आपको settings पर ले जाता है। Group research consent नहीं टाल सकता। **कनेक्शन जाँचें** test request की सफलता बताता है, हर model की research सहायता नहीं। प्रदाता का test model चुने हुए research model से अलग है।
-
-Keys इस Mac पर app के support folder में रखी जाती हैं, system Keychain में नहीं। वे configured provider के requests authenticate करती हैं; Vault उन्हें अपने server पर upload नहीं करता। शोध चुने provider को साफ़ किए public subjects भेजता है, निजी सामग्री bodies या summaries नहीं। भेजे गए fields जानने के लिए consent सूचना पढ़ें। Provider उपयोग में connection tests और model-list requests भी आते हैं।
-
-शोध स्थिति queued requests, retry cooldowns, failures और दिन के token usage दिखाती है। **असफल विषयों को अभी फिर आज़माएँ** पात्र failures retry करता है; दैनिक सीमा या consent नहीं टालता।
-
-## गतिविधि
-
-गतिविधि सक्षम app use, website visits और समर्थित **देखी गई सामग्री** स्थानीय रूप से दर्ज करती है। Charts दर्ज data दिखाते हैं; खाली जगह यह साबित नहीं करती कि Mac निष्क्रिय था।
-
-Date range चुनें। **समयरेखा** दिन के समय के साथ उपयोग दिखाती है; **कुल** अवधि जोड़ता है। **समय अंतराल** हर interval का उपयोग vertical blocks में जोड़ता है। **रंग** clickable legend है: source चुनकर charts को उस पर केंद्रित करें। किसी दिन से आगे का उपयोग देखने के लिए दिन चुनें।
-
-### गतिविधि समूह
-
-Usage में चुने apps और websites साथ दिखाने के लिए group बनाएँ। **मिलाएँ** पूरी गतिविधि में सदस्यों का एक नाम और रंग रखता है। गतिविधि group दर्ज उपयोग व्यवस्थित करता है; यह blocking या वर्गीकारक group से अलग है। गतिविधि group editor को **सहेजें** से स्पष्ट रूप से सहेजें।
-
-### रिकॉर्डिंग और प्रतिधारण
-
-**रिकॉर्डिंग** में हर category या source की recording चालू/बंद करें। **रखें** history रखने की अवधि तय करता है; **हमेशा** बिना स्वचालित expiry रखता है। व्यक्तिगत विकल्प व्यापक setting का अनुसरण कर सकते हैं। Recording बंद करने से नई recording रुकती है; history हटाने से दर्ज प्रविष्टियाँ मिटती हैं।
-
-Platform feeds समर्थित platform pages पर दिखी सामग्री एकत्र करते हैं, चाहे page खोला हो या नहीं। **टैगिंग समर्थित** feed recording चालू होने पर वर्गीकारक को सामग्री दे सकता है। इसका retention एकत्र सामग्री को app/website उपयोग से अलग नियंत्रित करता है। रुका वर्गीकारक group अपने आप recording बंद नहीं करता।
-
-## सेटिंग्स
-
-Settings में interface language चुनें। चुनी interface language में छोटे Info बटनों से field explanations मिलते हैं।
-
-## सहेजना और समस्या निवारण
-
-Vault और वर्गीकारक के सामान्य edits अपने आप सहेजते हैं। गतिविधि group संपादन में **सहेजें** लगता है। जोड़ना, हटाना, model download, connection test और model list लाना स्पष्ट actions हैं।
-
-Tags न हों तो browser connection, global tagging switch, group pause, platform recording और model download जाँचें। शोध न चले तो consent, group चयन, provider credentials, research model और status जाँचें। Linked group संपादित न हो तो program फिर जोड़ें या बताए अनुसार unfreeze करें।
+सामान्य Vault और Content tagging edits auto-save होते हैं। Activity group editor में **Save** दबाना होता है। Add, delete, connection tests और model-list fetch स्पष्ट actions हैं। Tags न दिखें तो browser connection, global tagging switch, group pause, platform recording, चुना connection/model और credentials जांचें। AI requests विफल हों तो connection/model, credentials, provider usage limits और group Log देखें। Linked group edit न हो तो programs reconnect करें या बताए अनुसार unfreeze करें।
