@@ -387,7 +387,7 @@ public final class MacEnforcementBridge: ObservableObject {
         do {
             try configureRuleTime(runtime, groupID: group.id, type: type, data: data)
             let origin = (type == "panel" || type == "snooze") ? "user" : "host"
-            apply(try runtime.dispatch(type: type, data: data, groupID: group.id, contextRevision: webStore.ruleContextRevision(groupID: group.id), origin: origin), group: group)
+            apply(try runtime.dispatch(type: type, data: data, groupID: group.id, contextRevision: webStore.ruleContextRevision(groupID: group.id), aiContext: webStore.ruleAIContextValues(groupID: group.id), origin: origin), group: group)
             refreshRuleTime(groupID: group.id)
         } catch RuleRuntime.RuleRuntimeError.terminated {
             appendLog(groupId: group.id, group: group.name, message: "Execution deadline exceeded; rule stopped.", level: "error")

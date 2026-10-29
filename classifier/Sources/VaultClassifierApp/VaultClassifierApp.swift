@@ -152,10 +152,10 @@ final class VaultClassifierViewModel: ObservableObject {
     var latestCloudClassificationInputs: [String: NativeVideoTagsBatchItem] = [:]
 
     /// The coalescing queue at the engine boundary (see ClassificationCoalescer):
-    /// requests that arrive while the engine is busy wait and are drained
-    /// together, up to `classificationChunkSize` per pass, instead of each
-    /// running alone. When idle, the first arrival waits a short window so the
-    /// rest of the screen can join it before the engine starts.
+    /// requests that arrive while the engine is busy wait in chunks. Each
+    /// chunk runs bounded concurrent item requests and publishes their results
+    /// independently. When idle, the first arrival waits a short window so
+    /// the rest of the screen can join the queue before work starts.
     lazy var classificationCoalescer: ClassificationCoalescer<NativeVideoTagsBatchItem> = {
         let coalescer = ClassificationCoalescer<NativeVideoTagsBatchItem>(
             chunkSize: Self.classificationChunkSize,
@@ -171,7 +171,7 @@ final class VaultClassifierViewModel: ObservableObject {
     /// skipping any already in flight. Each completed video is broadcast through
     /// the hub so provisional pills resolve the moment the result exists,
     /// instead of waiting for the extension's next poll.
-    /// Videos handed to the engine together — its parallel-sequence capacity.
+    /// Maximum videos admitted to one queue-drain pass.
     static let classificationChunkSize = 32
 
     /// How long an idle engine waits for the rest of a screenful before it
@@ -221,7 +221,7 @@ final class VaultClassifierViewModel: ObservableObject {
     static func browserStateChanged(from previous: LocalClassifierState?, to current: LocalClassifierState?) -> Bool {
         let activation: (LocalClassifierState?) -> [String] = { state in
             (state?.workspaceCatalog.classifierTypes ?? []).map {
-                "\($0.id):\($0.treeID):\($0.treeRevision):\($0.isPaused):\($0.applicablePlatformIDs.joined(separator: ",")):\($0.classificationProvider.rawValue):\($0.classificationProvider == .chatGPT ? $0.cloudModelVersion : "local")"
+                "\($0.id):\($0.treeID):\($0.treeRevision):\($0.isPaused):\($0.applicablePlatformIDs.joined(separator: ",")):\($0.classificationProvider.rawValue):\($0.cloudModelVersion)"
             }.sorted()
         }
         let recording: (LocalClassifierState?) -> [String] = { state in

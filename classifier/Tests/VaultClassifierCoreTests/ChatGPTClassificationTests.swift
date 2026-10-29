@@ -86,10 +86,10 @@ final class ChatGPTClassificationTests: XCTestCase {
         let body = try XCTUnwrap(JSONSerialization.jsonObject(with: XCTUnwrap(request.body)) as? [String: Any])
         XCTAssertNotNil(body["tools"])
         XCTAssertFalse((body["instructions"] as? String ?? "").contains("run a shell"))
-        XCTAssertTrue((body["instructions"] as? String ?? "").contains("untrusted DATA"))
+        XCTAssertTrue((body["instructions"] as? String ?? "").contains("untrusted data"))
         XCTAssertFalse((body["instructions"] as? String ?? "").contains(ClassificationReplyFormat.current.rule))
         XCTAssertNotNil(body["text"])
-        XCTAssertEqual(body["reasoning"] as? [String: String], ["effort": "low"])
+        XCTAssertEqual(body["reasoning"] as? [String: String], ["effort": "medium"])
         configuration.reasoningEffort = .high
         let searched = try ChatGPTClassificationEngine.prepare([item()], configuration: configuration)
         let searchedBody = try XCTUnwrap(JSONSerialization.jsonObject(with: XCTUnwrap(searched.body)) as? [String: Any])
@@ -130,7 +130,7 @@ final class ChatGPTClassificationTests: XCTestCase {
         type.chatGPT.reasoningEffort = .low; type.chatGPT.accountID = "b"; XCTAssertNotEqual(type.cloudModelVersion, original)
         type.chatGPT.accountID = "a"; type.tagging.houseRules = "Chess is Games"; XCTAssertNotEqual(type.cloudModelVersion, original)
         let row = VideoClassification(classifierTypeID: type.id, platformID: "youtube", entryID: "v", creatorID: "c", treeID: "tree", treeRevision: 1,
-            tags: [], source: .model, modelVersion: type.cloudModelVersion + "+p6")
+            tags: [], source: .model, modelVersion: type.cloudModelVersion + "+p7")
         XCTAssertTrue(LocalClassifierCoordinator.isClassificationCurrent(row, forType: type, servingModelVersion: "stub/v1"))
         type.chatGPT.model = "different"; XCTAssertFalse(LocalClassifierCoordinator.isClassificationCurrent(row, forType: type, servingModelVersion: "stub/v1"))
     }

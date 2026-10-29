@@ -220,7 +220,7 @@
       const options = reasoningChoices(control.value);
       const previousEffort = effort.value;
       effort.innerHTML = options.map(([value,label]) => `<option value="${esc(value)}">${esc(label)}</option>`).join("");
-      effort.value = options.some(([value]) => value === previousEffort) ? previousEffort : "default";
+      effort.value = options.some(([value]) => value === previousEffort) ? previousEffort : (options.some(([value]) => value === "medium") ? "medium" : "default");
     }
     const values = collect(form.dataset.formId);
     if (form.dataset.autosaveAction === "configureClassifierType") {
@@ -253,7 +253,7 @@
         minimumConfidence: String(type.tagging?.minimumConfidence ?? 4),
         houseRules: type.tagging?.houseRules || "",
       };
-      case "saveClassificationProvider": return type && { providerModel: selectedTaggingModel(type), reasoningEffort: (type.classificationProvider === "apiKey" ? type.apiKey : type.chatGPT)?.reasoningEffort || (type.classificationProvider === "apiKey" ? "default" : "low") };
+      case "saveClassificationProvider": return type && { providerModel: selectedTaggingModel(type), reasoningEffort: (type.classificationProvider === "apiKey" ? type.apiKey : type.chatGPT)?.reasoningEffort || "medium" };
       case "saveChatGPTUsageLimit": return { dailyRequestLimit: state.assets?.chatGPT?.dailyRequestLimit == null ? "" : String(state.assets.chatGPT.dailyRequestLimit) };
       case "saveChatGPTRetryPolicy": return { retryIntervalSeconds: String(state.assets?.chatGPT?.retryIntervalSeconds ?? 60), retryMaximumAttempts: String(state.assets?.chatGPT?.retryMaximumAttempts ?? 3) };
 
@@ -368,10 +368,10 @@
   // English field explanations are explicit; translations remain a release-time batch.
   const fieldInfo = Object.freeze({
 
-    "bridge.typeName": "The name shown for this Classifier group.",
-    "createType.nameLabel": "The name of the new Classifier group.",
-    "createType.platformLabel": "Choose the platforms this group will classify. A platform can belong to only one Classifier group.",
-    "bridge.applicablePlatform": "The platforms assigned when this Classifier group was created. Platform assignments are fixed for that group.",
+    "bridge.typeName": "The name shown for this content tagging group.",
+    "createType.nameLabel": "The name of the new content tagging group.",
+    "createType.platformLabel": "Choose the platforms this group will classify. A platform can belong to only one content tagging group.",
+    "bridge.applicablePlatform": "The platforms assigned when this content tagging group was created. Platform assignments are fixed for that group.",
 
     "llm.providerType": "Choose the provider’s API type before adding its configuration. Adding a provider does not create an API key.",
     "llm.apiKeyOrToken": "Paste the credential issued by this provider. Vault uses it to authenticate requests to that provider.",
@@ -387,13 +387,13 @@
     "llm.protocol.searchEngineID": "The search engine identifier required by this saved provider configuration.",
     "llm.protocol.protocolFamily": "The API format this endpoint accepts. Choose the format supported by the provider.",
 
-    "classification.enabled": "Allow the Classifier to tag content. Individual Classifier groups can still be paused.",
+    "classification.enabled": "Allow content tagging. Individual content tagging groups can still be paused.",
     "tagging.minimumConfidence": "Apply a predicted tag only when its evidence grade reaches this level, including the first tag. One item may receive any number of supported tags, including none.",
 
     "backup.auto": "Create a local backup after configuration changes, using the configured backup folder.",
 
     "tree.nodeName": "The name of this tag in the taxonomy and on tagged content.",
-    "tree.tagName": "The name of the tag to add to this Classifier group’s taxonomy."
+    "tree.tagName": "The name of the tag to add to this content tagging group’s taxonomy."
   });
   function infoAttrs(labelKey, hintKey = "") {
     let text = languageMessages["classifierInfo." + labelKey] || fieldInfo[labelKey] || (hintKey ? t(hintKey) : "");
@@ -511,7 +511,7 @@
     const configuration = type.classificationProvider === "apiKey" ? type.apiKey : type.chatGPT;
     if (!choices.some(([value]) => value === selected)) choices.push([selected, `${configuration?.model || ""} · ${t("cloud.unavailable")}`]);
     const configured = Boolean(configuration?.model);
-    const effort = configuration?.reasoningEffort || (type.classificationProvider === "apiKey" ? "default" : "low");
+    const effort = configuration?.reasoningEffort || "medium";
     const efforts = reasoningChoices(selected);
     if (!efforts.some(([value]) => value === effort)) efforts.push([effort, `${t(`cloud.reasoning.${effort}`)} · ${t("cloud.unavailable")}`]);
     const retry = account.needsRetry || account.failedItems || state.assets?.apiKeyClassification?.failedProfileIDs?.length;
@@ -572,7 +572,7 @@
   function shell(content) {
     return `<div class="popup">
       <header class="vui-topbar">
-        <nav class="vui-tabs" aria-label="${sx("activity.scene", "Scene")}"><button type="button" class="vui-tab" data-scene="vault">${sx("scene.vault", "Vault")}</button><button type="button" class="vui-tab is-active" data-scene="classifier">${sx("scene.classifier", "Classifier")}</button><button type="button" class="vui-tab" data-scene="activity">${sx("scene.activity", "Activity")}</button></nav>
+        <nav class="vui-tabs" aria-label="${sx("activity.scene", "Scene")}"><button type="button" class="vui-tab" data-scene="vault">${sx("scene.vault", "Vault")}</button><button type="button" class="vui-tab is-active" data-scene="classifier">${sx("scene.classifier", "Content tagging")}</button><button type="button" class="vui-tab" data-scene="activity">${sx("scene.activity", "Activity")}</button></nav>
         <div class="vui-topbar-links"><button type="button" class="secondary" data-action="openManual">${sx("manual.title", "User manual")}</button><span class="settings-popover-anchor"><button type="button" class="secondary" data-action="openUtilityPanel" data-utility-panel="settings" aria-haspopup="dialog" aria-expanded="${utilityPanel ? "true" : "false"}">${tx("utility.settings.button")}</button></span></div>
       </header>
       <div class="layout">
@@ -589,7 +589,7 @@
   function initialShell() {
     // Native state arrives asynchronously. Keep navigation available from the
     // first paint rather than replacing the whole scene with a loading screen.
-    return `<div class="popup"><header class="vui-topbar"><nav class="vui-tabs" aria-label="${sx("activity.scene", "Scene")}"><button type="button" class="vui-tab" data-scene="vault">${sx("scene.vault", "Vault")}</button><button type="button" class="vui-tab is-active" data-scene="classifier">${sx("scene.classifier", "Classifier")}</button><button type="button" class="vui-tab" data-scene="activity">${sx("scene.activity", "Activity")}</button></nav></header><div class="layout" aria-busy="true"></div></div>`;
+    return `<div class="popup"><header class="vui-topbar"><nav class="vui-tabs" aria-label="${sx("activity.scene", "Scene")}"><button type="button" class="vui-tab" data-scene="vault">${sx("scene.vault", "Vault")}</button><button type="button" class="vui-tab is-active" data-scene="classifier">${sx("scene.classifier", "Content tagging")}</button><button type="button" class="vui-tab" data-scene="activity">${sx("scene.activity", "Activity")}</button></nav></header><div class="layout" aria-busy="true"></div></div>`;
   }
 
   function syncDialogFocus(previousControl) {
@@ -1258,7 +1258,7 @@
       return;
     }
 
-    if (action === "openManual") { window.VaultManual?.open("user", "Classifier"); return; }
+    if (action === "openManual") { window.VaultManual?.open("user", "Content tagging"); return; }
     if (action === "openUtilityPanel") {
 
       window.VaultSettings.open();

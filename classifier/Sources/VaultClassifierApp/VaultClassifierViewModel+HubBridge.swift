@@ -68,36 +68,43 @@ extension VaultClassifierViewModel {
         }
         guard !fresh.isEmpty else { return }
         // Hand the items to the coalescing queue at the engine boundary. Requests
-        // arrive one card at a time; if the engine is busy they wait and are then
-        // drained together with everything else waiting, in one multi-sequence
-        // pass per chunk, instead of each paying a lone prompt prefill.
+        // arrive one card at a time; a short arrival window groups queue work,
+        // while each item is classified and published independently.
         classificationCoalescer.enqueue(platformID: platformID, items: fresh)
     }
 
-    /// One engine pass over a chunk the coalescer drained — everything that was
-    /// waiting for this platform, up to the engine's parallel-sequence capacity.
-    /// Each chunk's verdicts are broadcast the moment it lands.
+    /// Run up to two item requests at once and publish each result as it settles.
+    /// A slow or failed item cannot hold back another item's pill.
     func classifyChunk(platformID: String, _ chunk: [NativeVideoTagsBatchItem]) async {
-        let projections = await resolveClassificationChunk(platformID: platformID, chunk)
-        for item in chunk { inFlightVideoClassifications.remove(Self.inFlightKey(platformID, item.entryID)) }
-        guard !isShuttingDown, !Task.isCancelled else {
-            for item in chunk { latestCloudClassificationInputs[Self.inFlightKey(platformID, item.entryID)] = nil }
-            return
-        }
-        var updated: [NativeVideoTagsBatchItem] = []
-        for item in chunk {
-            let key = Self.inFlightKey(platformID, item.entryID)
-            if let latest = latestCloudClassificationInputs[key], latest != item {
-                // A newer title arrived while this batch was running. Keep one
-                // latest request and never broadcast the obsolete decision.
-                updated.append(latest)
-                continue
+        await withTaskGroup(of: (NativeVideoTagsBatchItem, VideoTagsProjection?).self) { group in
+            var next = 0
+            func enqueue() {
+                guard next < chunk.count else { return }
+                let item = chunk[next]
+                next += 1
+                group.addTask { [weak self] in
+                    let result = await self?.resolveClassificationChunk(platformID: platformID, [item])
+                    return (item, result?[item.entryID])
+                }
             }
-            latestCloudClassificationInputs[key] = nil
-            guard let projection = projections[item.entryID] else { continue }
-            broadcastResolvedVideoTags(platformID: platformID, entryID: item.entryID, projection: projection)
+            for _ in 0..<min(2, chunk.count) { enqueue() }
+            while let (item, projection) = await group.next() {
+                let key = Self.inFlightKey(platformID, item.entryID)
+                inFlightVideoClassifications.remove(key)
+                if isShuttingDown || Task.isCancelled {
+                    latestCloudClassificationInputs[key] = nil
+                } else if let latest = latestCloudClassificationInputs[key], latest != item {
+                    latestCloudClassificationInputs[key] = nil
+                    queueVideoClassification(platformID: platformID, items: [latest])
+                } else {
+                    latestCloudClassificationInputs[key] = nil
+                    if let projection {
+                        broadcastResolvedVideoTags(platformID: platformID, entryID: item.entryID, projection: projection)
+                    }
+                }
+                enqueue()
+            }
         }
-        if !updated.isEmpty { queueVideoClassification(platformID: platformID, items: updated) }
         await refreshChatGPTStatus()
     }
 

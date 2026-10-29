@@ -147,25 +147,21 @@ public enum ClassificationPromptAssembler {
     /// The cached static prefix: task rules + taxonomy + optional house-rules.
     public static func staticPrefix(taxonomy: [LLMTagOption], houseRules: String?, maximumTags: Int, minimumTags: Int = 0, minimumConfidence: Int? = nil) -> String {
         var lines: [String] = []
-        lines.append("You are a tagging model. Classify a single video into tags from the taxonomy below, using the video's evidence.")
-        lines.append("Rules:")
-        if minimumConfidence != nil {
-            lines.append("- Evaluate each tag against the available evidence, including short titles. Prefer specific child tags when supported. Do not infer a topic from a vague title solely to produce a tag.")
-        } else {
-            lines.append("- Pick the tag(s) that best match the video's topic; prefer specific child tags over broad parents. Infer the topic from the title even when it is short — a named subject (a person, product, game, show, place, event, or theme) is usually enough to place it, so do not decline just because the title is brief.")
-        }
         if let minimumConfidence {
-            lines.append("- Consider each taxonomy tag independently. Include every tag with evidence strength at least \(minimumConfidence) out of 5. There is no target number of tags; zero is valid when none meet that standard.")
-            lines.append("- Grade evidence for each selected tag: 5 = explicit or decisive support; 4 = strong support; 3 = reasonable inference; 2 = weak clue; 1 = guess. These are evidence grades, not probabilities or popularity. Do not inflate a grade to satisfy the minimum.")
+            lines.append("Tag each content item using the taxonomy below. Choose specific tags when supported by the item's evidence.")
+            lines.append("Include every tag with evidence grade at least \(minimumConfidence)/5; zero tags is valid. Creator history is a weak clue, not proof.")
         } else {
+            lines.append("You are a tagging model. Classify a single video into tags from the taxonomy below, using the video's evidence.")
+            lines.append("Rules:")
+            lines.append("- Pick the tag(s) that best match the video's topic; prefer specific child tags over broad parents. Infer the topic from the title even when it is short — a named subject (a person, product, game, show, place, event, or theme) is usually enough to place it, so do not decline just because the title is brief.")
             lines.append("- \(Self.tagCountInstruction(minimum: minimumTags, maximum: maximumTags))")
             if ClassificationReplyFormat.current.emitsConfidence {
                 lines.append("- For each chosen tag give a confidence from 1 to 5 for how sure you are the tag is correct (not how popular the tag is): 5 = the evidence names a subject you are certain maps to this tag; 4 = strong evidence; 3 = a plausible inference; 2 = a weak guess; 1 = little basis. Reserve 4 and 5 for clear cases, and use 1-2 when you are mostly guessing.")
             }
         }
-        lines.append("- If the title is uninformative, use the creator prior when provided, but treat it as a weak, partial sample of what the creator makes — it may not represent them fully.")
-        lines.append(ClassificationReplyFormat.current.rule)
         if minimumConfidence == nil {
+            lines.append("- If the title is uninformative, use the creator prior when provided, but treat it as a weak, partial sample of what the creator makes — it may not represent them fully.")
+            lines.append(ClassificationReplyFormat.current.rule)
             if minimumTags == 0 {
                 lines.append("- Use none only when the title names no topic at all — a bare question, reaction, or phrase with no subject. Do not force a tag onto a genuinely topicless title, and do not invent a topic the title does not state.")
             } else {

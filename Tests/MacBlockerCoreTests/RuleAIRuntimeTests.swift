@@ -3,6 +3,15 @@ import XCTest
 
 final class RuleAIRuntimeTests: XCTestCase {
     private let source = #"(on,v)=>{on("panel",()=>{v.state.request=v.ai({prompt:"Summarize",input:{text:"fixture"}});});on("ai",({data})=>{v.state.answer=data.text;v.log(data.ok,data.text);});}"#
+    func testSavedPromptAndContextReachNativeRuleAndInvalidateOldReplies() throws {
+        let runtime = try RuleRuntime()
+        let code = #"(on,v)=>{on("panel",()=>v.ai({prompt:v.context.ai.prompt,input:{context:v.context.ai.context}}));on("ai",()=>v.log("accepted"));}"#
+        XCTAssertTrue(try runtime.load(groupID:"g",source:code,stateJSON:"{}").ok)
+        let request = try XCTUnwrap(runtime.dispatch(type:"panel",data:[String:Any](),groupID:"g",contextRevision:"one",aiContext:["prompt":"Saved prompt","context":"Saved background"]).actions.first)
+        XCTAssertEqual(request.payload, #"{"prompt":"Saved prompt","input":{"context":"Saved background"}}"#)
+        let oldReply: [String:Any] = ["requestId":request.requestId!,"generation":request.generation!,"ok":true,"text":"Old"]
+        XCTAssertTrue(try runtime.dispatch(type:"ai",data:oldReply,groupID:"g",contextRevision:"two").logs.isEmpty)
+    }
     func testActualJSCActionAndReplyFollowTheOriginalRuleInstance() throws {
         let runtime = try RuleRuntime()
         XCTAssertTrue(try runtime.load(groupID:"g",source:source,stateJSON:"{}").ok)

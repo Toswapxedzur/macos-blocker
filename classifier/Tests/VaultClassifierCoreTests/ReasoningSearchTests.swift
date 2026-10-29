@@ -5,6 +5,14 @@ import XCTest
 
 final class ReasoningSearchTests: XCTestCase {
     private var item: LLMClassificationRequest { .init(staticPrefix: "Tags: Games. " + ClassificationReplyFormat.current.rule, dynamicSuffix: "Games tutorial", allowedTagNames: ["Games"], maximumTags: 3) }
+    func testNewSelectionsDefaultToMediumWhileOlderDecodedChoicesStayTheSame() throws {
+        XCTAssertEqual(ChatGPTClassificationSettings().reasoningEffort, .medium)
+        XCTAssertEqual(APIKeyClassificationSettings().reasoningEffort, .medium)
+        let oldAPI = try JSONDecoder().decode(APIKeyClassificationSettings.self, from: Data(#"{"profileID":"p","model":"gpt-5"}"#.utf8))
+        let oldSubscription = try JSONDecoder().decode(ChatGPTClassificationSettings.self, from: Data(#"{"accountID":"a","model":"gpt-5"}"#.utf8))
+        XCTAssertEqual(oldAPI.reasoningEffort, .providerDefault)
+        XCTAssertEqual(oldSubscription.reasoningEffort, .low)
+    }
     func testProviderReasoningChoicesReachTheCorrectWireField() throws {
         for (provider, model) in [(APIKeyProviderType.openAI,"gpt-6.1-sol"),(.gemini,"gemini-3.1-flash-lite"),(.xAI,"grok-4.7")] {
             let profile = APIKeyProviderProfile(id: "p", type: provider)

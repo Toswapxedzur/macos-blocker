@@ -48,7 +48,7 @@ extension LocalClassifierCoordinator {
         servingModelVersion: String
     ) -> Bool {
         if classification.source == .humanCorrected { return true }
-        return classification.modelVersion == type.cloudModelVersion + "+p6"
+        return classification.modelVersion == type.cloudModelVersion + "+p7"
             && classification.treeID == type.treeID
     }
 
@@ -133,7 +133,7 @@ extension LocalClassifierCoordinator {
             try shutdownSignal.checkCancellation()
             let pipeline = VideoClassificationPipeline(
                 llm: llm, maximumTags: tree.nodes.filter { !$0.isRetired }.count,
-                minimumConfidence: settings.minimumConfidence, promptVersion: "p6")
+                minimumConfidence: settings.minimumConfidence, promptVersion: "p7")
             let trimmedRules = settings.houseRules.trimmingCharacters(in: .whitespacesAndNewlines)
             let typeHouseRules = trimmedRules.isEmpty ? nil : trimmedRules
             let results = try await pipeline.classifyBatch(

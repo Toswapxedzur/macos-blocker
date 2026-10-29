@@ -60,7 +60,7 @@
   },
   {
     "translationKey": "notice.localModelBackup.1",
-    "template": "Choose a local folder for Vault Classifier backups."
+    "template": "Choose a local folder for Content tagging backups."
   },
   {
     "translationKey": "notice.localModelBackup.2",
@@ -116,7 +116,7 @@
   },
   {
     "translationKey": "notice.localStore.6",
-    "template": "The Classifier group cannot correct this platform."
+    "template": "The Content tagging group cannot correct this platform."
   },
   {
     "translationKey": "notice.localStore.7",
@@ -124,7 +124,7 @@
   },
   {
     "translationKey": "notice.localStore.8",
-    "template": "The correction contains a tag that is not eligible for this Classifier group."
+    "template": "The correction contains a tag that is not eligible for this Content tagging group."
   },
   {
     "translationKey": "notice.packageLifecycle.1",
@@ -264,11 +264,11 @@
   },
   {
     "translationKey": "notice.workspaceCatalog.4",
-    "template": "The platform binding references a missing Classifier group: {value}."
+    "template": "The platform binding references a missing Content tagging group: {value}."
   },
   {
     "translationKey": "notice.workspaceCatalog.5",
-    "template": "The active Classifier group is not compatible with the platform tree and dataset: {value}."
+    "template": "The active Content tagging group is not compatible with the platform tree and dataset: {value}."
   },
   {
     "translationKey": "notice.workspaceCatalog.6",
@@ -284,11 +284,11 @@
   },
   {
     "translationKey": "notice.workspaceCatalog.9",
-    "template": "The Classifier group has incompatible local assets: {value}."
+    "template": "The Content tagging group has incompatible local assets: {value}."
   },
   {
     "translationKey": "notice.workspaceCatalog.10",
-    "template": "That platform is already assigned to another Classifier group: {value}. A platform can belong to only one group."
+    "template": "That platform is already assigned to another Content tagging group: {value}. A platform can belong to only one group."
   },
   {
     "translationKey": "notice.officialPlatformConnectionTestProtocol.1",
@@ -452,7 +452,7 @@
   },
   {
     "translationKey": "notice.backupCreated",
-    "template": "Classifier snapshot created in {folder}."
+    "template": "Content tagging snapshot created in {folder}."
   },
   {
     "translationKey": "notice.termLookupPending",

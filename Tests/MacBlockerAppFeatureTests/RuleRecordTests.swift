@@ -13,8 +13,9 @@ final class RuleRecordTests: XCTestCase {
         store.save(rawStore:["blockedGroups":[["id":"g","groupType":"custom","enabled":true,"ruleAI":["providerModel":"one"]]]])
         let first = store.ruleContextRevision(groupID:"g")
         XCTAssertEqual(first, BlockerWebStore(shared: shared).ruleContextRevision(groupID:"g"))
-        store.save(rawStore:["blockedGroups":[["id":"g","groupType":"custom","enabled":true,"ruleAI":["providerModel":"two"]]]])
+        store.save(rawStore:["blockedGroups":[["id":"g","groupType":"custom","enabled":true,"ruleAI":["providerModel":"two","prompt":"Summarize","context":"Saved background"]]]])
         XCTAssertNotEqual(first, store.ruleContextRevision(groupID:"g"))
+        XCTAssertEqual(store.ruleAIContextValues(groupID:"g"), ["prompt":"Summarize","context":"Saved background"])
     }
     @MainActor
     func testNativeBridgeDeliversUserOriginAndRecordReply() async throws {

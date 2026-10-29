@@ -19,7 +19,7 @@ public struct ChatGPTClassificationSettings: Codable, Equatable, Sendable {
     public var accountID: String
     public var model: String
     public var reasoningEffort: ClassificationReasoningEffort
-    public init(accountID: String = "", model: String = "", reasoningEffort: ClassificationReasoningEffort = .low) {
+    public init(accountID: String = "", model: String = "", reasoningEffort: ClassificationReasoningEffort = .medium) {
         self.accountID = accountID; self.model = model; self.reasoningEffort = reasoningEffort
     }
     private enum CodingKeys: String, CodingKey { case accountID, model, reasoningEffort }
@@ -37,7 +37,7 @@ public struct APIKeyClassificationSettings: Codable, Equatable, Sendable {
     public var profileID: String
     public var model: String
     public var reasoningEffort: ClassificationReasoningEffort
-    public init(profileID: String = "", model: String = "", reasoningEffort: ClassificationReasoningEffort = .providerDefault) {
+    public init(profileID: String = "", model: String = "", reasoningEffort: ClassificationReasoningEffort = .medium) {
         self.profileID = profileID; self.model = model; self.reasoningEffort = reasoningEffort
     }
     private enum CodingKeys: String, CodingKey { case profileID, model, reasoningEffort }

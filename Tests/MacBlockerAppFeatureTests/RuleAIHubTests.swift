@@ -1,9 +1,20 @@
 import XCTest
 import Network
 @testable import MacBlockerAppFeature
+import MacBlockerCore
 
 @MainActor
 final class RuleAIHubTests: XCTestCase {
+    func testSharedRulePromptAndContextValidateInNativeJavaScriptCore() {
+        let selection: [String:Any] = ["providerModel":"api:key:model","accountID":"","reasoningEffort":"medium",
+                                       "dailyRequestLimit":NSNull(),"prompt":"标签说明 🎮","context":"背景材料"]
+        let saved = GroupActionsRuntime.shared.call("normalizeRuleAI",[selection]) as? [String:Any]
+        XCTAssertEqual(saved?["prompt"] as? String,"标签说明 🎮")
+        XCTAssertEqual(saved?["context"] as? String,"背景材料")
+        var oversized = selection
+        oversized["context"] = String(repeating:"界",count:5_334)
+        XCTAssertNil(GroupActionsRuntime.shared.call("normalizeRuleAI",[oversized]))
+    }
     private func peer(_ hub: ConnectionHub, _ program: String, admitted: Bool = true) -> NWConnection {
         let connection = NWConnection(host: "127.0.0.1", port: 9, using: .tcp)
         hub.registerPendingPeer(connection, challenge: "fixture")

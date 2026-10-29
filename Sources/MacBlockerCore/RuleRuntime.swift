@@ -188,12 +188,13 @@ public final class RuleRuntime {
     }
 
     /// One event (`type`, `data`) to one group's rule.
-    public func dispatch(type: String, data: Any, groupID: String, now: Date = Date(), contextRevision: String? = nil, origin: String = "host") throws -> DispatchResult {
+    public func dispatch(type: String, data: Any, groupID: String, now: Date = Date(), contextRevision: String? = nil, aiContext: [String: String]? = nil, origin: String = "host") throws -> DispatchResult {
         var descriptor: [String: Any] = [
             "type": type, "now": (now.timeIntervalSince1970 * 1000).rounded(), "data": data, "targetGroupId": groupID,
             "origin": origin == "user" ? "user" : "host"
         ]
         if let contextRevision { descriptor["contextRevisions"] = [groupID: contextRevision] }
+        if let aiContext { descriptor["aiContexts"] = [groupID: aiContext] }
         guard JSONSerialization.isValidJSONObject(descriptor),
               let json = String(data: try JSONSerialization.data(withJSONObject: descriptor), encoding: .utf8) else {
             throw RuleRuntimeError.failed("the event is not JSON")

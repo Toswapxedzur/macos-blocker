@@ -93,20 +93,20 @@ final class VideoClassificationCoordinatorTests: XCTestCase {
         XCTAssertEqual(request.minimumConfidence, 5)
         XCTAssertEqual(request.minimumTags, 0)
         let row = try XCTUnwrap(coordinator.snapshot().workspaceCatalog.videoClassifications.first { $0.entryID == "bounded" })
-        XCTAssertEqual(row.modelVersion, catalog.classifierTypes[index].cloudModelVersion + "+p6")
+        XCTAssertEqual(row.modelVersion, catalog.classifierTypes[index].cloudModelVersion + "+p7")
     }
 
     func testChangingConfidenceInvalidatesAutomaticCacheButKeepsHumanCorrections() {
         var type = ClassifierTypeAsset(id: "type", name: "Group", treeID: "tree", treeRevision: 1,
             datasetID: "dataset", datasetRevision: 1)
-        let serving = type.cloudModelVersion + "+p6"
+        let serving = type.cloudModelVersion + "+p7"
         var row = VideoClassification(classifierTypeID: type.id, platformID: "youtube", entryID: "entry",
             creatorID: "creator", treeID: type.treeID, treeRevision: 1, tags: [], source: .model,
             modelVersion: serving)
         XCTAssertTrue(LocalClassifierCoordinator.isClassificationCurrent(row, forType: type, servingModelVersion: serving))
         type.tagging.minimumConfidence = 5
         XCTAssertFalse(LocalClassifierCoordinator.isClassificationCurrent(row, forType: type, servingModelVersion: serving))
-        row.modelVersion = type.cloudModelVersion + "+p6"
+        row.modelVersion = type.cloudModelVersion + "+p7"
         XCTAssertTrue(LocalClassifierCoordinator.isClassificationCurrent(row, forType: type, servingModelVersion: serving))
         type.tagging.minimumConfidence = 4
         XCTAssertFalse(LocalClassifierCoordinator.isClassificationCurrent(row, forType: type, servingModelVersion: serving))

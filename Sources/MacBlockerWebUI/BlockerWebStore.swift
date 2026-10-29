@@ -497,6 +497,16 @@ public final class BlockerWebStore: @unchecked Sendable {
         return String(hash, radix: 16)
     }
 
+    public func ruleAIContextValues(groupID: String) -> [String: String] {
+        let group = (loadStoreObject()?["blockedGroups"] as? [[String: Any]])?.first { $0["id"] as? String == groupID }
+        let configuration = group?["ruleAI"] as? [String: Any] ?? [:]
+        func text(_ key: String) -> String {
+            guard let value = configuration[key] as? String, value.utf8.count <= 16_000 else { return "" }
+            return value
+        }
+        return ["prompt": text("prompt"), "context": text("context")]
+    }
+
     /// Generic records use the same canonical transaction implementation as
     /// browser rules, inside the native document's existing file lock.
     public func ruleRecordRequest(groupID: String, payload: String) throws -> [String: Any] {

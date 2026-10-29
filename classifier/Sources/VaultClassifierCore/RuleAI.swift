@@ -7,7 +7,7 @@ public struct RuleAIConfiguration: Codable, Equatable, Sendable {
     public var accountID: String
     public var reasoningEffort: ClassificationReasoningEffort
     public var dailyRequestLimit: Int?
-    public init(providerModel: String, accountID: String = "", reasoningEffort: ClassificationReasoningEffort = .providerDefault, dailyRequestLimit: Int? = nil) {
+    public init(providerModel: String, accountID: String = "", reasoningEffort: ClassificationReasoningEffort = .medium, dailyRequestLimit: Int? = nil) {
         self.providerModel = providerModel; self.accountID = accountID
         self.reasoningEffort = reasoningEffort; self.dailyRequestLimit = dailyRequestLimit
     }

@@ -21,7 +21,7 @@ private actor SettlementLLM: BatchClassificationEngine {
     func classifyBatch(_ requests: [LLMClassificationRequest]) async throws -> [LLMClassificationResult] {
         batchSizes.append(requests.count)
         beforeBatch?()
-        if mode == .allFail || mode == .mixed { throw Failure.injected }
+        if mode == .allFail || (mode == .mixed && requests.contains(where: { $0.dynamicSuffix.contains("Failure") })) { throw Failure.injected }
         return requests.map { _ in answer() }
     }
     func classify(_ request: LLMClassificationRequest) async throws -> LLMClassificationResult {
@@ -171,5 +171,16 @@ final class ClassificationFailureSettlementTests: XCTestCase {
         await model.classifyChunk(platformID: "youtube", [failed, good])
         XCTAssertTrue(model.inFlightVideoClassifications.isEmpty)
         try assertNoFailedDecision(model)
+    }
+    func testProductionChunkPersistsSuccessfulItemDespiteSiblingFailure() async throws {
+        let model = try makeModel(), engine = SettlementLLM(.mixed)
+        model.coordinator?.setFixtureEngine(engine)
+        model.inFlightVideoClassifications = Set([failed, good].map { VaultClassifierViewModel.inFlightKey("youtube", $0.entryID) })
+        await model.classifyChunk(platformID: "youtube", [failed, good])
+        XCTAssertTrue(model.inFlightVideoClassifications.isEmpty)
+        XCTAssertEqual(model.coordinator?.cachedVideoTags(platformID:"youtube",entryID:good.entryID)?.tags.map(\.id), ["games"])
+        try assertNoFailedDecision(model)
+        let titles = await engine.singleTitles
+        XCTAssertEqual(titles.count, 2)
     }
 }
