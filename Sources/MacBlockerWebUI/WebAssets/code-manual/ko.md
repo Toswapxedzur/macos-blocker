@@ -47,12 +47,13 @@
 
 ## API
 
-- `on(type, handler)` → boolean. `handler(ev)`를 등록합니다. 여러 핸들러는 등록 순서대로 실행됩니다. false는 인수 오류 또는 핸들러 한도 초과를 뜻합니다. `ev = { type: string, now: number, data }`; `now`는 Unix 밀리초입니다.
+- `on(type, handler)` → boolean. `handler(ev)`를 등록하며 여러 handler는 등록 순서대로 실행됩니다. False는 잘못된 인수 또는 handler 한도 초과를 뜻합니다. `ev = { type: string, now: number, origin: "host" | "user" | "rule", data }`; `now`는 Unix 밀리초입니다. 네이티브 패널 입력의 origin은 `origin: "user"`이고 `v.emit`의 origin은 `origin: "rule"`입니다.
 - `v.state`: 이벤트 dispatch 후 저장되는 변경 가능한 JSON 객체입니다. 기존 state를 덮어쓰지 말고 없는 필드를 초기화하세요. 객체가 아닌 값/배열을 지정하면 `{}`로 초기화됩니다. 직렬화 불가/과도한 업데이트는 저장되지 않습니다.
 - `v.log(...values)`: 이 그룹의 Log에 추가합니다. 실행 및 전달 실패는 같은 피드에 명시적인 오류 항목으로 표시됩니다. Logs/Clear는 그룹별로 독립적입니다. 로드 오류는 Run 상태에도 표시됩니다. 일부 실행된 이벤트는 자동으로 다시 실행되지 않습니다.
 - `v.emit(type, data)`: 현재 이벤트 후 `data` JSON 사본을 새 `now`와 함께을 그룹 핸들러에 대기시킵니다. 동기 호출이 아닙니다.
 - `v.panel(id, spec)`: 그룹의 이름 있는 부동 패널을 바꿉니다. null `spec`은 제거합니다. Panels를 참조하세요.
 - `v.file(op, path, payload?)` → 요청 ID 문자열. Files를 참조하세요.
+- `v.store(request)` → request ID 문자열. 그룹 레코드를 참조하세요.
 - `v.block(appId, on)`: true는 앱 차단을 유지하고 false는 이 그룹의 차단을 제거합니다. 활성 그룹 사이에 차단은 결합되며 다른 그룹의 대상은 해제할 수 없습니다. 차단은 일반 종료를 요청하고 설정 간격으로 다시 시도합니다. 프로세스 시작을 막거나 앱이 Quit을 수락한다고 보장하지 않습니다.
 - `v.quit(appId)`: 동일한 보호/재시도 정책을 따르는 일반 종료 요청 한 번이며 지속 차단은 아닙니다.
 - `v.open(appId)`: macOS에 설치된 앱을 열도록 요청합니다. 성공 callback은 없습니다.
@@ -139,7 +140,7 @@ file.data = { requestId: string, op: string, path: string, ok: boolean,
 | `{op:"list", prefix?, after?, limit?}` | 정렬된 `entries`와 `next` |
 | `{op:"clear", prefix?}` | `deleted` 개수 |
 
-레코드는 `{value, revision, version, updatedAt}`입니다. 불투명한 `revision`은 실제 쓰기 시 바뀌며 `version`은 호출자가 관리하는 메타데이터입니다. `list`는 값 없는 헤더를 돌려줍니다. 하나를 읽으려면 `get`, 다음 페이지는 `after: next`를 사용하세요. `ifRevision` 생략 시 put/delete는 무조건 실행됩니다. `null`은 키가 없어야 하고 revision 문자열은 정확히 일치해야 합니다. 불일치 시 `ok:false`, `error:"store-conflict"`, 현재 `record`가 반환됩니다. 지연된 자동 응답이 사용자 피드백을 덮어쓰지 않게 합니다. `v.context.revision`은 규칙 버전에 포함할 수 있는 불투명한 설정 마커입니다. 프레임워크는 캐시 정책을 강제하지 않습니다.
+레코드는 `{value, revision, version, updatedAt}`입니다. 불투명한 revision은 실제 쓰기 시 바뀌며 `version`은 호출자가 관리하는 메타데이터입니다. `list`는 값 없는 헤더를 돌려줍니다. 하나를 읽으려면 `get`, 다음 페이지는 `after: next`를 사용하세요. `put`/`delete`, `ifRevision` 생략 시 put/delete는 무조건 실행됩니다. `null`은 키가 없어야 하고 revision 문자열은 정확히 일치해야 합니다. 불일치 시 `ok:false`, `error:"store-conflict"`, 현재 `record`가 반환됩니다. 지연된 자동 응답이 사용자 피드백을 덮어쓰지 않게 합니다. `v.context.revision`은 규칙 버전에 포함할 수 있는 불투명한 설정 마커입니다. 프레임워크는 캐시 정책을 강제하지 않습니다.
 
 제한: 키 1–2048자, version ≤128, JSON 값 ≤64KiB, depth ≤32, 그룹당 10000개 키, 전체 문서16MiB. `list`는 페이지당 최대100개 헤더와96KiB를 반환합니다. 그룹당 최대32개 요청, 전체 초당128개 시작입니다. 과부하 시 그룹별 초당 하나의 `store-busy` 오류를 알리고 나머지는 버립니다. 저장 오류는 `ok:false`를 반환합니다. 미래 형식/손상 문서는 보존하고 `store-unavailable`을 알립니다. 자동 재시도나 제거는 없습니다. deadline에는 ticks를 사용하세요.
 
@@ -168,7 +169,10 @@ Snooze 또는 패널 버튼으로 시작되는 5분 일시 중지 중에만 Stea
 
 각 custom group은 **AI calls**에서 connection/model과 reasoning effort를 선택합니다. Mac과 브라우저 규칙은 같은 API를 사용합니다. 브라우저 요청은 Mac Vault 연결이 필요하며 provider 자격 증명은 그곳에 유지됩니다. 연결된 그룹은 선택 및 선택적 일일 요청 한도를 공유합니다. 빈 값은 그룹 한도 없음이며 계정 제한은 계속 적용됩니다. 한도는 UTC 날짜 기준이고 재시작 후 유지되며 실패를 포함한 제출 시도를 셉니다. Link는 기존 사용량을 합치고 Unlink 후에도 이전 사용량을 유지합니다.
 
-`v.ai({ prompt, input? })`는 즉시 request ID를 반환합니다. 규칙 등록이 아니라 handler 안에서 호출하세요. `input`은 모든 JSON 값이며 prompt/input 각각 최대20KB입니다. 응답은 `ai` 이벤트 `{requestId, ok, text, citations, error}`로 옵니다. 성공 텍스트 최대48KB, citation은 `{url,title}`입니다. 웹 검색 답변을 표시할 때 출처 링크를 보이고 클릭 가능하게 유지하세요. 검색은 모델에 항상 제공됩니다. 앱의 고정 deadline은 없고 동시성은 제한됩니다. provider 대체나 자동 재시도는 없습니다. 응답은 데이터이며 JavaScript로 실행되지 않습니다. 기존 동작을 할지는 규칙이 결정합니다.
+`v.ai({ prompt, input? })`는 즉시 request ID를 반환합니다. 규칙 등록이 아니라 handler 안에서 호출하세요. `input`은 모든 JSON 값이며 prompt/input 각각 최대20KB입니다. 응답은 `ai` 이벤트 `{requestId, ok, text, citations,
+error}`로 옵니다. 성공 텍스트 최대48KB, citation은 `{url,title}`입니다. 웹 검색 답변을 표시할 때 출처 링크를 보이고 클릭 가능하게 유지하세요. 검색은 모델에 항상 제공됩니다. 앱의 고정 deadline은 없고 동시성은 제한됩니다. provider 대체나 자동 재시도는 없습니다. 응답은 데이터이며 JavaScript로 실행되지 않습니다. 기존 동작을 할지는 규칙이 결정합니다.
+
+`ask` 버튼과 `note` 필드가 있는 패널의 예:
 
 ```javascript
 (on, v) => {

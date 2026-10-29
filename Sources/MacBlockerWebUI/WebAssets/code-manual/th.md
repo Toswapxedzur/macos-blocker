@@ -47,12 +47,13 @@ Object IDs เดียวกันใน custom groups ที่เชื่อ
 
 ## API
 
-- `on(type, handler)` → boolean ลงทะเบียน `handler(ev)`; หลาย handlers ทำงานตามลำดับที่ลงทะเบียน False หมายถึง arguments ไม่ถูกต้องหรือถึงขีดจำกัด handlers `ev = { type: string, now: number, data }`; `now` คือ Unix milliseconds
+- `on(type, handler)` → boolean ใช้ลงทะเบียน `handler(ev)`; handler หลายตัวทำงานตามลำดับที่ลงทะเบียน ค่า false หมายถึงอาร์กิวเมนต์ไม่ถูกต้องหรือถึงขีดจำกัด handler `ev = { type: string, now: number, origin: "host" | "user" | "rule", data }`; `now` คือเวลา Unix หน่วยมิลลิวินาที อินพุตจากแผง native มี `origin: "user"`; `v.emit` มี `origin: "rule"`
 - `v.state`: JSON object ที่แก้ไขได้และบันทึกหลัง event dispatch ให้เริ่มเฉพาะ fields ที่หายไปแทนการเขียนทับ state เดิม การกำหนด non-object หรือ array จะ reset เป็น `{}`; การอัปเดตที่ serialize ไม่ได้หรือใหญ่เกินไปจะไม่ถูกบันทึก
 - `v.log(...values)`: เพิ่มรายการลงใน Log ของกลุ่มนี้ ความล้มเหลวในการทำงานและการส่งผลจะแสดงเป็นรายการข้อผิดพลาดที่ชัดเจนใน feed เดียวกัน Logs/Clear แยกกันในแต่ละกลุ่ม Load errors แสดงใน Run status ด้วย และ events ที่ทำงานไปบางส่วนจะไม่ถูกเรียกซ้ำโดยอัตโนมัติ
 - `v.emit(type, data)`: queue สำเนา JSON ของ `data` ให้ handlers กลุ่มนี้หลัง event ปัจจุบัน พร้อม `now` ใหม่; ไม่ใช่ synchronous call
 - `v.panel(id, spec)`: แทนที่ floating panel ที่ตั้งชื่อของกลุ่มนี้; หาก `spec` เป็น null จะนำออก ดู Panels
 - `v.file(op, path, payload?)` → request ID string ดู Files
+- `v.store(request)` → สตริง request ID ดูบันทึกกลุ่ม
 - `v.block(appId, on)`: true คงการบล็อกแอปไว้; false นำ block ของกลุ่มนี้ออก Blocks จากกลุ่มที่เปิดใช้อยู่จะรวมกัน; call นี้ปลด block เป้าหมายของกลุ่มอื่นไม่ได้ การบล็อกจะขอให้ปิดตามปกติและลองใหม่ตาม interval ใน Settings; ไม่ขัดขวางการเปิด process และไม่รับประกันว่าแอปจะยอม Quit
 - `v.quit(appId)`: ขอปิดตามปกติหนึ่งครั้ง ภายใต้นโยบาย protection/retry เดียวกัน; ไม่ใช่ block ต่อเนื่อง
 - `v.open(appId)`: ขอให้ macOS เปิดแอปที่ติดตั้งไว้; ไม่มี success callback
@@ -139,7 +140,7 @@ result fields ที่ไม่ได้ใช้เป็น null; เมื�
 | `{op:"list", prefix?, after?, limit?}` | `entries` ที่เรียงแล้วและ `next` |
 | `{op:"clear", prefix?}` | จำนวน `deleted` |
 
-แต่ละ record คือ `{value, revision, version, updatedAt}` ค่า `revision` แบบ opaque เปลี่ยนเมื่อเขียนจริง; `version` เป็น metadata ของ caller `list` คืน headers โดยไม่มี values ใช้ `get` เพื่ออ่านและ `after: next` เพื่อขอหน้าถัดไป เมื่อไม่ระบุ `ifRevision` put/delete จะไม่มีเงื่อนไข; `null` ต้องไม่มี key นั้น ส่วน revision string ต้องตรงกันพอดี หากไม่ตรงจะคืน `ok:false`, `error:"store-conflict"` และ `record` ปัจจุบัน เพื่อป้องกัน automatic reply ที่ล่าช้าเขียนทับ feedback ของผู้ใช้ `v.context.revision` เป็น configuration marker แบบ opaque ที่ rule อาจรวมใน version ของตัวเอง framework ไม่กำหนดนโยบาย cache
+แต่ละ record คือ `{value, revision, version, updatedAt}` ค่า revision แบบ opaque เปลี่ยนเมื่อเขียนจริง; `version` เป็น metadata ของ caller `list` คืน headers โดยไม่มี values ใช้ `get` เพื่ออ่านและ `after: next` เพื่อขอหน้าถัดไป เมื่อไม่ระบุ `put`/`delete`, `ifRevision` put/delete จะไม่มีเงื่อนไข; `null` ต้องไม่มี key นั้น ส่วน revision string ต้องตรงกันพอดี หากไม่ตรงจะคืน `ok:false`, `error:"store-conflict"` และ `record` ปัจจุบัน เพื่อป้องกัน automatic reply ที่ล่าช้าเขียนทับ feedback ของผู้ใช้ `v.context.revision` เป็น configuration marker แบบ opaque ที่ rule อาจรวมใน version ของตัวเอง framework ไม่กำหนดนโยบาย cache
 
 ขีดจำกัด: key 1–2048 ตัวอักษร, version ≤128, JSON value ≤64KiB, depth ≤32, 10000 keys ต่อกลุ่ม และเอกสารรวม16MiB `list` คืนได้สูงสุด100 headers และ96KiB ต่อหน้า สูงสุด32 requests ต่อกลุ่มและ128 starts/second โดยรวม เมื่อเกินจะรายงาน `store-busy` หนึ่งครั้งต่อกลุ่มต่อวินาทีและทิ้งรายการที่เหลือ Storage error คืน `ok:false`; เอกสารอนาคตหรือผิดรูปจะถูกเก็บไว้และรายงาน `store-unavailable` ไม่มี retry หรือ eviction อัตโนมัติ ใช้ ticks กำหนด deadline
 
@@ -168,7 +169,10 @@ Steam ถูกบล็อก ยกเว้นช่วงพักห้า�
 
 แต่ละ custom group เลือก connection/model และ reasoning effort ใน **AI calls** กฎ Mac และ browser ใช้ API เดียวกัน; browser request ต้องเชื่อม Mac Vault และ credentials ของ provider อยู่ที่นั่น กลุ่มที่เชื่อมกันแชร์ตัวเลือกและ daily cap แบบเลือกได้ ค่าว่างหมายถึงไม่จำกัดระดับกลุ่ม แต่ข้อจำกัดบัญชียังใช้ cap คิดตามวัน UTC อยู่หลัง restart และนับทุก attempt ที่ส่งรวมถึงที่ล้มเหลว Link รวม usage เดิม; unlink เก็บ usage ที่ผ่านมา
 
-`v.ai({ prompt, input? })` คืน request ID ทันที เรียกใน handler ไม่ใช่ตอนลงทะเบียน rule `input` เป็น JSON ใดก็ได้; prompt/input จำกัดอย่างละ20KB คำตอบมาใน `ai` event: `{requestId, ok, text, citations, error}` ข้อความสำเร็จไม่เกิน48KB; citations เป็น `{url,title}` เก็บลิงก์แหล่งที่มาให้มองเห็นและคลิกได้เมื่อแสดงคำตอบจาก web search Search มีให้โมเดลเสมอ ไม่มี app deadline คงที่และจำกัด concurrency; ไม่มี provider fallback หรือ auto retry คำตอบเป็นข้อมูล ไม่ถูก execute เป็น JavaScript และ rule ตัดสินใจว่าจะใช้ action เดิมใด
+`v.ai({ prompt, input? })` คืน request ID ทันที เรียกใน handler ไม่ใช่ตอนลงทะเบียน rule `input` เป็น JSON ใดก็ได้; prompt/input จำกัดอย่างละ20KB คำตอบมาใน `ai` event: `{requestId, ok, text, citations,
+error}` ข้อความสำเร็จไม่เกิน48KB; citations เป็น `{url,title}` เก็บลิงก์แหล่งที่มาให้มองเห็นและคลิกได้เมื่อแสดงคำตอบจาก web search Search มีให้โมเดลเสมอ ไม่มี app deadline คงที่และจำกัด concurrency; ไม่มี provider fallback หรือ auto retry คำตอบเป็นข้อมูล ไม่ถูก execute เป็น JavaScript และ rule ตัดสินใจว่าจะใช้ action เดิมใด
+
+สำหรับแผงที่มีปุ่ม `ask` และช่อง `note`:
 
 ```javascript
 (on, v) => {

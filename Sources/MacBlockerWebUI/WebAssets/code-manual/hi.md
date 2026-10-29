@@ -47,12 +47,13 @@ Linked custom groups में समान object IDs एक स्थानी
 
 ## API
 
-- `on(type, handler)` → boolean। `handler(ev)` register करता है; कई handlers registration order में चलते हैं। False invalid arguments या handler limit बताता है। `ev = { type: string, now: number, data }`; `now` Unix milliseconds है।
+- `on(type, handler)` → boolean। `handler(ev)` register करता है; कई handlers registration order में चलते हैं। False का अर्थ invalid arguments या handler limit है। `ev = { type: string, now: number, origin: "host" | "user" | "rule", data }`; `now` Unix milliseconds है। Native panel input में `origin: "user"` और `v.emit` में `origin: "rule"` होता है।
 - `v.state`: mutable JSON object, event dispatch के बाद सहेजा जाता है। पुराने state को मिटाने के बजाय missing fields initialize करें। Non-object/array देने पर `{}`; nonserializable/अत्यधिक बड़ा update सहेजा नहीं जाता।
 - `v.log(...values)`: इस group के Log में जोड़ता है। Execution और delivery failures इसी feed में स्पष्ट error entries के रूप में दिखते हैं। Logs/Clear हर group के लिए अलग हैं। Load errors Run status में भी दिखते हैं; आंशिक रूप से चले events अपने आप दोबारा नहीं चलते।
 - `v.emit(type, data)`: मौजूदा event के बाद group handlers के लिए `data` की JSON copy queue करता है, नए `now` के साथ; synchronous call नहीं।
 - `v.panel(id, spec)`: group का नामित floating panel बदलता है; null `spec` हटाता है। Panels देखें।
 - `v.file(op, path, payload?)` → request ID string। Files देखें।
+- `v.store(request)` → request ID string। Group records देखें।
 - `v.block(appId, on)`: true app block बनाए रखता है, false इस group का block हटाता है। Enabled groups के blocks जुड़ते हैं; दूसरे group का target unblock नहीं करता। Blocking normal quit माँगता और Settings interval पर retry करता है; process launch नहीं रोकता या app के Quit स्वीकारने की गारंटी नहीं देता।
 - `v.quit(appId)`: समान protection/retry नीति वाला एक सामान्य quit अनुरोध; निरंतर block नहीं।
 - `v.open(appId)`: macOS से installed app खोलने को कहता है; success callback नहीं।
@@ -139,7 +140,7 @@ Unused result fields null; success में error खाली। Failures: inv
 | `{op:"list", prefix?, after?, limit?}` | sorted `entries` और `next` |
 | `{op:"clear", prefix?}` | `deleted` count |
 
-Record `{value, revision, version, updatedAt}` होता है। वास्तविक write पर opaque `revision` बदलता है; `version` caller metadata है। `list` बिना values के headers लौटाता है; एक record पढ़ने को `get`, अगले page के लिए `after: next` उपयोग करें। `ifRevision` के बिना put/delete unconditional है; `null` के लिए key अनुपस्थित होनी चाहिए, revision string के लिए exact match। Mismatch में `ok:false`, `error:"store-conflict"` और current `record` लौटते हैं। इससे देर से आया automatic reply user feedback को overwrite नहीं करता। `v.context.revision` opaque rule-configuration marker है, जिसे rule अपने version में शामिल कर सकता है; framework cache नीति नहीं लगाता।
+Record `{value, revision, version, updatedAt}` होता है। वास्तविक write पर opaque revision बदलता है; `version` caller metadata है। `list` बिना values के headers लौटाता है; एक record पढ़ने को `get`, अगले page के लिए `after: next` उपयोग करें। `put`/`delete`, `ifRevision` के बिना put/delete unconditional है; `null` के लिए key अनुपस्थित होनी चाहिए, revision string के लिए exact match। Mismatch में `ok:false`, `error:"store-conflict"` और current `record` लौटते हैं। इससे देर से आया automatic reply user feedback को overwrite नहीं करता। `v.context.revision` opaque rule-configuration marker है, जिसे rule अपने version में शामिल कर सकता है; framework cache नीति नहीं लगाता।
 
 सीमाएं: key 1–2048 अक्षर, version ≤128, JSON value ≤64KiB, depth ≤32, प्रति group 10000 keys और पूरे record document की सीमा16MiB। `list` प्रत्येक page में अधिकतम100 headers और96KiB देता है। प्रति group 32 requests और कुल128 request starts/second; overload में प्रति group/second एक `store-busy` error आता है और बाकी requests drop होते हैं। Storage errors में `ok:false`; future/malformed document सुरक्षित रहता है और `store-unavailable` मिलता है। Auto retry/eviction नहीं। Deadline के लिए ticks उपयोग करें।
 
@@ -168,7 +169,10 @@ Snooze या उसके panel button से शुरू पाँच मि�
 
 हर custom group **AI calls** में एक connection/model और reasoning effort चुनता है। Mac/browser rules वही API इस्तेमाल करते हैं; browser request के लिए Mac Vault connected होना चाहिए और provider credentials वहीं रहते हैं। Linked groups चयन और optional daily request cap साझा करते हैं। Blank का अर्थ group cap नहीं, account limits फिर भी लागू। Cap UTC day से जुड़ा है, restart के बाद रहता है और failures सहित submitted attempts गिनता है। Link पुराने usage को जोड़ता है; unlink पुराना usage रखता है।
 
-`v.ai({ prompt, input? })` तुरंत request ID देता है। इसे handler के भीतर call करें, rule register करते समय नहीं। `input` कोई JSON value हो सकता है; prompt/input प्रत्येक अधिकतम20KB। Reply `ai` events में आता है: `{requestId, ok, text, citations, error}`। सफल text अधिकतम48KB; citation `{url,title}`। Web search आधारित उत्तर दिखाते समय source links दिखने योग्य और clickable रखें। Search model के लिए हमेशा उपलब्ध है। निश्चित app deadline नहीं, concurrency bounded है; provider fallback/automatic retry नहीं। Response data है, JavaScript के रूप में execute नहीं; कौन-सी existing action लेनी है rule तय करता है।
+`v.ai({ prompt, input? })` तुरंत request ID देता है। इसे handler के भीतर call करें, rule register करते समय नहीं। `input` कोई JSON value हो सकता है; prompt/input प्रत्येक अधिकतम20KB। Reply `ai` events में आता है: `{requestId, ok, text, citations,
+error}`। सफल text अधिकतम48KB; citation `{url,title}`। Web search आधारित उत्तर दिखाते समय source links दिखने योग्य और clickable रखें। Search model के लिए हमेशा उपलब्ध है। निश्चित app deadline नहीं, concurrency bounded है; provider fallback/automatic retry नहीं। Response data है, JavaScript के रूप में execute नहीं; कौन-सी existing action लेनी है rule तय करता है।
+
+`ask` बटन और `note` field वाले panel के लिए:
 
 ```javascript
 (on, v) => {

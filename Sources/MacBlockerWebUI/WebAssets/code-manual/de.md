@@ -47,12 +47,13 @@ Benannte Objekte überstehen Ausführen und Neustarts im reservierten Feld `v.st
 
 ## API
 
-- `on(type, handler)` → boolescher Wert. Registriert `handler(ev)`; mehrere Handler laufen in Registrierungsreihenfolge. False bedeutet ungültige Argumente oder erreichtes Handlerlimit. `ev = { type: string, now: number, data }`; `now` sind Unix-Millisekunden.
+- `on(type, handler)` → boolescher Wert. Registriert `handler(ev)`; mehrere Handler laufen in Registrierungsreihenfolge. False bedeutet ungültige Argumente oder erreichtes Handlerlimit. `ev = { type: string, now: number, origin: "host" | "user" | "rule", data }`; `now` ist Unix-Zeit in Millisekunden. Native Panel-Eingaben haben `origin: "user"`; `v.emit` hat `origin: "rule"`.
 - `v.state`: veränderliches JSON-Objekt, das nach der Ereignisverteilung gespeichert wird. Initialisieren Sie fehlende Felder, statt bestehenden Zustand zu überschreiben. Das Zuweisen eines Nicht-Objekts oder Arrays setzt es auf `{}` zurück; nicht serialisierbare/zu große Änderungen werden nicht gespeichert.
 - `v.log(...values)`: hängt Einträge an das Log dieser Gruppe an. Ausführungs- und Zustellungsfehler erscheinen als ausdrückliche Fehlereinträge im selben Feed. Logs/Leeren sind pro Gruppe unabhängig. Ladefehler erscheinen auch im Ausführungsstatus; teilweise ausgeführte Ereignisse werden nicht automatisch wiederholt.
 - `v.emit(type, data)`: stellt eine JSON-Kopie von `data` nach dem aktuellen Ereignis für die Handler dieser Gruppe mit einem neuen `now` in die Warteschlange; kein synchroner Aufruf.
 - `v.panel(id, spec)`: ersetzt das benannte schwebende Panel dieser Gruppe; null als `spec` entfernt es. Siehe Panels.
 - `v.file(op, path, payload?)` → Anfrage-ID als Zeichenfolge. Siehe Dateien.
+- `v.store(request)` → Request-ID-Zeichenfolge. Siehe Gruppen-Datensätze.
 - `v.block(appId, on)`: true hält eine App-Blockierung aufrecht, false entfernt die Blockierung dieser Gruppe. Blockierungen werden über aktivierte Gruppen kombiniert; dieser Aufruf kann das Ziel einer anderen Gruppe nicht freigeben. Blockieren fordert normales Beenden an und wiederholt es im Einstellungsintervall; es verhindert keinen Prozessstart und garantiert nicht, dass eine App Beenden akzeptiert.
 - `v.quit(appId)`: eine normale Beenden-Anfrage unter derselben Schutz-/Wiederholungsrichtlinie; keine fortlaufende Blockierung.
 - `v.open(appId)`: fordert macOS auf, eine installierte App zu öffnen; kein Erfolgs-Callback.
@@ -139,7 +140,7 @@ Ungenutzte Ergebnisfelder sind null; bei Erfolg ist error leer. Fehler umfassen 
 | `{op:"list", prefix?, after?, limit?}` | sortierte `entries` und `next` |
 | `{op:"clear", prefix?}` | Anzahl `deleted` |
 
-Ein Datensatz hat `{value, revision, version, updatedAt}`. Die opake `revision` ändert sich bei echtem Schreiben; `version` sind vom Aufrufer verwaltete Metadaten. `list` gibt Header ohne Werte zurück; `get` liest einen Datensatz, `after: next` lädt die nächste Seite. Ohne `ifRevision` sind put/delete unbedingt; `null` verlangt einen fehlenden Schlüssel, eine Revisionszeichenfolge exakte Übereinstimmung. Bei Konflikt kommen `ok:false`, `error:"store-conflict"` und der aktuelle `record` zurück. So überschreibt eine verspätete automatische Antwort keine Benutzerrückmeldung. `v.context.revision` ist eine opake Konfigurationsmarke, die eine Regel in ihre Version aufnehmen kann. Das Framework gibt keine Cache-Regel vor.
+Ein Datensatz hat `{value, revision, version, updatedAt}`. Die opake revision ändert sich bei echtem Schreiben; `version` sind vom Aufrufer verwaltete Metadaten. `list` gibt Header ohne Werte zurück; `get` liest einen Datensatz, `after: next` lädt die nächste Seite. Ohne `put`/`delete`, `ifRevision` sind put/delete unbedingt; `null` verlangt einen fehlenden Schlüssel, eine Revisionszeichenfolge exakte Übereinstimmung. Bei Konflikt kommen `ok:false`, `error:"store-conflict"` und der aktuelle `record` zurück. So überschreibt eine verspätete automatische Antwort keine Benutzerrückmeldung. `v.context.revision` ist eine opake Konfigurationsmarke, die eine Regel in ihre Version aufnehmen kann. Das Framework gibt keine Cache-Regel vor.
 
 Grenzen: Schlüssel 1–2048 Zeichen, Version ≤128, JSON-Wert ≤64KiB, Tiefe ≤32, 10000 Schlüssel je Gruppe, gesamtes Dokument 16MiB. `list` höchstens100 Header und96KiB je Seite. Maximal32 Anfragen je Gruppe und128 Starts pro Sekunde insgesamt; Überlast meldet einmal pro Gruppe/Sekunde `store-busy` und verwirft weitere Anfragen. Speicherfehler liefern `ok:false`; zukünftige/fehlerhafte Dokumente bleiben erhalten und melden `store-unavailable`. Keine automatische Wiederholung oder Bereinigung; Fristen mit ticks setzen.
 
@@ -168,7 +169,10 @@ Steam wird blockiert, außer während einer fünfminütigen Pause, ausgelöst du
 
 Jede benutzerdefinierte Gruppe wählt unter **AI calls** eine Verbindung/ein Modell und Reasoning effort. Mac- und Browserregeln verwenden dieselbe API. Browseranfragen benötigen ein verbundenes Mac Vault; Anbieterdaten bleiben dort. Verknüpfte Gruppen teilen Auswahl und optionales Tageslimit. Leer bedeutet kein Gruppenlimit; Kontolimits gelten weiter. Das Limit gilt pro UTC-Tag, bleibt nach Neustart bestehen und zählt gesendete Versuche einschließlich Fehlern. Verknüpfen addiert bisherigen Verbrauch; Trennen behält ihn.
 
-`v.ai({ prompt, input? })` liefert sofort eine Request-ID. Innerhalb eines Handlers aufrufen, nicht bei der Registrierung. `input` kann jeder JSON-Wert sein; prompt und input sind je auf20KB begrenzt. Antworten kommen als `ai`-Events: `{requestId, ok, text, citations, error}`. Erfolgstext höchstens48KB; Zitate `{url,title}`. Bei Websuche sichtbare, anklickbare Quellenlinks beibehalten. Suche ist für das Modell immer verfügbar. Keine feste App-Frist, begrenzte Gleichzeitigkeit, kein Provider-Fallback und keine automatische Wiederholung. Antworten sind Daten und werden nicht als JavaScript ausgeführt; die Regel entscheidet über bestehende Aktionen.
+`v.ai({ prompt, input? })` liefert sofort eine Request-ID. Innerhalb eines Handlers aufrufen, nicht bei der Registrierung. `input` kann jeder JSON-Wert sein; prompt und input sind je auf20KB begrenzt. Antworten kommen als `ai`-Events: `{requestId, ok, text, citations,
+error}`. Erfolgstext höchstens48KB; Zitate `{url,title}`. Bei Websuche sichtbare, anklickbare Quellenlinks beibehalten. Suche ist für das Modell immer verfügbar. Keine feste App-Frist, begrenzte Gleichzeitigkeit, kein Provider-Fallback und keine automatische Wiederholung. Antworten sind Daten und werden nicht als JavaScript ausgeführt; die Regel entscheidet über bestehende Aktionen.
+
+Für ein Panel mit einer `ask`-Schaltfläche und einem `note`-Feld:
 
 ```javascript
 (on, v) => {

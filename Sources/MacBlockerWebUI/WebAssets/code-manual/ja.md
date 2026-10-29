@@ -47,12 +47,13 @@
 
 ## API
 
-- `on(type, handler)` → boolean。`handler(ev)`を登録します。複数ハンドラーは登録順に動きます。falseは引数不正かハンドラー上限を示します。`ev = { type: string, now: number, data }`、`now`はUnixミリ秒です。
+- `on(type, handler)` → boolean。`handler(ev)` を登録し、複数のハンドラーは登録順に実行されます。false は引数不正またはハンドラー上限を示します。`ev = { type: string, now: number, origin: "host" | "user" | "rule", data }`。`now` は Unix ミリ秒です。ネイティブパネル入力の origin は `origin: "user"`、`v.emit` の origin は `origin: "rule"` です。
 - `v.state`: イベントdispatch後に保存する変更可能なJSONオブジェクトです。既存stateを上書きせず、欠けたフィールドを初期化してください。オブジェクト以外/配列を代入すると`{}`に戻ります。シリアライズ不可/過大な更新は保存されません。
 - `v.log(...values)`: このグループのLogに追記します。実行と配信の失敗は、同じフィードに明示的なエラー項目として表示されます。Logs/Clearはグループごとに独立しています。読み込みエラーはRun状態にも表示されます。途中まで実行されたイベントは自動再実行されません。
 - `v.emit(type, data)`: 現在のイベント後に`data`のJSONコピーを送り、新しい`now`を付けてをグループのハンドラーにキューします。同期呼び出しではありません。
 - `v.panel(id, spec)`: グループの名前付きフローティングパネルを置き換えます。null `spec`で削除します。Panelsを参照してください。
 - `v.file(op, path, payload?)` → リクエストID文字列。Filesを参照してください。
+- `v.store(request)` → request ID 文字列。「グループレコード」を参照してください。
 - `v.block(appId, on)`: trueでアプリブロックを維持し、falseでこのグループのブロックを解除します。有効なグループ間でブロックは合成され、この呼び出しでは他グループの対象を解除できません。ブロックは通常終了を要求し、設定間隔で再試行します。プロセス起動を防いだり、アプリがQuitを受け入れる保証はありません。
 - `v.quit(appId)`: 同じ保護/再試行方針に従う通常終了要求一回。継続的なブロックではありません。
 - `v.open(appId)`: macOSにインストール済みアプリの起動を要求します。成功コールバックはありません。
@@ -139,7 +140,7 @@ file.data = { requestId: string, op: string, path: string, ok: boolean,
 | `{op:"list", prefix?, after?, limit?}` | ソート済み `entries` と `next` |
 | `{op:"clear", prefix?}` | `deleted` 件数 |
 
-レコードは `{value, revision, version, updatedAt}` です。不透明な `revision` は実際の書き込みで変わります。`version` は呼び出し側のメタデータです。`list` は値を含まないヘッダーを返します。1件の読み出しには `get`、次ページには `after: next` を使います。`ifRevision` 省略時の put/delete は無条件です。`null` はキーが存在しないこと、revision 文字列は完全一致を条件にします。不一致は `ok:false`、`error:"store-conflict"`、現在の `record` を返します。遅延した自動応答がユーザーのフィードバックを上書きするのを防げます。`v.context.revision` はルール設定の不透明なマーカーで、ルール独自のバージョンに含められます。フレームワークはキャッシュ方針を定めません。
+レコードは `{value, revision, version, updatedAt}` です。不透明な revision は実際の書き込みで変わります。`version` は呼び出し側のメタデータです。`list` は値を含まないヘッダーを返します。1件の読み出しには `get`、次ページには `after: next` を使います。`put`/`delete`, `ifRevision` 省略時の put/delete は無条件です。`null` はキーが存在しないこと、revision 文字列は完全一致を条件にします。不一致は `ok:false`、`error:"store-conflict"`、現在の `record` を返します。遅延した自動応答がユーザーのフィードバックを上書きするのを防げます。`v.context.revision` はルール設定の不透明なマーカーで、ルール独自のバージョンに含められます。フレームワークはキャッシュ方針を定めません。
 
 上限: キー1～2048文字、version ≤128、JSON値 ≤64KiB、深さ≤32、グループあたり10000キー、レコード文書全体16MiB。`list` は1ページあたり最大100ヘッダー、96KiB。グループあたり32要求、全体で毎秒128開始まで。過負荷時はグループごとに毎秒1回 `store-busy` を返し、残りを破棄します。ストレージエラーは `ok:false`。将来形式または不正な文書は保持して `store-unavailable` を報告します。自動再試行/削除はありません。期限には ticks を使います。
 
@@ -168,7 +169,10 @@ Snoozeまたはパネルボタンで起動する5分間の一時停止中を除�
 
 各 custom group は **AI calls** で接続/モデルと reasoning effort を選択します。Mac とブラウザーのルールは同じ API を使います。ブラウザー要求には Mac Vault 接続が必要で、プロバイダー認証情報はそこに保持されます。リンク済みグループは選択と任意の日次上限を共有します。空欄はグループ上限なしですが、アカウント制限は適用されます。上限は UTC 日で計算し、再起動後も維持、失敗を含む送信試行を数えます。Link は既存使用量を合算し、Unlink 後も過去分は保持されます。
 
-`v.ai({ prompt, input? })` は即時に request ID を返します。ルール登録時でなくハンドラー内で呼びます。`input` は任意の JSON 値で、prompt/input はそれぞれ20KBまでです。応答は `ai` イベント `{requestId, ok, text, citations, error}` で届きます。成功テキストは最大48KB、引用は `{url,title}`。Web 検索の回答を表示する際はソースリンクを見えるクリック可能な状態に保ちます。検索は常にモデルから利用可能です。アプリの固定期限はなく、並行処理は制限されます。プロバイダーフォールバックや自動再試行はありません。応答はデータであり JavaScript として実行されません。既存アクションを取るかはルールが決めます。
+`v.ai({ prompt, input? })` は即時に request ID を返します。ルール登録時でなくハンドラー内で呼びます。`input` は任意の JSON 値で、prompt/input はそれぞれ20KBまでです。応答は `ai` イベント `{requestId, ok, text, citations,
+error}` で届きます。成功テキストは最大48KB、引用は `{url,title}`。Web 検索の回答を表示する際はソースリンクを見えるクリック可能な状態に保ちます。検索は常にモデルから利用可能です。アプリの固定期限はなく、並行処理は制限されます。プロバイダーフォールバックや自動再試行はありません。応答はデータであり JavaScript として実行されません。既存アクションを取るかはルールが決めます。
+
+`ask` ボタンと `note` フィールドを持つパネルの例:
 
 ```javascript
 (on, v) => {

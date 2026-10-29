@@ -47,12 +47,13 @@
 
 ## API
 
-- `on(type, handler)` → 布尔值。注册 `handler(ev)`；多个处理器按注册顺序运行。返回 false 表示参数无效或处理器数量达到上限。`ev = { type: string, now: number, data }`；`now` 是 Unix 时间戳，单位为毫秒。
+- `on(type, handler)` → 布尔值。注册 `handler(ev)`；多个处理器按注册顺序运行。False 表示参数无效或处理器数量达到上限。`ev = { type: string, now: number, origin: "host" | "user" | "rule", data }`；`now` 是 Unix 毫秒。原生面板输入的 origin 为 `origin: "user"`；`v.emit` 的 origin 为 `origin: "rule"`。
 - `v.state`：可修改的 JSON 对象，在事件分发后持久保存。应初始化缺失字段，而不是覆盖已有状态。赋值为非对象或数组会将其重置为 `{}`；无法序列化或超过大小限制的更新不会保存。
 - `v.log(...values)`：追加到该组的日志。执行失败和事件送达失败会作为明确的错误条目显示在同一列表中。各组的日志和清除操作相互独立。加载错误也会显示在运行状态中；部分执行的事件不会自动重放。
 - `v.emit(type, data)`：将 `data` 的 JSON 副本排入队列，在当前事件之后交给该组的处理器，并生成新的 `now`；不是同步调用。
 - `v.panel(id, spec)`：替换该组指定名称的浮动面板；`spec` 为 null 时移除面板。详见“面板”。
 - `v.file(op, path, payload?)` → 请求 ID 字符串。详见“文件”。
+- `v.store(request)` → 请求 ID 字符串。参见组记录。
 - `v.block(appId, on)`：true 维持应用屏蔽，false 移除该组的屏蔽。所有已启用组的屏蔽共同生效；此调用不能解除另一个组的目标屏蔽。屏蔽会请求正常退出，并按设置中的间隔重试；它不会阻止进程启动，也不保证应用接受退出请求。
 - `v.quit(appId)`：一次正常退出请求，遵循相同的保护和重试策略；不持续屏蔽。
 - `v.open(appId)`：请求 macOS 打开已安装的应用；没有成功回调。
@@ -139,7 +140,7 @@ file.data = { requestId: string, op: string, path: string, ok: boolean,
 | `{op:"list", prefix?, after?, limit?}` | 排序后的 `entries` 和 `next` |
 | `{op:"clear", prefix?}` | `deleted` 数量 |
 
-每条记录为 `{value, revision, version, updatedAt}`。不透明的 `revision` 在实际写入时更改；`version` 是调用方管理的元数据。`list` 返回不含 value 的 header；用 `get` 读取一条记录，用 `after: next` 获取下一页。省略 `ifRevision` 时 put/delete 无条件执行；`null` 要求 key 不存在，revision 字符串要求完全匹配。不匹配时返回 `ok:false`、`error:"store-conflict"` 和当前 `record`，防止延迟的自动回复覆盖用户反馈。`v.context.revision` 是不透明的规则配置标记，规则可将其纳入自己的 version；框架不规定缓存策略。
+每条记录为 `{value, revision, version, updatedAt}`。不透明的 revision 在实际写入时更改；`version` 是调用方管理的元数据。`list` 返回不含 value 的 header；用 `get` 读取一条记录，用 `after: next` 获取下一页。省略 `put`/`delete`, `ifRevision` 时 put/delete 无条件执行；`null` 要求 key 不存在，revision 字符串要求完全匹配。不匹配时返回 `ok:false`、`error:"store-conflict"` 和当前 `record`，防止延迟的自动回复覆盖用户反馈。`v.context.revision` 是不透明的规则配置标记，规则可将其纳入自己的 version；框架不规定缓存策略。
 
 限制：key 为1–2048字符，version ≤128，JSON value ≤64KiB，深度≤32，每组10000个 key，整份记录文档16MiB。`list` 每页最多100个 header、96KiB。每组最多32个请求，总计每秒128个启动；过载时每组每秒报告一个 `store-busy`，其余请求丢弃。存储错误返回 `ok:false`；未来版本或格式错误文档会保留并报告 `store-unavailable`。没有自动重试或清理。用 ticks 设置期限。
 
@@ -168,7 +169,10 @@ file.data = { requestId: string, op: string, path: string, ok: boolean,
 
 每个 custom group 在 **AI calls** 中选择一个 connection/model 和 reasoning effort。Mac 与浏览器规则使用同一 API；浏览器请求需要连接 Mac Vault，提供商凭据保存在那里。链接组共享选择和可选的每日请求上限。留空表示组级不限额，账户限制仍适用。上限按 UTC 日计算，重启后保留，并统计已提交的尝试（包括失败）。Link 合并现有用量；unlink 保留之前的用量。
 
-`v.ai({ prompt, input? })` 立即返回 request ID。请在 handler 中调用，不要在注册规则时调用。`input` 可以是任意 JSON 值；prompt/input 各限20KB。回复通过 `ai` 事件到达：`{requestId, ok, text, citations, error}`。成功文本最多48KB；citations 是 `{url,title}`。展示网页搜索答案时保留可见、可点击的来源链接。模型始终可以使用搜索。没有固定的 app 截止时间，并发数受限；不会回退到其他提供商或自动重试。回复是数据，不会作为 JavaScript 执行；规则决定采取哪些现有操作。
+`v.ai({ prompt, input? })` 立即返回 request ID。请在 handler 中调用，不要在注册规则时调用。`input` 可以是任意 JSON 值；prompt/input 各限20KB。回复通过 `ai` 事件到达：`{requestId, ok, text, citations,
+error}`。成功文本最多48KB；citations 是 `{url,title}`。展示网页搜索答案时保留可见、可点击的来源链接。模型始终可以使用搜索。没有固定的 app 截止时间，并发数受限；不会回退到其他提供商或自动重试。回复是数据，不会作为 JavaScript 执行；规则决定采取哪些现有操作。
+
+包含 `ask` 按钮和 `note` 字段的面板示例：
 
 ```javascript
 (on, v) => {

@@ -47,12 +47,13 @@ Les objets nommés survivent à Exécuter et au redémarrage dans le champ rése
 
 ## API
 
-- `on(type, handler)` → booléen. Enregistre `handler(ev)` ; plusieurs gestionnaires s’exécutent dans l’ordre d’enregistrement. False signifie des arguments invalides ou une limite de gestionnaires atteinte. `ev = { type: string, now: number, data }` ; `now` est en millisecondes Unix.
+- `on(type, handler)` → booléen. Enregistre `handler(ev)` ; plusieurs handlers s’exécutent dans l’ordre d’enregistrement. False indique des arguments invalides ou la limite de handlers atteinte. `ev = { type: string, now: number, origin: "host" | "user" | "rule", data }` ; `now` est en millisecondes Unix. Une entrée de panneau natif a `origin: "user"` ; `v.emit` a `origin: "rule"`.
 - `v.state` : objet JSON modifiable, persisté après la distribution de l’événement. Initialisez les champs absents au lieu d’écraser l’état existant. Affecter une valeur non objet ou un tableau le réinitialise à `{}` ; les mises à jour non sérialisables/trop grandes ne sont pas persistées.
 - `v.log(...values)` : ajoute des entrées au Journal de ce groupe. Les échecs d’exécution et de transmission apparaissent sous forme d’entrées d’erreur explicites dans le même flux. Les journaux/Effacer sont indépendants par groupe. Les erreurs de chargement apparaissent aussi dans l’état d’exécution ; les événements partiellement exécutés ne sont pas rejoués automatiquement.
 - `v.emit(type, data)` : met en file une copie JSON de `data` pour les gestionnaires de ce groupe après l’événement courant, avec un nouveau `now` ; ce n’est pas un appel synchrone.
 - `v.panel(id, spec)` : remplace le panneau flottant nommé de ce groupe ; null `spec` le retire. Voir Panneaux.
 - `v.file(op, path, payload?)` → chaîne ID de requête. Voir Fichiers.
+- `v.store(request)` → chaîne d’identifiant de requête. Voir Enregistrements du groupe.
 - `v.block(appId, on)` : true maintient un blocage d’application, false retire celui de ce groupe. Les blocages se combinent entre groupes actifs ; cet appel ne peut pas lever une cible d’un autre groupe. Le blocage demande une fermeture normale et réessaie selon l’intervalle des Paramètres ; il n’empêche pas le lancement du processus et ne garantit pas que l’application accepte Quitter.
 - `v.quit(appId)` : une demande de fermeture normale, soumise à la même politique de protection/nouvelles tentatives ; aucun blocage continu.
 - `v.open(appId)` : demande à macOS d’ouvrir une application installée ; aucun rappel de réussite.
@@ -139,7 +140,7 @@ Les champs de résultat inutilisés sont null ; la réussite a une erreur vide. 
 | `{op:"list", prefix?, after?, limit?}` | `entries` triées et `next` |
 | `{op:"clear", prefix?}` | nombre `deleted` |
 
-Chaque enregistrement contient `{value, revision, version, updatedAt}`. `revision` est opaque et change lors d’une vraie écriture ; `version` est une métadonnée de l’appelant. `list` renvoie les en-têtes sans valeurs ; `get` lit un enregistrement et `after: next` demande la page suivante. Sans `ifRevision`, put/delete sont inconditionnels ; `null` exige une clé absente, une chaîne exige une correspondance exacte. En cas de conflit, retour `ok:false`, `error:"store-conflict"` et `record` courant. Cela évite qu’une réponse automatique tardive remplace un retour utilisateur. `v.context.revision` est un marqueur opaque de configuration que la règle peut inclure à sa version ; le framework n’impose pas de politique de cache.
+Chaque enregistrement contient `{value, revision, version, updatedAt}`. revision est opaque et change lors d’une vraie écriture ; `version` est une métadonnée de l’appelant. `list` renvoie les en-têtes sans valeurs ; `get` lit un enregistrement et `after: next` demande la page suivante. Sans `put`/`delete`, `ifRevision`, put/delete sont inconditionnels ; `null` exige une clé absente, une chaîne exige une correspondance exacte. En cas de conflit, retour `ok:false`, `error:"store-conflict"` et `record` courant. Cela évite qu’une réponse automatique tardive remplace un retour utilisateur. `v.context.revision` est un marqueur opaque de configuration que la règle peut inclure à sa version ; le framework n’impose pas de politique de cache.
 
 Limites : clé 1–2048 caractères, version ≤128, valeur JSON ≤64KiB, profondeur ≤32, 10000 clés par groupe et document entier de16MiB. `list` renvoie au plus100 en-têtes et96KiB par page. Maximum32 requêtes par groupe et128 démarrages par seconde au total ; en surcharge, une erreur `store-busy` par groupe/seconde puis les suivantes sont abandonnées. Les erreurs de stockage renvoient `ok:false` ; un document futur ou mal formé est conservé et signale `store-unavailable`. Pas de nouvel essai ni éviction automatiques ; utiliser ticks pour les délais.
 
@@ -168,7 +169,10 @@ Steam est bloqué sauf pendant une pause de cinq minutes déclenchée par Pause 
 
 Chaque groupe personnalisé choisit une connexion/un modèle et un effort de raisonnement dans **AI calls**. Mac et navigateur utilisent la même API ; les requêtes navigateur nécessitent Mac Vault connecté et les identifiants du fournisseur y restent. Les groupes liés partagent le choix et une limite quotidienne facultative. Vide signifie aucune limite de groupe ; les limites du compte s’appliquent. La limite suit le jour UTC, persiste après redémarrage et compte toutes les tentatives soumises, y compris échouées. Le lien combine l’usage existant ; la dissociation conserve l’usage antérieur.
 
-`v.ai({ prompt, input? })` renvoie immédiatement un identifiant de requête. Appelez-la dans un handler, pas lors de l’enregistrement de la règle. `input` accepte toute valeur JSON ; chaque prompt/input est limité à20KB. Les réponses arrivent comme événements `ai` : `{requestId, ok, text, citations, error}`. Texte réussi jusqu’à48KB ; citations `{url,title}`. Gardez les liens de sources visibles et cliquables pour les réponses de recherche Web. La recherche est toujours disponible au modèle. Aucun délai fixe de l’app ; concurrence bornée ; aucun repli de fournisseur ni nouvel essai automatique. Les réponses sont des données, jamais exécutées comme JavaScript ; la règle décide des actions existantes.
+`v.ai({ prompt, input? })` renvoie immédiatement un identifiant de requête. Appelez-la dans un handler, pas lors de l’enregistrement de la règle. `input` accepte toute valeur JSON ; chaque prompt/input est limité à20KB. Les réponses arrivent comme événements `ai` : `{requestId, ok, text, citations,
+error}`. Texte réussi jusqu’à48KB ; citations `{url,title}`. Gardez les liens de sources visibles et cliquables pour les réponses de recherche Web. La recherche est toujours disponible au modèle. Aucun délai fixe de l’app ; concurrence bornée ; aucun repli de fournisseur ni nouvel essai automatique. Les réponses sont des données, jamais exécutées comme JavaScript ; la règle décide des actions existantes.
+
+Pour un panneau avec un bouton `ask` et un champ `note` :
 
 ```javascript
 (on, v) => {

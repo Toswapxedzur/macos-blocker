@@ -47,12 +47,13 @@ Các ID đối tượng giống nhau trong nhóm tùy chỉnh được liên k�
 
 ## API
 
-- `on(type, handler)` → boolean. Đăng ký `handler(ev)`; nhiều handlers chạy theo thứ tự đăng ký. False nghĩa là arguments không hợp lệ hoặc chạm giới hạn handlers. `ev = { type: string, now: number, data }`; `now` là Unix milliseconds.
+- `on(type, handler)` → boolean. Đăng ký `handler(ev)`; nhiều handler chạy theo thứ tự đăng ký. False nghĩa là đối số không hợp lệ hoặc đã đạt giới hạn handler. `ev = { type: string, now: number, origin: "host" | "user" | "rule", data }`; `now` là mili giây Unix. Đầu vào bảng điều khiển native có `origin: "user"`; `v.emit` có `origin: "rule"`.
 - `v.state`: JSON object thay đổi được, lưu sau event dispatch. Khởi tạo fields thiếu thay vì ghi đè state hiện có. Gán non-object hoặc array reset thành `{}`; cập nhật không serialize được/quá lớn sẽ không lưu.
 - `v.log(...values)`: thêm vào Log của nhóm này. Lỗi thực thi và chuyển giao xuất hiện dưới dạng mục lỗi rõ ràng trong cùng bảng tin. Logs/Clear độc lập theo nhóm. Lỗi tải cũng hiện trong trạng thái Run; sự kiện đã thực thi một phần không tự động được chạy lại.
 - `v.emit(type, data)`: xếp hàng bản sao JSON của `data` cho handlers nhóm này sau event hiện tại, cùng `now` mới; không phải lời gọi đồng bộ.
 - `v.panel(id, spec)`: thay floating panel có tên của nhóm này; `spec` null sẽ xóa. Xem Panels.
 - `v.file(op, path, payload?)` → request ID string. Xem Files.
+- `v.store(request)` → chuỗi request ID. Xem Bản ghi nhóm.
 - `v.block(appId, on)`: true duy trì chặn ứng dụng, false gỡ chặn của nhóm này. Chặn của các nhóm đang bật được kết hợp; lời gọi này không thể gỡ mục tiêu của nhóm khác. Việc chặn gửi yêu cầu thoát bình thường và thử lại theo interval trong Settings; không ngăn process khởi chạy và không đảm bảo ứng dụng chấp nhận Quit.
 - `v.quit(appId)`: gửi một yêu cầu thoát bình thường, theo cùng chính sách bảo vệ/thử lại; không chặn liên tục.
 - `v.open(appId)`: yêu cầu macOS mở ứng dụng đã cài; không có callback thành công.
@@ -139,7 +140,7 @@ result fields không dùng là null; thành công có error rỗng. Lỗi gồm 
 | `{op:"list", prefix?, after?, limit?}` | `entries` đã sắp xếp và `next` |
 | `{op:"clear", prefix?}` | số `deleted` |
 
-Mỗi record là `{value, revision, version, updatedAt}`. `revision` opaque đổi khi ghi thực sự; `version` là metadata của bên gọi. `list` trả header không kèm value; dùng `get` để đọc, `after: next` để lấy trang tiếp. Bỏ `ifRevision` nghĩa là put/delete vô điều kiện; `null` yêu cầu key chưa tồn tại, chuỗi revision yêu cầu trùng khớp chính xác. Sai lệch trả `ok:false`, `error:"store-conflict"` và `record` hiện tại để phản hồi tự động đến muộn không ghi đè ý kiến người dùng. `v.context.revision` là dấu cấu hình opaque mà quy tắc có thể đưa vào version; framework không áp đặt chính sách cache.
+Mỗi record là `{value, revision, version, updatedAt}`. revision opaque đổi khi ghi thực sự; `version` là metadata của bên gọi. `list` trả header không kèm value; dùng `get` để đọc, `after: next` để lấy trang tiếp. Bỏ `put`/`delete`, `ifRevision` nghĩa là put/delete vô điều kiện; `null` yêu cầu key chưa tồn tại, chuỗi revision yêu cầu trùng khớp chính xác. Sai lệch trả `ok:false`, `error:"store-conflict"` và `record` hiện tại để phản hồi tự động đến muộn không ghi đè ý kiến người dùng. `v.context.revision` là dấu cấu hình opaque mà quy tắc có thể đưa vào version; framework không áp đặt chính sách cache.
 
 Giới hạn: key 1–2048 ký tự, version ≤128, JSON value ≤64KiB, depth ≤32, 10000 key mỗi nhóm, toàn bộ tài liệu16MiB. `list` trả tối đa100 header và96KiB mỗi trang. Tối đa32 request mỗi nhóm và128 request khởi chạy mỗi giây tổng cộng; quá tải báo một `store-busy` mỗi nhóm mỗi giây và bỏ các yêu cầu dư. Lỗi lưu trữ trả `ok:false`; tài liệu phiên bản tương lai hoặc lỗi định dạng được giữ lại và báo `store-unavailable`. Không tự retry/evict. Dùng ticks đặt deadline.
 
@@ -168,7 +169,10 @@ Steam bị chặn trừ khoảng tạm dừng năm phút được kích hoạt b
 
 Mỗi custom group chọn một connection/model và reasoning effort trong **AI calls**. Quy tắc Mac và trình duyệt dùng cùng API; request trình duyệt cần Mac Vault kết nối, thông tin nhà cung cấp được giữ tại đó. Nhóm liên kết chia sẻ lựa chọn và daily cap tùy chọn. Để trống nghĩa là không giới hạn ở nhóm; giới hạn tài khoản vẫn áp dụng. Cap theo ngày UTC, tồn tại qua khởi động lại và đếm mọi lần gửi kể cả lỗi. Link cộng usage hiện có; unlink giữ usage trước đó.
 
-`v.ai({ prompt, input? })` trả request ID ngay. Gọi bên trong handler, không gọi lúc đăng ký quy tắc. `input` nhận mọi giá trị JSON; prompt/input tối đa20KB mỗi phần. Phản hồi đến trong event `ai`: `{requestId, ok, text, citations, error}`. Văn bản thành công tối đa48KB; citation `{url,title}`. Giữ liên kết nguồn hiển thị và có thể nhấp khi trình bày câu trả lời từ web search. Search luôn sẵn có cho mô hình. Không có deadline cố định của app; concurrency có giới hạn; không fallback nhà cung cấp hoặc tự retry. Phản hồi là dữ liệu, không thực thi như JavaScript; quy tắc quyết định có dùng hành động hiện có nào.
+`v.ai({ prompt, input? })` trả request ID ngay. Gọi bên trong handler, không gọi lúc đăng ký quy tắc. `input` nhận mọi giá trị JSON; prompt/input tối đa20KB mỗi phần. Phản hồi đến trong event `ai`: `{requestId, ok, text, citations,
+error}`. Văn bản thành công tối đa48KB; citation `{url,title}`. Giữ liên kết nguồn hiển thị và có thể nhấp khi trình bày câu trả lời từ web search. Search luôn sẵn có cho mô hình. Không có deadline cố định của app; concurrency có giới hạn; không fallback nhà cung cấp hoặc tự retry. Phản hồi là dữ liệu, không thực thi như JavaScript; quy tắc quyết định có dùng hành động hiện có nào.
+
+Ví dụ bảng có nút `ask` và trường `note`:
 
 ```javascript
 (on, v) => {
