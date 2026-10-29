@@ -71,6 +71,9 @@ snooze: {}
 panel: { panelId: string, controlId: string, eventName: string,
          value: string, values: { [controlId: string]: string } }
 file: see Files
+record: { requestId: string, ok: boolean, op?: string, key?: string,
+          record?: Record | null, entries?: Header[], next?: string | null,
+          deleted?: number, error?: string }
 App = { appId: string, name: string }
 ```
 
@@ -144,3 +147,45 @@ Steam wird blockiert, außer während einer fünfminütigen Pause, ausgelöst du
   on("tick", ev => v.block("com.valvesoftware.steam", ev.now >= v.state.pauseUntil));
 }
 ```
+
+## Gruppen-Datensätze
+
+`v.store(request)` startet in einem Handler einen asynchronen JSON-Datensatzvorgang. Datensätze sind gruppenintern, bleiben über Run und Neustart erhalten und werden mit der Gruppe gelöscht. Verknüpfte Gruppen haben getrennte Datensätze. Schlüssel, Werte, Versionen, Cache-Invalidierung und Vorrang von Rückmeldungen bestimmt die Regel. Mac- und Browserregeln verwenden dieselbe API, aber getrennte Speicher je App/Browser.
+
+| Anfrage | Ergebnis |
+|---|---|
+| `{op:"get", key}` | `record` oder `null` |
+| `{op:"put", key, value, version?, ifRevision?}` | gespeicherter `record` |
+| `{op:"delete", key, ifRevision?}` | `record: null` |
+| `{op:"list", prefix?, after?, limit?}` | sortierte `entries` und `next` |
+| `{op:"clear", prefix?}` | Anzahl `deleted` |
+
+Ein Datensatz hat `{value, revision, version, updatedAt}`. Die opake `revision` ändert sich bei echtem Schreiben; `version` sind vom Aufrufer verwaltete Metadaten. `list` gibt Header ohne Werte zurück; `get` liest einen Datensatz, `after: next` lädt die nächste Seite. Ohne `ifRevision` sind put/delete unbedingt; `null` verlangt einen fehlenden Schlüssel, eine Revisionszeichenfolge exakte Übereinstimmung. Bei Konflikt kommen `ok:false`, `error:"store-conflict"` und der aktuelle `record` zurück. So überschreibt eine verspätete automatische Antwort keine Benutzerrückmeldung. `v.context.revision` ist eine opake Konfigurationsmarke, die eine Regel in ihre Version aufnehmen kann. Das Framework gibt keine Cache-Regel vor.
+
+Grenzen: Schlüssel 1–2048 Zeichen, Version ≤128, JSON-Wert ≤64KiB, Tiefe ≤32, 10000 Schlüssel je Gruppe, gesamtes Dokument 16MiB. `list` höchstens100 Header und96KiB je Seite. Maximal32 Anfragen je Gruppe und128 Starts pro Sekunde insgesamt; Überlast meldet einmal pro Gruppe/Sekunde `store-busy` und verwirft weitere Anfragen. Speicherfehler liefern `ok:false`; zukünftige/fehlerhafte Dokumente bleiben erhalten und melden `store-unavailable`. Keine automatische Wiederholung oder Bereinigung; Fristen mit ticks setzen.
+
+## KI-Aufrufe aus einer laufenden Regel
+
+Jede benutzerdefinierte Gruppe wählt unter **AI calls** eine Verbindung/ein Modell und Reasoning effort. Mac- und Browserregeln verwenden dieselbe API. Browseranfragen benötigen ein verbundenes Mac Vault; Anbieterdaten bleiben dort. Verknüpfte Gruppen teilen Auswahl und optionales Tageslimit. Leer bedeutet kein Gruppenlimit; Kontolimits gelten weiter. Das Limit gilt pro UTC-Tag, bleibt nach Neustart bestehen und zählt gesendete Versuche einschließlich Fehlern. Verknüpfen addiert bisherigen Verbrauch; Trennen behält ihn.
+
+`v.ai({ prompt, input? })` liefert sofort eine Request-ID. Innerhalb eines Handlers aufrufen, nicht bei der Registrierung. `input` kann jeder JSON-Wert sein; prompt und input sind je auf20KB begrenzt. Antworten kommen als `ai`-Events: `{requestId, ok, text, citations, error}`. Erfolgstext höchstens48KB; Zitate `{url,title}`. Bei Websuche sichtbare, anklickbare Quellenlinks beibehalten. Suche ist für das Modell immer verfügbar. Keine feste App-Frist, begrenzte Gleichzeitigkeit, kein Provider-Fallback und keine automatische Wiederholung. Antworten sind Daten und werden nicht als JavaScript ausgeführt; die Regel entscheidet über bestehende Aktionen.
+
+```javascript
+(on, v) => {
+  let pending = null;
+  on("panel", ({ data }) => {
+    if (data.controlId !== "ask" || pending) return;
+    pending = v.ai({ prompt: "Summarize this text.", input: data.values?.note ?? "" });
+  });
+  on("ai", ({ data }) => {
+    if (data.requestId !== pending) return;
+    pending = null;
+    if (!data.ok) { v.log("AI request failed:", data.error); return; }
+    v.log(data.text, data.citations);
+  });
+}
+```
+
+Offene Aufrufe werden nach Neustart nicht wiederholt. Run, Deaktivieren/Aktivieren und Löschen verwerfen alte Antworten; ein getrennter Browser meldet `ai-unavailable`. Weitere Fehler: `ai-not-configured`, `ai-invalid-input`, `ai-busy`, `ai-daily-limit`, `ai-request-failed`, `ai-usage-storage-unavailable`. Fehlgeschlagene Aufrufe überschreiben kein vorheriges, von der Regel behaltenes Ergebnis. Zustandslimit bleibt64KB.
+
+Anmeldedatenfreie Optionen: Mac `rule_ai_models`, Browser `settings-rule-ai-models`. `ruleAI` über den vorhandenen set-group-Pfad konfigurieren. Felder: `providerModel`, `accountID`, `reasoningEffort` (`default`, `low`, `medium`, `high`), `dailyRequestLimit` (null oder1–100000). Eine zurückgegebene Auswahl nutzen; keinen Schlüssel oder Anbieter-URL in den Regelquelltext schreiben.

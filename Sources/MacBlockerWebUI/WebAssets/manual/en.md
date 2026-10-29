@@ -7,7 +7,7 @@ Mac Vault has three pages: **Vault** blocks native apps, **Content tagging** tag
 1. In **Vault**, add a blocking group and an Apps target, then select apps with the + picker.
 2. Choose the group's blocking behavior and enable it.
 3. In **Content tagging**, create a group, choose its platforms, and add tags with descriptions.
-4. Open Settings → Connections and choose ChatGPT subscription, OpenAI API, Gemini API or Grok API. Connect the account or enter its key and fetch its models, then select a connection/model in the group. Enable tagging and resume the group.
+4. Open Settings → AI connections and choose ChatGPT subscription, OpenAI API, Gemini API or Grok API. Connect the account or enter its key and fetch its models, then select a connection/model in the group. Enable tagging and resume the group.
 5. Open supported content in the connected browser. Configure a tag filter in a browser blocking group if you want the tags to control blocking.
 
 ## Blocking groups
@@ -72,13 +72,13 @@ Enable tagging in Settings. Use each group's **Pause tagging / Resume tagging** 
 Create tags, describe their meanings, and set or remove their parents in the tag tree. Drag a tag to move its branch. Clear descriptions help the model distinguish similar tags. Each group's settings are independent.
 
 - **Minimum confidence** sets the evidence grade needed for each predicted tag, from 1 to 5. New groups start at 4 (strong support). There is no target tag count; an item can receive no tags.
-- **Additional instructions** records this group's tagging preferences.
+- **Tagging instructions** records this group's tagging preferences.
 
 Routine Content tagging edits save automatically. Each group uses one explicitly selected connection, model and reasoning effort.
 
-### Connections
+### AI connections
 
-Settings has four choices: **ChatGPT subscription**, **OpenAI API**, **Gemini API**, and **Grok API**. ChatGPT subscription uses Vault’s own sign-in and your eligible plan. API keys use the selected provider’s API billing and limits. Select the provider and enter its key directly below the shared dropdown. Key edits save automatically; clearing the field clears the key. Then choose **Fetch model list**, and select the model in your Content tagging group. Fetching models does not choose one for you.
+Settings has four choices: **ChatGPT subscription**, **OpenAI API**, **Gemini API**, and **Grok API**. ChatGPT subscription uses Vault’s own sign-in and your eligible plan. API keys use the selected provider’s API billing and limits. Select the provider and enter its key directly below the shared dropdown. Key edits save automatically; clearing the field clears the key. Then choose **Fetch model list**, and select the model in your Content tagging or custom-rule group. Fetching models does not choose one for you.
 
 **Reasoning effort** controls how much the selected model thinks: Model default, Low, Medium or High where supported. New selections start at Medium; existing choices stay as saved. Higher effort can add time and token usage. Web search is always enabled for tagging; the model decides when it needs to search. Choose a model that supports search and structured tagging. Failed or unavailable requests keep valid cached results; new items remain unresolved until you choose **Retry cloud classification**. Vault does not switch providers automatically. Each connection has its own retry interval and attempt limit.
 
@@ -108,4 +108,4 @@ Choose the interface language in Settings. Field explanations are available thro
 
 Routine Vault and Content tagging edits save automatically. Activity group editing uses **Save**. Adding, deleting, connection tests and model-list fetching remain explicit actions.
 
-If tags are missing, check the browser connection, global tagging switch, group pause state, platform recording, selected connection/model and its credentials. If research does not run, check consent, group choice, provider credentials, research model, and the research status. If a linked group cannot be edited, reconnect its programs or unfreeze it as indicated.
+If tags are missing, check the browser connection, global tagging switch, group pause state, platform recording, selected connection/model and its credentials. For failed AI requests, check the selected connection and model, credentials, provider usage limits, and the group Log. If a linked group cannot be edited, reconnect its programs or unfreeze it as indicated.

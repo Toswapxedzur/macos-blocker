@@ -1,139 +1,77 @@
-# Mac Vault Benutzerhandbuch
+# Mac Vault-Benutzerhandbuch
 
-Mac Vault hat drei Seiten: **Vault** blockiert native Apps, **Klassifizierung** weist unterstützten Browserinhalten Tags zu und **Aktivität** zeigt aufgezeichnete Nutzung. Die Browsererweiterung erfasst unterstützte Inhalte und setzt die Browserblockierung durch. Installieren und verbinden Sie sie in dem Browser, den Sie verwenden.
+Mac Vault hat drei Seiten: **Vault** blockiert native Apps, **Content tagging** versieht unterstützte Browserinhalte mit Tags und **Activity** zeigt aufgezeichnete Nutzung. Die Browsererweiterung sammelt unterstützte Inhalte und setzt Browserblockierungen um. Installieren und verbinden Sie sie in Ihrem Browser.
 
 ## Schnellstart
 
-1. Fügen Sie in **Vault** eine Blockierungsgruppe und ein Apps-Ziel hinzu und wählen Sie mit der + Auswahl Apps aus.
-2. Wählen Sie das Blockierungsverhalten der Gruppe und aktivieren Sie sie.
-3. Erstellen Sie in **Klassifizierung** eine Gruppe, wählen Sie ihre Plattformen und fügen Sie Tags mit Beschreibungen hinzu.
-4. Wählen Sie eine lokale Modellstufe und laden Sie sie bei Bedarf herunter. Aktivieren Sie die Tag-Zuweisung in den Einstellungen und setzen Sie die Gruppe fort.
-5. Öffnen Sie unterstützte Inhalte im verbundenen Browser. Konfigurieren Sie einen Tag-Filter in einer Browser-Blockierungsgruppe, wenn die Tags die Blockierung steuern sollen.
+1. Fügen Sie in **Vault** eine Blocking-Gruppe und ein Apps-Ziel hinzu und wählen Sie Apps mit dem + Auswahlfeld.
+2. Wählen Sie das Blockierverhalten und aktivieren Sie die Gruppe.
+3. Erstellen Sie unter **Content tagging** eine Gruppe, wählen Sie Plattformen und fügen Sie Tags mit Beschreibungen hinzu.
+4. ## Einstellungen
 
-## Blockierungsgruppen
+Wählen Sie unter Einstellungen → **AI connections** ChatGPT subscription, OpenAI API, Gemini API oder Grok API. Verbinden Sie das Konto oder geben Sie den Schlüssel ein und rufen Sie die Modelle ab. Wählen Sie dann Verbindung/Modell in der Gruppe, aktivieren Sie Tagging und setzen Sie die Gruppe fort.
+5. Öffnen Sie unterstützte Inhalte im verbundenen Browser. Ein Tag-Filter in einer Browser-Blocking-Gruppe kann die Blockierung anhand der Tags steuern.
 
-Eine **Blockierungsgruppe** wendet eine Blockierungsrichtlinie an. Eine **Klassifizierungsgruppe** weist Inhalten Tags zu; sie blockiert selbst nichts.
+## Blocking-Gruppen
 
-1. Fügen Sie eine Blockierungsgruppe hinzu und geben Sie ihr einen Namen.
-2. Wählen Sie unter **Gilt für** die Ziele aus.
-3. Legen Sie fest, wann die Blockierung gilt, und stellen Sie gegebenenfalls einen Zeitplan oder ein Zeitkontingent ein.
-4. Aktivieren Sie die Gruppe. Ihre Ziele verwenden die gemeinsame Richtlinie der Gruppe.
-
-Gewöhnliche Änderungen werden automatisch gespeichert. Eine Fehlermeldung bedeutet, dass die Änderung nicht angenommen wurde; korrigieren Sie das Feld und versuchen Sie es erneut. Deaktivieren Sie eine Gruppe, um ihre Richtlinie auszusetzen und ihre Konfiguration zu behalten. **Gruppe löschen** entfernt sie. Ziehen Sie Gruppen, um ihre Reihenfolge zu ändern. Mehrere Gruppen können für dasselbe Ziel gelten; das Aufschieben einer Gruppe hebt die Blockierung einer anderen nicht auf.
-
-**Exportieren** kopiert eine Gruppenkonfiguration. **Importieren** ersetzt nach Bestätigung die Konfiguration der ausgewählten Gruppe.
+Eine **Blocking-Gruppe** setzt eine Blockierregel um. Eine **Content-tagging-Gruppe** weist Inhalte Tags zu und blockiert selbst nichts. Geben Sie der Gruppe einen Namen, wählen Sie Ziele unter **Applies to**, legen Sie Zeitplan oder Zeitkontingent fest und aktivieren Sie sie. Übliche Änderungen werden automatisch gespeichert. Ein Fehler bedeutet, dass die Änderung nicht angenommen wurde. Deaktivieren stoppt die Regel und behält die Konfiguration; **Delete group** löscht sie. Ziehen Sie Gruppen zum Sortieren. Mehrere Gruppen können dasselbe Ziel betreffen; Snooze einer Gruppe hebt eine andere Sperre nicht auf. **Export** kopiert die Konfiguration; **Import** ersetzt nach Bestätigung die ausgewählte Gruppe.
 
 ### Zeitkontingent und Zeitplan
 
-**Sofort blockieren** gilt immer dann, wenn die aktivierte Gruppe zutrifft und ihr Zeitplan aktiv ist. **Nach Verbrauch des Zeitkontingents blockieren** erlaubt die betreffende Nutzung, bis das Kontingent aufgebraucht ist.
+**Block immediately** blockiert, wenn Gruppe und Zeitplan zutreffen. **Block when the time allowance is used** lässt Nutzung bis zum Verbrauch des Kontingents zu. Stellen Sie Kontingent in Minuten und Zurücksetzen in Stunden ein. Ein rollierendes Limit zählt im vorherigen Zeitfenster. Wählen Sie Wochentage und optionale lokale Zeitfenster, je Zeile eines, etwa **09:00-12:00**; eine leere Liste gilt den ganzen Tag. Übernachtzeiten auf Tage aufteilen.
 
-Stellen Sie das Kontingent in Minuten und das Rücksetzintervall in Stunden ein. Ein gleitendes Limit zählt die Nutzung im vorangegangenen Zeitfenster. Das Zurücksetzen um Mitternacht beginnt zur lokalen Mitternacht einen neuen Zeitraum, auch bei einem gleitenden Limit.
+**Pause blocking** setzt die Gruppenregel für die Pausendauer aus. **Add to the time allowance** fügt einer zeitbegrenzten Gruppe nutzbare Minuten hinzu; nur verbrauchte Zusatzzeit zählt als Snooze. Nicht genutzte Zeit verfällt beim nächsten Reset. **Activation delay**, **Cooldown** und **Required confirmations** bestimmen Verzögerung, Wartezeit und Anzahl der Bestätigungen. ### Freeze und PIN
 
-Wählen Sie aktive Wochentage und optional lokale Zeitfenster, eines pro Zeile, beispielsweise **09:00-12:00**. Eine leere Fensterliste gilt während der gesamten ausgewählten Tage. Ein Fenster muss am selben Tag später enden als beginnen; teilen Sie einen Zeitplan über Nacht auf getrennte Tage auf.
+**Freeze** verhindert normale Änderungen. Zum Auftauen sind zehn Bestätigungen im Abstand von fünf Sekunden sowie die Wartezeit und eine sechsstellige PIN erforderlich. **Wait before unfreezing** erlaubt 0–72 Stunden; 0 bedeutet keine Wartezeit. Im Freeze kann die Wartezeit verlängert und eine PIN ergänzt, aber die Bedingungen können nicht gelockert werden. Löschen beachtet ebenfalls Wartezeit und PIN.
 
-### Aufschieben
+### Snooze
 
-Konfigurieren Sie das Aufschieben für jede Blockierungsgruppe. **Blockierung pausieren** setzt die Richtlinie dieser Gruppe für die Pausendauer aus. **Zum Zeitkontingent hinzufügen** ergänzt nutzbare Minuten für eine zeitlich begrenzte Gruppe. Nur verbrauchtes Zusatzkontingent zählt als aufgeschobene Zeit. Ungenutztes Zusatzkontingent verfällt beim nächsten Zurücksetzen; bei einem gleitenden Limit nach einem Zeitfenster oder, falls aktiviert, bereits um Mitternacht.
+Konfigurieren Sie Snooze pro Blocking-Gruppe. **Pause blocking** setzt die Regel für die Pausendauer aus. **Add to the time allowance** fügt einer zeitbegrenzten Gruppe nutzbare Minuten hinzu. Nur verbrauchte Zusatzzeit zählt als Snooze; nicht verbrauchte verfällt beim nächsten Reset. Bei rollierendem Limit verfällt sie nach einem Fenster oder bei aktiviertem Mitternachtsreset früher. **Activation delay** verzögert Snooze, während die Blockierung weiterläuft. **Cooldown** ist die Wartezeit nach dem Snooze. **Required confirmations** legt die Zahl der Bestätigungsschritte fest. Snooze ist bei eingefrorener Gruppe nur verfügbar, wenn es vor dem Freeze erlaubt wurde.
 
-**Aktivierungsverzögerung** verzögert das Aufschieben, während die Blockierung weiter gilt. **Wartezeit** ist die Zeit nach dem Ende des Aufschiebens bis zur nächsten Anfrage. **Erforderliche Bestätigungen** legt die Anzahl der Bestätigungsschritte fest. Für eine eingefrorene Gruppe ist Aufschieben nur verfügbar, wenn es vor dem Einfrieren erlaubt wurde.
+### Freeze und PIN
 
-### Einfrieren und PIN
-
-**Einfrieren** verhindert gewöhnliche Änderungen. Zum Auftauen sind zehn Bestätigungen im Abstand von fünf Sekunden sowie eine gegebenenfalls konfigurierte Wartezeit und sechsstellige PIN erforderlich. **Wartezeit vor dem Auftauen** akzeptiert 0–72 Stunden; 0 fügt keine Wartezeit hinzu.
-
-Im eingefrorenen Zustand kann die Wartezeit verlängert und eine PIN hinzugefügt werden, sofern noch keine vorhanden ist. Diese Bedingungen lassen sich erst nach dem Auftauen der Gruppe abschwächen. Auch das Löschen berücksichtigt die verbleibende Wartezeit und die PIN.
+**Freeze** verhindert normale Änderungen. Zum Auftauen sind zehn Bestätigungen im Abstand von fünf Sekunden, die konfigurierte Wartezeit und eine sechsstellige PIN nötig. **Wait before unfreezing** erlaubt 0–72 Stunden; 0 bedeutet keine Wartezeit. Im Freeze kann die Wartezeit verlängert und eine PIN ergänzt werden, aber die Bedingungen können bis zum Auftauen nicht gelockert werden. Löschen beachtet die verbleibende Wartezeit und PIN.
 
 ### Verknüpfte Gruppen
 
-Verwenden Sie **Verknüpfen**, um ausdrücklich ausgewählte Gruppen in anderen Vault-Programmen zu verbinden. Verknüpfte Gruppen teilen ihren Namen, unterstützte Richtlinieneinstellungen, Ziele, Nutzung und Einfrierbedingungen. Jedes Programm bearbeitet und setzt die von ihm unterstützten Zieltypen durch; andere Zieleinträge bleiben für verknüpfte Programme verfügbar. Beim Aufheben der Verknüpfung bleiben jede Gruppe und ihre Einstellungen erhalten.
+Mit **Link** verbinden Sie ausdrücklich ausgewählte Gruppen anderer Vault-Programme. Name, unterstützte Einstellungen, Ziele, Nutzung und Freeze-Bedingungen werden geteilt. Jedes Programm bearbeitet nur unterstützte Zieltypen. **Unlink** trennt, behält Gruppen und Einstellungen aber bei. Ist ein Mitglied offline, verbinden Sie Mac Vault und den Browser erneut.
 
-Ist ein verknüpftes Mitglied offline, kann die Bearbeitung nicht verfügbar sein. Öffnen Sie Mac Vault und den verknüpften Browser, um die Verbindung wiederherzustellen. Eine lokal gespeicherte Richtlinie kann weiter gelten, während ein Mitglied offline ist.
+## Hilfe
 
-## Hilfe erhalten
-
-Klicken Sie auf das kleine **i** neben einem Feld, um dessen Erklärung anzuzeigen. Klicken Sie außerhalb der Erklärung oder drücken Sie Escape, um sie zu schließen. Listen bleiben in scrollbaren Bereichen; scrollen Sie innerhalb des Bereichs, um weitere Einträge zu erreichen. Die Suche filtert die sichtbare Liste, ohne Einträge zu löschen.
-
-Benutzerdefinierte Regeln haben ein eigenes [Codehandbuch](../code-manual/de.md). Es erklärt den Editor, die Aktivierung, Protokolle, den Dateizugriff und die unterstützte API.
+Klicken Sie auf das kleine **i** neben einem Feld, um die Erklärung zu sehen. Klicken Sie außerhalb oder drücken Sie Escape, um sie zu schließen. Listen bleiben in scrollbaren Feldern; die Suche filtert sichtbare Einträge, ohne sie zu löschen. Benutzerdefinierte Regeln haben ein eigenes [Code-Handbuch](../code-manual/de.md) zu Editor, Aktivierung, Protokollen, Dateizugriff und API.
 
 ## Native Apps
 
-Verwenden Sie die + Auswahl eines Apps-Ziels, um installierte Apps auszuwählen. **Alle Apps außer diesen blockieren** macht die Liste zu einer Freigabeliste. System-Apps, Browser und Vault selbst sind von der nativen App-Blockierung ausgeschlossen.
+Das **i** neben einem Feld zeigt Erklärungen; außerhalb klicken oder Escape schließt sie. Listen bleiben in scrollbaren Feldern, Suche filtert sichtbare Einträge ohne sie zu löschen. Für benutzerdefinierte Regeln siehe [Code-Handbuch](../code-manual/de.md) zu Editor, Aktivierung, Protokollen, Dateizugriff und API.
 
-Eine blockierte App wird zum Beenden aufgefordert. **Eine blockierte App erneut zum Beenden auffordern alle (Minuten)** steuert Wiederholungen. Websiteweiterleitungen, Seitenpausen und das Verbergen von Feed-Inhalten werden von der Browsererweiterung durchgesetzt; sie werden nicht zu nativen App-Aktionen.
+Im + Auswahlfeld eines Apps-Ziels wählen Sie installierte oder laufende Apps; öffnen Sie es erneut, um die Liste nach Start einer App aus einem anderen Ordner zu aktualisieren. **Block every app except these** erstellt eine Zulassungsliste. Mac Vault kann gewöhnliche Apple-Apps und ganze Browser blockieren; Mac Vault und Apps mit derselben Bundle-ID bleiben geschützt. Eine blockierte App wird zum Beenden aufgefordert; **Ask a blocked app to quit again every (minutes)** steuert Wiederholungen. Weiterleitungen, Seitenpausen und Feed-Ausblendung setzt die Browsererweiterung um.
 
-## Klassifizierung
+## Content tagging
 
-Eine Klassifizierungsgruppe weist Inhalten ihrer zugeordneten Plattformen mit ihrem eigenen Tag-Baum und ihren eigenen Modelleinstellungen Tags zu. Jede Plattform gehört zu einer Gruppe. Wählen Sie Plattformen beim Erstellen der Gruppe; sie lassen sich danach nicht ändern. Zeitpläne und Filter von Blockierungsgruppen steuern die Tag-Zuweisung nicht.
-
-Aktivieren Sie die Tag-Zuweisung in den Einstellungen. Verwenden Sie **Tag-Zuweisung pausieren / Tag-Zuweisung fortsetzen** für jede Gruppe getrennt. Das Ausschalten der Aufzeichnung eines Plattformfeeds in **Aktivität → Aufzeichnung** stoppt auch dessen Tag-Zuweisung.
+Eine Content-tagging-Gruppe versieht Inhalte ihrer Plattformen mit einem eigenen Tag-Baum und Modelleinstellungen. Jede Plattform gehört zu einer Gruppe; wählen Sie sie bei der Erstellung, später kann sie nicht geändert werden. Blocking-Zeitpläne und Filter steuern kein Tagging. Aktivieren Sie Tagging in Einstellungen und pausieren/fortsetzen Sie jede Gruppe separat. Wird die Feed-Aufzeichnung unter **Activity → Recording** ausgeschaltet, stoppt auch das Tagging.
 
 ### Tags und Modelleinstellungen
 
-Erstellen Sie Tags, beschreiben Sie ihre Bedeutung und setzen oder entfernen Sie ihre Eltern im Tag-Baum. Ziehen Sie einen Tag, um seinen Zweig zu verschieben. Klare Beschreibungen helfen dem Modell, ähnliche Tags zu unterscheiden. Die Einstellungen jeder Gruppe sind unabhängig.
+Erstellen Sie Tags, beschreiben Sie ihre Bedeutung und setzen oder entfernen Sie Eltern im Baum. Ziehen verschiebt einen Zweig. Klare Beschreibungen helfen dem Modell, ähnliche Tags zu unterscheiden. **Minimum confidence** setzt die Evidenzstufe von 1 bis 5; neue Gruppen beginnen bei 4 (starke Unterstützung). Es gibt keine Zielanzahl; ein Element kann ohne Tags bleiben. **Tagging instructions** speichert Gruppenpräferenzen. Änderungen werden automatisch gespeichert; jede Gruppe verwendet ausdrücklich eine Verbindung, ein Modell und einen Reasoning-Aufwand.
 
-- **Geschwindigkeit ↔ Qualität** wählt eine lokale Modellstufe. Größere Modelle benötigen mehr Arbeitsspeicher; Geschwindigkeit und Ergebnisse hängen von Mac und Arbeitslast ab. Downloads werden von Gruppen gemeinsam genutzt.
-- **Streng ↔ Breit** legt Konfidenzanforderungen und standardmäßige Tag-Anzahlen fest.
-- **Minimum an Tags / Maximum an Tags** unter Mehr ersetzen diese Standardanzahlen. Streng ↔ Breit steuert weiterhin die Konfidenz für zusätzliche Tags. Lassen Sie eines der Felder leer, um seinen Standardwert zu verwenden.
-- **Anweisungen zur Tag-Zuweisung** ergänzt optionale Anweisungen für diese Gruppe.
+### AI connections
 
-Gewöhnliche Klassifizierungsänderungen werden automatisch gespeichert. Eine ausgewählte Stufe muss heruntergeladen sein, bevor sie Tags zuweisen kann. Gruppen derselben Stufe teilen ein geladenes Modell; bis zu zwei Stufen bleiben gleichzeitig geladen.
+Unter **AI connections** stehen ChatGPT subscription, OpenAI API, Gemini API und Grok API. Das Abo verwendet Vault-Anmeldung und einen berechtigten Tarif. API-Schlüssel folgen Abrechnung und Limits des Anbieters. Anbieter wählen und Schlüssel unter der gemeinsamen Liste eingeben; Änderungen speichern automatisch, Leeren löscht den Schlüssel. **Fetch model list** abrufen und danach ein Modell in der Tagging- oder Regelgruppe wählen; der Abruf wählt keines aus. **Reasoning effort** bietet Standard, Low, Medium oder High, soweit unterstützt. Neue Auswahl beginnt mit Medium, vorhandene bleibt gespeichert. Höherer Aufwand kann Zeit und Tokens erhöhen. Websuche ist immer aktiviert; das Modell wählt ihren Einsatz. Bei Fehlern bleiben gültige Cache-Ergebnisse erhalten; neue Inhalte bleiben ungelöst bis **Retry cloud classification**. Vault wechselt den Anbieter nicht automatisch; jede Verbindung hat eigenes Intervall und Versuchslimit. Korrigieren Sie Tags in der Erweiterung mit **+ tag**; Entfernen-Steuerung oder einmal Delete entfernt sie. **Untagged** bedeutet abgeschlossen ohne Tags, **Tagging** bedeutet ausstehend. Ihre Korrektur bleibt maßgeblich.
 
-Korrigieren Sie die Tags eines Inhalts in der Browsererweiterung. Klicken Sie auf **+ Tag**, durchsuchen Sie die vorhandenen Tags der Klassifizierung und wählen Sie einen zum Hinzufügen. Verwenden Sie die Entfernen-Steuerung eines Tags oder wählen Sie ihn aus und drücken Sie einmal Entf. **Ohne Tag** bedeutet, dass die Tag-Zuweisung ohne Tags abgeschlossen wurde; **Tag-Zuweisung läuft** bedeutet, dass ein Ergebnis aussteht. Korrekturen beeinflussen künftige Tag-Zuweisungen.
+## Activity
 
-## Wissen und Webrecherche
+### Activity-Gruppen
 
-Wissen speichert auf diesem Mac kurze Beschreibungen für das lokale Tag-Modell. **Inhaltsquellen** umfassen Ersteller, Konten, Kanäle und Communitys. Quellbeschreibungen begleiten deren Inhalte. **Bekannte Begriffe** gelten, wenn ein Begriff in einem Titel vorkommt.
-
-Fügen Sie eine Quelle oder einen Begriff und deren Beschreibung hinzu oder lassen Sie die Beschreibung leer, um bei aktivierter Recherche eine Recherche anzufordern. Erstellervorschläge helfen beim Finden einer bereits von der Klassifizierung erfassten Quelle. Listen mit sechs oder mehr Einträgen haben direkt darüber eine Suche: Begriffe und die Inhaltsquellen jeder Plattform haben getrennte Suchen nach Name, Kennung oder Beschreibung. Das Bearbeiten einer Beschreibung beeinflusst künftige Tag-Zuweisungen; das Löschen von Quellenwissen verhindert nicht, dass spätere Recherche es erneut erstellt.
-
-### Offizielle und persönliche Wörterbücher
-
-Öffne **Einstellungen → Klassifizierung → Offizielle Wörterbücher**, um offizielle Wörterbücher einzurichten. **Wissen** zeigt installierte Versionen und eine Verknüpfung zu diesen Einstellungen. Vault sucht beim Start nach Updates; installiere sie mit **Nach Updates suchen** und den Download-Schaltflächen. Ein eigener KI-API-Schlüssel ist dafür nicht nötig.
-
-- **Begriffe** werden zur lokalen Suche heruntergeladen.
-- **Cache + Online-Abfrage** speichert standardmäßig bis zu 10.000 Creator-Einträge; das Limit kannst du ändern. Fehlt ein Creator im Cache, wird seine öffentliche, plattformspezifische ID an den Wörterbuchdienst gesendet.
-- **Vollständiger Download · Offline-Abfrage** sucht nach dem Download lokal nach Creatorn. Wähle diesen Modus und lade das Wörterbuch herunter.
-
-Deine persönlichen Beschreibungen, auch die deines Research-Anbieters, haben Vorrang vor offiziellen. Unter **Eigenes Wörterbuch importieren / exportieren** kannst du persönliche Einträge exportieren oder eine JSON-Datei importieren; offizielle Einträge sind nicht im persönlichen Export enthalten.
-
-**Das Creator-Wörterbuch verbessern** ist standardmäßig eingeschaltet und wird vor dem ersten Beitrag erklärt. Schalte es hier aus, um künftige Beiträge zu stoppen und offene Anfragen abzubrechen. Bei Aktivierung sendet Vault nur stichprobenartig fehlende öffentliche Creator-IDs und verfügbare öffentliche Follower-/Abonnentenzahlen, keine Titel, keinen Browserverlauf und keine persönlichen Beschreibungen. Die Offenlegung nennt Sendegrenzen und Speicherdauer. Web-Recherche hat eigene Einwilligungs- und Anbietereinstellungen.
-
-### Rechercheanbieter konfigurieren
-
-1. Öffnen Sie **Einstellungen → API-Schlüssel und Anbieter**.
-2. Wählen Sie einen Anbietertyp und **Anbieter hinzufügen**. Dies erstellt eine Konfiguration; es stellt keinen API-Schlüssel aus.
-3. Besorgen Sie Anmeldedaten bei diesem Anbieter und tragen Sie sie ein. Konfigurieren Sie bei einem kompatiblen benutzerdefinierten Endpunkt auch dessen Endpunkt- und Protokollfelder.
-4. Wählen Sie in **Webrecherche** einen Anbieter mit integrierter Websuche. Rufen Sie dessen Modellliste ab und wählen Sie ein Recherchemodell. Verwenden Sie die Suche der Modellauswahl, um die Liste einzugrenzen; aktualisieren Sie sie zum erneuten Abruf.
-5. Lesen Sie die Einwilligungserklärung und aktivieren Sie die Einwilligung. Wählen Sie in jeder Gruppe **Ein**, **Aus** oder **Einstellungen folgen**.
-
-**Webrecherche einrichten…** führt Sie bei fehlender Konfiguration zu den Einstellungen. Eine Gruppe kann die Rechercheeinwilligung nicht umgehen. **Verbindung testen** bestätigt den Erfolg der Testanfrage, nicht, dass jedes Modell Recherche unterstützt. Das Testmodell eines Anbieters ist vom ausgewählten Recherchemodell getrennt.
-
-Schlüssel werden im Unterstützungsordner der App auf diesem Mac gespeichert, nicht im Systemschlüsselbund. Sie authentifizieren Anfragen beim konfigurierten Anbieter; Vault lädt sie nicht auf seinen eigenen Server hoch. Recherche sendet bereinigte öffentliche Themen an den ausgewählten Anbieter, keine privaten Inhaltskörper oder Zusammenfassungen. Lesen Sie die Einwilligungserklärung für die genauen gesendeten Felder. Zur Anbieternutzung gehören Verbindungstests und Modelllistenanfragen ebenso wie Recherche.
-
-Der Recherchestatus zeigt eingereihte Anfragen, Wartezeiten für Wiederholungen, Fehler und den Tokenverbrauch des Tages. **Fehlgeschlagene Themen jetzt erneut versuchen** wiederholt geeignete Fehler; es umgeht weder das Tageskontingent noch die Einwilligung.
-
-## Aktivität
-
-Aktivität zeichnet aktivierte App-Nutzung, Websitebesuche und unterstützte **Angesehene Inhalte** lokal auf. Ihre Diagramme spiegeln aufgezeichnete Daten wider; ein leerer Bereich beweist nicht, dass Mac ungenutzt war.
-
-Wählen Sie einen Datumsbereich. **Zeitleiste** zeigt die Nutzung zur jeweiligen Tageszeit; **Gesamtsummen** summiert die Dauer. **Zeitintervall** fasst die Nutzung innerhalb jedes Intervalls zu vertikalen Blöcken zusammen. **Farben** ist eine anklickbare Legende: Wählen Sie eine Quelle, um die Diagramme darauf zu fokussieren. Wählen Sie einen Tag, um die Nutzung seit diesem Tag anzuzeigen.
-
-### Aktivitätsgruppen
-
-Erstellen Sie eine Gruppe, um ihre ausgewählten Apps und Websites gemeinsam in Nutzung anzuzeigen. **Zusammenführen** verwendet für ihre Mitglieder überall in Aktivität einen Namen und eine Farbe. Eine Aktivitätsgruppe organisiert aufgezeichnete Nutzung; sie ist von einer Blockierungsgruppe oder Klassifizierungsgruppe getrennt. Speichern Sie den Aktivitätsgruppeneditor ausdrücklich mit **Speichern**.
+Erstellen Sie eine Gruppe, um ausgewählte Apps und Websites gemeinsam unter Usage anzuzeigen. **Merge** verwendet für Mitglieder überall in Activity einen Namen und eine Farbe. Activity-Gruppen ordnen aufgezeichnete Nutzung und sind von Blocking- und Content-tagging-Gruppen getrennt. Speichern Sie den Editor ausdrücklich mit **Save**.
 
 ### Aufzeichnung und Aufbewahrung
 
-Schalten Sie in **Aufzeichnung** die Aufzeichnung für jede Kategorie oder einzelne Quelle ein oder aus. **Aufbewahren** steuert, wie lange der Verlauf erhalten bleibt; **Für immer** behält ihn ohne automatischen Ablauf. Einzelne Auswahlmöglichkeiten können der übergeordneten Einstellung folgen. Das Ausschalten der Aufzeichnung stoppt neue Aufzeichnungen; das Löschen des Verlaufs entfernt aufgezeichnete Einträge.
+Unter **Recording** Aufzeichnung je Kategorie oder Quelle schalten. **Keep** bestimmt die Aufbewahrung, **Forever** läuft nicht ab. Ausschalten stoppt neue Aufzeichnungen; Löschen entfernt Historie. Plattform-Feeds sammeln angezeigte Inhalte unterstützter Seiten, unabhängig davon, ob sie geöffnet wurden. **Tagging supported**-Feeds können bei aktiver Aufzeichnung Tagging speisen; die Aufbewahrung ist von App- und Webnutzung getrennt. Eine pausierte Tagging-Gruppe stoppt die Aufzeichnung nicht.
 
-Plattformfeeds erfassen Inhalte auf unterstützten Plattformseiten, unabhängig davon, ob diese geöffnet wurden. Ein Feed mit **Tag-Zuweisung unterstützt** kann bei eingeschalteter Aufzeichnung die Klassifizierung versorgen. Seine Aufbewahrung steuert erfasste Inhalte getrennt von App- und Websitenutzung. Eine pausierte Klassifizierungsgruppe schaltet die Aufzeichnung nicht selbst aus.
+## Settings
 
-## Einstellungen
+Wählen Sie unter Einstellungen die Oberflächensprache; Info-Schaltflächen zeigen lokalisierte Erklärungen. ## Speichern und Fehlerbehebung
 
-Wählen Sie die Oberflächensprache in den Einstellungen. Felderklärungen sind über die kleinen Info-Schaltflächen in der gewählten Oberflächensprache verfügbar.
+## Saving and troubleshooting
 
-## Speichern und Fehlerbehebung
-
-Gewöhnliche Vault- und Klassifizierungsänderungen werden automatisch gespeichert. Die Bearbeitung von Aktivitätsgruppen verwendet **Speichern**. Hinzufügen, Löschen, Modelldownload, Verbindungstest und Abruf einer Modellliste bleiben ausdrückliche Aktionen.
-
-Fehlen Tags, prüfen Sie die Browserverbindung, den globalen Tag-Schalter, den Pausenstatus der Gruppe, die Plattformaufzeichnung und den Modelldownload. Läuft Recherche nicht, prüfen Sie Einwilligung, Gruppenauswahl, Anbieteranmeldedaten, Recherchemodell und Recherchestatus. Lässt sich eine verknüpfte Gruppe nicht bearbeiten, verbinden Sie ihre Programme erneut oder tauen Sie sie wie angezeigt auf.
+Übliche Vault-/Tagging-Änderungen speichern automatisch; Activity-Gruppen brauchen **Save**. Hinzufügen, Löschen, Verbindungstests und Modellabruf sind ausdrückliche Aktionen. Fehlen Tags, prüfen Sie Browserverbindung, globalen Schalter, Pause, Plattformaufzeichnung, Verbindung/Modell und Zugangsdaten. Bei KI-Fehlern prüfen Sie Anbieterlimits und Gruppenprotokoll. Verbinden Sie bei nicht bearbeitbaren verknüpften Gruppen die Programme erneut oder tauen Sie die Gruppe wie angegeben auf.

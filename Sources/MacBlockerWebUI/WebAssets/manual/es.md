@@ -1,139 +1,81 @@
 # Manual de usuario de Mac Vault
 
-Mac Vault tiene tres páginas: **Vault** bloquea aplicaciones nativas, **Clasificador** etiqueta contenido compatible del navegador y **Actividad** muestra el uso registrado. La extensión recopila contenido compatible y aplica el bloqueo del navegador. Instálela y conéctela en el navegador que utiliza.
+Mac Vault tiene tres páginas: **Vault** bloquea apps nativas, **Content tagging** etiqueta contenido compatible del navegador y **Activity** muestra el uso registrado. La extensión del navegador recopila contenido compatible y aplica el bloqueo del navegador. Instálala y conéctala en el navegador que uses.
 
-## Primeros pasos
+## Inicio rápido
 
-1. En **Vault**, añada un grupo de bloqueo y un objetivo de aplicaciones; después seleccione aplicaciones con el selector +.
-2. Elija el comportamiento de bloqueo del grupo y actívelo.
-3. En **Clasificador**, cree un grupo, elija sus plataformas y añada etiquetas con descripciones.
-4. Elija un nivel de modelo local y descárguelo si es necesario. Active el etiquetado en los Ajustes y reanude el grupo.
-5. Abra contenido compatible en el navegador conectado. Configure un filtro de etiquetas en un grupo de bloqueo del navegador si desea que las etiquetas controlen el bloqueo.
+1. En **Vault**, añade un grupo de bloqueo y un destino Apps; selecciona apps con el selector +.
+2. Elige el comportamiento de bloqueo y activa el grupo.
+3. En **Content tagging**, crea un grupo, elige sus plataformas y añade etiquetas con descripciones.
+4. En Ajustes → ### AI connections
+
+**AI connections**, elige ChatGPT subscription, OpenAI API, Gemini API o Grok API. Conecta la cuenta o introduce su clave y obtén los modelos; después elige conexión/modelo en el grupo. Activa el etiquetado y reanuda el grupo.
+5. Abre contenido compatible en el navegador conectado. Añade un filtro de etiquetas a un grupo de bloqueo del navegador si quieres que las etiquetas controlen el bloqueo.
 
 ## Grupos de bloqueo
 
-Un **grupo de bloqueo** aplica una política de bloqueo. Un **grupo del Clasificador** asigna etiquetas al contenido; por sí mismo no bloquea nada.
+Un **blocking group** aplica una política de bloqueo. Un grupo de **Content tagging** asigna etiquetas y no bloquea por sí solo. Añade el grupo y un nombre, elige destinos en **Applies to**, define cuándo se bloquea y configura horario o límite de tiempo; después actívalo. Los cambios habituales se guardan automáticamente. Un error significa que el cambio no se aceptó; corrige el campo y vuelve a intentarlo. Desactivar detiene la política y conserva su configuración; **Delete group** la elimina. Arrastra los grupos para ordenarlos. Varios grupos pueden aplicarse al mismo destino; posponer uno no levanta el bloqueo de otro. **Export** copia una configuración; **Import** reemplaza la del grupo seleccionado tras confirmarlo.
 
-1. Añada un grupo de bloqueo y asígnele un nombre.
-2. Elija objetivos en **Se aplica a**.
-3. Elija cuándo se aplica el bloqueo y configure los horarios o el tiempo permitido necesarios.
-4. Active el grupo. Sus objetivos comparten la política del grupo.
+### Límite de tiempo y horario
 
-Los cambios habituales se guardan automáticamente. Un error significa que el cambio no se ha aceptado; corrija el campo e inténtelo de nuevo. Desactive un grupo para detener su política y conservar su configuración. **Eliminar grupo** lo elimina. Arrastre los grupos para reordenarlos. Varios grupos pueden aplicarse a un objetivo; posponer uno no levanta el bloqueo de otro.
+**Block immediately** bloquea cuando coinciden el grupo activo y su horario. **Block when the time allowance is used** permite el uso hasta agotar el límite. Define el límite en minutos y el intervalo de reinicio en horas. El límite móvil cuenta el uso de la ventana anterior. Elige días laborables y ventanas opcionales de hora local, una por línea, como **09:00-12:00**. Sin ventanas, se aplica durante todos los días seleccionados; divide los horarios nocturnos entre días.
 
-**Exportar** copia la configuración de un grupo. **Importar** sustituye la configuración del grupo seleccionado tras la confirmación.
+### Snooze
 
-### Tiempo permitido y horario
+Configura snooze para cada grupo. **Pause blocking** suspende la política durante la pausa; **Add to the time allowance** añade minutos utilizables a un grupo limitado por tiempo. Solo cuenta el tiempo adicional consumido; el no usado caduca al reinicio (o tras una ventana para un límite móvil, antes si se activa el reinicio de medianoche). **Activation delay**, **Cooldown** y **Required confirmations** definen demora, espera entre solicitudes y pasos de confirmación. ### Freeze y PIN
 
-**Bloquear inmediatamente** se aplica siempre que el grupo activado coincida y su horario esté activo. **Bloquear al agotar el tiempo permitido** permite el uso correspondiente hasta que se agota el tiempo disponible.
+**Freeze** impide las ediciones habituales. Para descongelar hacen falta diez confirmaciones separadas por cinco segundos, la espera configurada y un PIN de seis dígitos. **Wait before unfreezing** admite 0–72 horas; 0 no añade espera. Mientras está congelado se puede alargar la espera y añadir un PIN, pero no reducir las condiciones; la eliminación también las respeta.
 
-Configure el tiempo permitido en minutos y el intervalo de restablecimiento en horas. Un límite móvil cuenta el uso dentro de la ventana anterior. Restablecer a medianoche inicia un nuevo período a la medianoche local, también con un límite móvil.
+### Freeze y PIN
 
-Elija los días activos de la semana y, opcionalmente, intervalos de hora local, uno por línea, como **09:00-12:00**. Una lista de intervalos vacía se aplica durante todo el día en los días seleccionados. Un intervalo debe terminar después de empezar en el mismo día; divida un horario nocturno entre días separados.
-
-### Posponer
-
-Configure la opción de posponer en cada grupo de bloqueo. **Pausar bloqueo** suspende la política de ese grupo durante la duración de la pausa. **Añadir al tiempo permitido** añade minutos utilizables a un grupo con límite de tiempo. Solo el tiempo adicional consumido cuenta como tiempo pospuesto. El tiempo adicional sin usar caduca en el siguiente restablecimiento; con un límite móvil, después de una ventana, o antes a medianoche si esa opción está activada.
-
-**Retraso de activación** retrasa la pausa mientras continúa el bloqueo. **Tiempo de espera** es la espera tras finalizar la pausa antes de otra solicitud. **Confirmaciones requeridas** establece el número de pasos de confirmación. Posponer está disponible en un grupo congelado solo si se permitió antes de congelarlo.
-
-### Bloqueo de edición y PIN
-
-**Bloquear edición** impide los cambios habituales. Desbloquear la edición requiere diez confirmaciones separadas por cinco segundos, además de la espera configurada y el PIN de seis dígitos, si existen. **Espera antes de desbloquear la edición** acepta 0–72 horas; 0 no añade espera.
-
-Mientras el grupo está congelado, se puede ampliar la espera y añadir un PIN si no existe ninguno. Estas condiciones no se pueden debilitar hasta descongelar el grupo. La eliminación también respeta la espera restante y el PIN.
+**Freeze** impide ediciones habituales. Para descongelar se necesitan diez confirmaciones separadas por cinco segundos, la espera configurada y un PIN de seis dígitos. **Wait before unfreezing** admite 0–72 horas; 0 no añade espera. Congelado, se puede alargar la espera y añadir PIN, pero no relajar las condiciones hasta descongelar. El borrado también respeta la espera restante y el PIN.
 
 ### Grupos vinculados
 
-Use **Vincular** para conectar grupos seleccionados explícitamente en otros programas Vault. Los grupos vinculados comparten nombre, ajustes de política compatibles, objetivos, uso y condiciones de congelación. Cada programa edita y aplica los tipos de objetivo que admite; las demás entradas siguen disponibles para los programas vinculados. Al desvincular, cada grupo y sus ajustes se conservan.
+**Link** conecta grupos seleccionados expresamente de otros programas Vault. Comparten nombre, ajustes compatibles, destinos, uso y condiciones de congelación. Cada programa edita y aplica los tipos de destino que admite. **Unlink** separa los grupos y conserva su configuración. Si un miembro está desconectado, abre Mac Vault y el navegador vinculado para reconectar.
 
-Si un miembro vinculado está desconectado, la edición puede no estar disponible. Abra Mac Vault y el navegador vinculado para reconectarlos. Una política guardada localmente puede seguir aplicándose mientras un miembro está desconectado.
+## Ayuda
 
-## Obtener ayuda
+Pulsa la pequeña **i** junto a un campo para ver la explicación; haz clic fuera o pulsa Escape para cerrarla. Las listas se muestran en cajas desplazables; la búsqueda filtra lo visible sin borrar entradas. Las reglas personalizadas tienen su propio [Manual de código](../code-manual/es.md), con editor, activación, registros, archivos y API.
 
-Pulse la pequeña **i** junto a un campo para ver su explicación. Pulse fuera o presione Escape para cerrarla. Las listas permanecen en cuadros desplazables; desplácese dentro del cuadro para acceder a más entradas. La búsqueda filtra la lista visible sin eliminar entradas.
+## Apps nativas
 
-Las reglas personalizadas tienen su propio [Manual de código](../code-manual/es.md). Explica el editor, la activación, los registros, el acceso a archivos y la API compatible.
+Pulsa la pequeña **i** junto a un campo para ver su explicación; haz clic fuera o pulsa Escape para cerrarla. Las listas están en paneles desplazables; la búsqueda filtra lo visible sin borrar entradas. Consulta el [Manual de código](../code-manual/es.md) para reglas personalizadas, editor, activación, registros, archivos y API.
 
-## Aplicaciones nativas
+Usa el selector + de un destino Apps para escoger apps instaladas o en ejecución; vuelve a abrirlo para actualizar la lista tras iniciar una app desde otra carpeta. **Block every app except these** convierte la lista en permitidos. Mac Vault puede bloquear apps Apple normales y navegadores completos; Mac Vault y apps con el mismo bundle ID están protegidas. Se solicita salir a una app bloqueada; **Ask a blocked app to quit again every (minutes)** define los reintentos. Las redirecciones web, pausas de página y ocultación de feeds corresponden a la extensión.
 
-Use el selector + de un objetivo de aplicaciones para seleccionar aplicaciones instaladas. **Bloquear todas las aplicaciones excepto estas** convierte la lista en una lista de permitidos. Las aplicaciones del sistema, los navegadores y el propio Vault se excluyen del bloqueo de aplicaciones nativas.
+## Content tagging
 
-Se solicita a una aplicación bloqueada que se cierre. **Volver a pedir el cierre de una aplicación bloqueada cada (minutos)** controla los reintentos. La extensión del navegador aplica las redirecciones de sitios, las pausas de página y la ocultación de fuentes; estas no se convierten en acciones de aplicaciones nativas.
+Un grupo Content tagging etiqueta contenido de sus plataformas asignadas con su árbol de tags y modelos. Cada plataforma pertenece a un grupo; elígelas al crearlo, pues no se cambian después. Los horarios y filtros de bloqueo no controlan el etiquetado. Actívalo en Ajustes y pausa/reanuda cada grupo por separado. Desactivar el registro de un feed en **Activity → Recording** también detiene su etiquetado.
 
-## Clasificador
+### Tags y ajustes del modelo
 
-Un grupo del Clasificador etiqueta contenido de sus plataformas asignadas con su propio árbol de etiquetas y ajustes de modelo. Cada plataforma pertenece a un grupo. Elija las plataformas al crear el grupo; no se pueden cambiar después. Los horarios y filtros de los grupos de bloqueo no controlan el etiquetado.
+Crea tags, describe su significado y define o quita sus padres. Arrastrar mueve la rama. **Minimum confidence** fija el grado de evidencia de 1 a 5; los grupos nuevos empiezan en 4 (apoyo sólido). No hay cantidad objetivo; un elemento puede no recibir tags. **Tagging instructions** guarda las preferencias. Los cambios se guardan automáticamente; cada grupo usa una conexión, modelo y esfuerzo de razonamiento elegidos expresamente.
 
-Active el etiquetado en los Ajustes. Use **Pausar etiquetado / Reanudar etiquetado** de cada grupo por separado. Desactivar el registro de una fuente de plataforma en **Actividad → Registro** también detiene su etiquetado.
+### AI connections
 
-### Etiquetas y ajustes del modelo
+En **AI connections** hay ChatGPT subscription, OpenAI API, Gemini API y Grok API. La suscripción usa el inicio de sesión de Vault y un plan válido; las claves API siguen la facturación y límites del proveedor. Elige proveedor e introduce la clave debajo del menú compartido; se guarda automáticamente y borrarla elimina la clave. **Fetch model list** obtiene modelos pero no selecciona uno. **Reasoning effort** ofrece predeterminado, Low, Medium o High según compatibilidad; nuevas opciones comienzan en Medium y se conservan las existentes. Más esfuerzo puede tardar y usar tokens. La búsqueda web siempre está habilitada para etiquetar; el modelo decide cuándo usarla. Si falla, se conservan resultados válidos en caché; nuevos elementos quedan pendientes hasta **Retry cloud classification**. No hay cambio automático de proveedor; cada conexión tiene intervalo y límite de intentos propios. En la extensión corrige con **+ tag**; usa el control de quitar o Delete una vez. **Untagged** significa terminado sin tags; **Tagging**, pendiente. Tu corrección prevalece.
 
-Cree etiquetas, describa sus significados y establezca o elimine sus padres en el árbol de etiquetas. Arrastre una etiqueta para mover su rama. Las descripciones claras ayudan al modelo a distinguir etiquetas similares. Los ajustes de cada grupo son independientes.
+## Activity
 
-- **Velocidad ↔ Calidad** selecciona un nivel de modelo local. Los modelos mayores usan más memoria; la velocidad y los resultados dependen de Mac y la carga de trabajo. Las descargas se comparten entre grupos.
-- **Estricto ↔ Amplio** establece los requisitos de confianza y los recuentos de etiquetas predeterminados.
-- **Mínimo de etiquetas / Máximo de etiquetas** en Más sustituyen esos recuentos predeterminados. Estricto ↔ Amplio sigue controlando la confianza para etiquetas adicionales. Deje cualquiera de los campos vacío para usar su valor predeterminado.
-- **Instrucciones de etiquetado** añade instrucciones opcionales para este grupo.
+### Activity groups
 
-Los cambios habituales del Clasificador se guardan automáticamente. Un nivel seleccionado debe estar descargado antes de poder etiquetar contenido. Los grupos que usan el mismo nivel comparten un modelo cargado; hasta dos niveles permanecen cargados a la vez.
+Crea un grupo para mostrar sus apps y sitios seleccionados juntos en Usage. **Merge** usa un nombre y color para sus miembros en Activity. El grupo organiza el uso registrado y es distinto de los grupos de bloqueo y etiquetado. Guarda explícitamente el editor con **Save**.
 
-Corrija las etiquetas de un elemento de contenido en la extensión del navegador. Pulse **+ etiqueta**, busque entre las etiquetas existentes del Clasificador y elija una para añadirla. Use el control de eliminación de una etiqueta o selecciónela y presione Supr una vez para quitarla. **Sin etiqueta** significa que el etiquetado terminó sin etiquetas; **Etiquetando** significa que hay un resultado pendiente. Las correcciones orientan futuros etiquetados.
+### Recording and retention
 
-## Conocimiento e investigación web
+En **Recording**, activa o desactiva cada categoría o fuente. **Keep** determina la retención; **Forever** no caduca automáticamente. Desactivar detiene registros nuevos; borrar historial elimina entradas. Los feeds de plataforma recogen contenido mostrado en páginas compatibles, aunque no se hayan abierto. Un feed **Tagging supported** puede suministrar contenido al etiquetado mientras se graba; su retención es independiente del uso de apps y sitios. Pausar un grupo de etiquetado no detiene por sí solo la grabación.
 
-Conocimiento almacena descripciones breves en este Mac para el modelo local de etiquetado. **Fuentes de contenido** incluye creadores, cuentas, canales y comunidades. Las descripciones de las fuentes acompañan su contenido. **Términos conocidos** se aplica cuando un término aparece en un título.
 
-Añada una fuente o término y su descripción, o deje la descripción vacía para solicitar investigación cuando esté activada. Las sugerencias de creadores ayudan a encontrar una fuente que el Clasificador haya recopilado. Las listas con seis o más entradas tienen una búsqueda justo encima: Términos y las Fuentes de contenido de cada plataforma tienen búsquedas separadas por nombre, identificador o descripción. Editar una descripción afecta a futuros etiquetados; eliminar el conocimiento de una fuente no impide que una investigación posterior lo vuelva a crear.
+Crea un grupo para mostrar sus apps y sitios juntos en Usage. **Merge** les da nombre y color comunes en Activity. Es distinto de grupos de bloqueo/etiquetado. Guarda el editor con **Save**.
 
-### Diccionarios oficiales y personales
 
-Abre **Ajustes → Clasificador → Diccionarios oficiales** para configurar los diccionarios oficiales. **Conocimiento** muestra las versiones instaladas y un acceso directo a estos controles. Vault busca actualizaciones al iniciarse; usa **Buscar actualizaciones** y los botones de descarga para instalarlas. No necesitas tu propia clave API de IA.
+En **Recording**, activa o desactiva cada categoría/fuente. **Keep** determina la retención; **Forever** no caduca automáticamente. Desactivar detiene nuevos registros; borrar historial elimina entradas. Los feeds recogen contenido mostrado en páginas compatibles, se abran o no. **Tagging supported** puede alimentar Content tagging mientras se graba; la retención es independiente de uso de apps y sitios. Pausar el grupo no detiene la grabación.
 
-- **Términos** se descarga para búsquedas locales.
-- **Caché + búsqueda en línea** guarda hasta 10.000 entradas de creadores de forma predeterminada; puedes cambiar el límite. Si falta un creador en la caché, se envía su identificador público asociado a la plataforma al servicio de diccionarios.
-- **Descarga completa · búsqueda sin conexión** busca creadores localmente después de descargarlo. Selecciona este modo y descarga el diccionario.
+## Settings
 
-Tus descripciones personales, incluidas las de tu proveedor de investigación, tienen prioridad sobre las oficiales. En **Importar o exportar tu diccionario**, exporta tus entradas personales o importa un archivo JSON; las entradas oficiales no se incluyen en la exportación personal.
+Elige el idioma en Ajustes; Info muestra explicaciones en ese idioma.
 
-**Ayuda a mejorar el diccionario de creadores** está activado de forma predeterminada y se explica antes de la primera contribución. Desactívalo aquí para detener contribuciones futuras y cancelar solicitudes pendientes. Si está activado, Vault solo envía una muestra de identificadores públicos de creadores que faltan y las cifras públicas disponibles de seguidores/suscriptores; no envía títulos, historial de navegación ni descripciones personales. Consulta la divulgación para conocer los límites y la conservación. La investigación web tiene consentimiento y ajustes de proveedor independientes.
+## Saving and troubleshooting
 
-### Configurar un proveedor de investigación
-
-1. Abra **Ajustes → Claves de API y proveedores**.
-2. Elija un tipo de proveedor y **Añadir proveedor**. Esto crea una configuración; no emite una clave de API.
-3. Obtenga las credenciales de ese proveedor e introdúzcalas. Para un punto de conexión personalizado compatible, configure también su dirección y campos de protocolo.
-4. En **Investigación web**, elija un proveedor con búsqueda web integrada. Obtenga su lista de modelos y seleccione un modelo de investigación. Use la búsqueda del selector de modelos para reducir la lista; actualícela para obtenerla de nuevo.
-5. Lea la información de consentimiento y actívelo. Elija **Activado**, **Desactivado** o **Seguir los Ajustes** en cada grupo.
-
-**Configurar investigación web…** le lleva a los ajustes cuando falta configuración. Un grupo no puede omitir el consentimiento de investigación. **Probar conexión** confirma que la solicitud de prueba se completó correctamente, no que todos los modelos admitan investigación. El modelo de prueba de un proveedor es independiente del modelo de investigación seleccionado.
-
-Las claves se almacenan en la carpeta de soporte de la aplicación en este Mac, no en el llavero del sistema. Autentican solicitudes al proveedor configurado; Vault no las sube a su propio servidor. La investigación envía temas públicos saneados al proveedor seleccionado, no cuerpos de contenido privados ni resúmenes. Lea la información de consentimiento para conocer los campos exactos enviados. El uso del proveedor incluye pruebas de conexión y solicitudes de listas de modelos, además de investigación.
-
-El estado de investigación muestra solicitudes en cola, esperas de reintento, fallos y el uso de tokens del día. **Reintentar ahora los temas fallidos** reintenta fallos aptos; no omite el tiempo permitido diario ni el consentimiento.
-
-## Actividad
-
-Actividad registra localmente el uso de aplicaciones habilitado, las visitas a sitios web y el **Contenido visto** compatible. Sus gráficos reflejan datos registrados; un área vacía no demuestra que Mac estuviera inactivo.
-
-Elija un intervalo de fechas. **Línea de tiempo** muestra el uso a su hora del día; **Totales** suma la duración. **Intervalo de tiempo** combina el uso dentro de cada intervalo en bloques verticales. **Colores** es una leyenda interactiva: seleccione una fuente para centrar los gráficos en ella. Seleccione un día para ver el uso desde ese día.
-
-### Grupos de actividad
-
-Cree un grupo para mostrar juntas sus aplicaciones y sitios seleccionados en Uso. **Combinar** usa un solo nombre y color para sus miembros en toda Actividad. Un grupo de actividad organiza el uso registrado; es independiente de un grupo de bloqueo o del Clasificador. Guarde explícitamente el editor del grupo de actividad con **Guardar**.
-
-### Registro y conservación
-
-En **Registro**, active o desactive el registro de cada categoría o fuente individual. **Conservar** controla cuánto tiempo se conserva el historial; **Para siempre** lo mantiene sin caducidad automática. Las elecciones individuales pueden seguir el ajuste general. Desactivar el registro detiene los nuevos registros; eliminar el historial quita las entradas registradas.
-
-Las fuentes de plataformas recopilan contenido mostrado en páginas compatibles, se abra o no. Una fuente con **Etiquetado compatible** puede abastecer al Clasificador mientras el registro está activado. Su conservación controla el contenido recopilado por separado del uso de aplicaciones y sitios web. Un grupo del Clasificador pausado no desactiva por sí mismo el registro.
-
-## Ajustes
-
-Elija el idioma de la interfaz en Ajustes. Las explicaciones de los campos están disponibles mediante los pequeños botones de información en el idioma seleccionado.
-
-## Guardado y solución de problemas
-
-Los cambios habituales de Vault y del Clasificador se guardan automáticamente. La edición de grupos de actividad usa **Guardar**. Añadir, eliminar, descargar un modelo, probar una conexión y obtener una lista de modelos siguen siendo acciones explícitas.
-
-Si faltan etiquetas, compruebe la conexión del navegador, el interruptor global de etiquetado, la pausa del grupo, el registro de la plataforma y la descarga del modelo. Si no se ejecuta la investigación, compruebe el consentimiento, la opción del grupo, las credenciales del proveedor, el modelo de investigación y el estado de investigación. Si no se puede editar un grupo vinculado, reconecte sus programas o desbloquee su edición según lo indicado.
+Los cambios habituales de Vault y etiquetado se guardan automáticamente; los grupos de Activity requieren **Save**. Añadir, borrar, probar conexiones y obtener modelos son acciones explícitas. Si faltan etiquetas, comprueba navegador, activación global, pausa, grabación de la plataforma, conexión/modelo y credenciales. Para fallos de IA, revisa límites del proveedor y registro del grupo. Reconecta los programas de un grupo vinculado o descongélalo según indique la app.

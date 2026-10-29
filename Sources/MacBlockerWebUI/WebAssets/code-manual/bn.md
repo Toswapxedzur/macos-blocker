@@ -71,6 +71,9 @@ snooze: {}
 panel: { panelId: string, controlId: string, eventName: string,
          value: string, values: { [controlId: string]: string } }
 file: see Files
+record: { requestId: string, ok: boolean, op?: string, key?: string,
+          record?: Record | null, entries?: Header[], next?: string | null,
+          deleted?: number, error?: string }
 App = { appId: string, name: string }
 ```
 
@@ -144,3 +147,45 @@ Snooze বা তার panel button চালু করা পাঁচ মি�
   on("tick", ev => v.block("com.valvesoftware.steam", ev.now >= v.state.pauseUntil));
 }
 ```
+
+## গ্রুপ রেকর্ড
+
+`v.store(request)` handler-এর মধ্যে asynchronous JSON record operation শুরু করে। Record এই গ্রুপের ব্যক্তিগত, Run ও restart-এর পর থাকে এবং গ্রুপ মুছলে মুছে যায়; linked group-এর record আলাদা। Key, value, version, cache invalidation ও feedback precedence নিয়মই নির্ধারণ করে। Mac ও browser একই API ব্যবহার করলেও প্রতিটি app/browser store আলাদা।
+
+| Request | Result |
+|---|---|
+| `{op:"get", key}` | `record` বা `null` |
+| `{op:"put", key, value, version?, ifRevision?}` | সংরক্ষিত `record` |
+| `{op:"delete", key, ifRevision?}` | `record: null` |
+| `{op:"list", prefix?, after?, limit?}` | সাজানো `entries` ও `next` |
+| `{op:"clear", prefix?}` | `deleted` সংখ্যা |
+
+প্রতিটি record-এ `{value, revision, version, updatedAt}` থাকে। বাস্তব write হলে opaque `revision` বদলায়; `version` caller-এর metadata। `list` value ছাড়া header ফেরায়; একটি পড়তে `get`, পরের page-এ যেতে `after: next` ব্যবহার করুন। `ifRevision` বাদ দিলে put/delete unconditional; `null` মানে key অনুপস্থিত হতে হবে, revision string হলে exact match চাই। Mismatch-এ `ok:false`, `error:"store-conflict"` ও বর্তমান `record` ফেরে—এটি delayed automatic reply-কে user feedback overwrite করা থেকে আটকায়। `v.context.revision` opaque rule-configuration marker; rule চাইলে নিজের version-এ রাখতে পারে। Framework cache policy নির্ধারণ করে না।
+
+সীমা: key 1–2048 অক্ষর, version ≤128, JSON value ≤64KiB, depth ≤32, প্রতি group 10000 key, পুরো record document 16MiB। `list` প্রতি page-এ সর্বোচ্চ100 header ও96KiB দেয়। প্রতি group 32 এবং মোট প্রতি সেকেন্ডে 128 request start; overload-এ প্রতি group-এ প্রতি সেকেন্ডে একটি `store-busy` error, অতিরিক্ত request drop হয়। Storage error `ok:false`; future/malformed document সংরক্ষণ করে `store-unavailable` জানায়। Auto retry/eviction নেই; deadline-এর জন্য ticks ব্যবহার করুন।
+
+## চলমান নিয়ম থেকে AI কল
+
+প্রতিটি custom group **AI calls**-এ একটি connection/model ও reasoning effort বেছে নেয়। Mac ও browser rule একই API ব্যবহার করে; browser request-এর জন্য Mac Vault connected থাকতে হবে, provider credential সেখানেই থাকে। Linked group নির্বাচন ও ঐচ্ছিক দৈনিক request cap ভাগ করে। ফাঁকা মানে group cap নেই; account limit থাকে। Cap UTC দিন ধরে, restart-এ স্থায়ী এবং ব্যর্থসহ submitted attempt গোনে। Link করলে আগের usage যোগ হয়; unlink করলেও আগের usage থাকে।
+
+`v.ai({ prompt, input? })` সঙ্গে সঙ্গে request ID দেয়। Registration-এ নয়, handler-এর মধ্যে কল করুন। `input` যেকোনো JSON; prompt/input প্রত্যেকটি সর্বোচ্চ20KB। উত্তর `ai` event-এ আসে: `{requestId, ok, text, citations, error}`। সফল text সর্বোচ্চ48KB; citation `{url,title}`। Web search-এর উত্তর দেখালে source link দৃশ্যমান ও clickable রাখুন। Model-এর জন্য search সর্বদা উপলভ্য। নির্দিষ্ট app deadline নেই; bounded concurrency থাকে; provider fallback বা auto retry নেই। উত্তর data, JavaScript হিসেবে execute হয় না; বিদ্যমান action নেবে কি না rule ঠিক করে।
+
+```javascript
+(on, v) => {
+  let pending = null;
+  on("panel", ({ data }) => {
+    if (data.controlId !== "ask" || pending) return;
+    pending = v.ai({ prompt: "Summarize this text.", input: data.values?.note ?? "" });
+  });
+  on("ai", ({ data }) => {
+    if (data.requestId !== pending) return;
+    pending = null;
+    if (!data.ok) { v.log("AI request failed:", data.error); return; }
+    v.log(data.text, data.citations);
+  });
+}
+```
+
+Restart-এ outstanding call replay হয় না। Run, disable/enable বা delete পুরনো reply বাতিল করে; disconnected browser `ai-unavailable` দেয়। অন্য error: `ai-not-configured`, `ai-invalid-input`, `ai-busy`, `ai-daily-limit`, `ai-request-failed`, `ai-usage-storage-unavailable`। Failed call rule-এর আগের রাখা result বদলায় না; rule state-এর64KB সীমা আগের মতোই।
+
+Credential-মুক্ত model পছন্দ Mac-এ `rule_ai_models`, browser-এ `settings-rule-ai-models` দিয়ে খুঁজুন; বর্তমান set-group path-এ `ruleAI` কনফিগার করুন। Field: `providerModel`, `accountID`, `reasoningEffort` (`default`, `low`, `medium`, `high`) এবং `dailyRequestLimit` (null বা1–100000)। ফেরত পাওয়া choice ব্যবহার করুন; rule source-এ key বা provider URL দেবেন না।

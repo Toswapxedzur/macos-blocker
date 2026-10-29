@@ -71,6 +71,9 @@ snooze: {}
 panel: { panelId: string, controlId: string, eventName: string,
          value: string, values: { [controlId: string]: string } }
 file: see Files
+record: { requestId: string, ok: boolean, op?: string, key?: string,
+          record?: Record | null, entries?: Header[], next?: string | null,
+          deleted?: number, error?: string }
 App = { appId: string, name: string }
 ```
 
@@ -144,3 +147,45 @@ file.data = { requestId: string, op: string, path: string, ok: boolean,
   on("tick", ev => v.block("com.valvesoftware.steam", ev.now >= v.state.pauseUntil));
 }
 ```
+
+## سجلات المجموعة
+
+تبدأ `v.store(request)` عملية سجل JSON غير متزامنة داخل معالج. السجلات خاصة بالمجموعة وتستمر بعد Run وإعادة التشغيل وتحذف مع المجموعة؛ ولكل مجموعة مرتبطة سجلات مستقلة. تختار القاعدة المفاتيح والقيم والإصدارات وإبطال الذاكرة المؤقتة وأولوية الملاحظات. تستخدم قواعد Mac والمتصفح الواجهة نفسها، لكن تخزين كل تطبيق/متصفح مستقل.
+
+| الطلب | النتيجة |
+|---|---|
+| `{op:"get", key}` | `record` أو `null` |
+| `{op:"put", key, value, version?, ifRevision?}` | `record` محفوظ |
+| `{op:"delete", key, ifRevision?}` | `record: null` |
+| `{op:"list", prefix?, after?, limit?}` | `entries` مرتبة و`next` |
+| `{op:"clear", prefix?}` | عدد `deleted` |
+
+يحوي السجل `{value, revision, version, updatedAt}`. يتغير `revision` المعتم عند كتابة حقيقية؛ و`version` بيانات وصفية يحددها المستدعي. يعيد `list` الرؤوس دون القيم؛ استخدم `get` للقراءة و`after: next` للصفحة التالية. حذف/كتابة دون `ifRevision` غير مشروط؛ و`null` يشترط غياب المفتاح، أما سلسلة المراجعة فتشترط تطابقها. عند التعارض يعاد `ok:false` و`error:"store-conflict"` والسجل الحالي؛ استخدم ذلك لمنع رد آلي متأخر من استبدال ملاحظات المستخدم. `v.context.revision` علامة معتمة لتكوين القاعدة يمكن إدراجها في إصدارها؛ لا تفرض المنظومة سياسة ذاكرة مؤقتة.
+
+الحدود: المفتاح 1–2048 حرفًا، الإصدار ≤128، قيمة JSON ≤64KiB وعمق ≤32، 10000 مفتاح للمجموعة، والوثيقة كلها 16MiB. تعيد `list` حتى100 رأس و96KiB في الصفحة. الحد 32 طلبًا للمجموعة و128 بدءًا في الثانية إجمالًا؛ عند الضغط يصدر خطأ `store-busy` واحد للمجموعة في الثانية وتسقط الطلبات الزائدة. أخطاء التخزين تعيد `ok:false`؛ وتحفظ الوثيقة المستقبلية أو المشوهة وتبلغ `store-unavailable`. لا إعادة محاولة أو إخلاء تلقائي. استخدم ticks للمهل.
+
+## استدعاءات الذكاء الاصطناعي من قاعدة قيد التشغيل
+
+تختار كل مجموعة اتصالًا/نموذجًا وجهد استدلال ضمن **AI calls**. الواجهة نفسها لقواعد Mac والمتصفح؛ طلب المتصفح يتطلب اتصال Mac Vault، وتبقى بيانات اعتماد المزود فيه. تتشارك المجموعات المرتبطة الاختيار وحدًا يوميًا اختياريًا. الفراغ يعني بلا حد للمجموعة، وتظل حدود الحساب سارية. يحسب الحد يوم UTC، ويستمر بعد إعادة التشغيل، ويعد كل محاولة مرسلة بما فيها الفاشلة. يجمع الربط الاستخدام الموجود؛ والفصل يبقي الاستخدام السابق.
+
+تعيد `v.ai({ prompt, input? })` معرّف طلب فورًا. استدعها داخل معالج لا عند تسجيل القاعدة. `input` أي قيمة JSON؛ حد كل من prompt/input هو20KB. تصل الردود كأحداث `ai`: `{requestId, ok, text, citations, error}`. حد نص النجاح48KB؛ والاستشهادات `{url,title}`. أظهر روابط المصادر قابلة للنقر عند عرض إجابات بحث الويب. البحث متاح دائمًا للنموذج. لا مهلة ثابتة للطلب، مع تزامن محدود؛ لا تبديل مزود أو إعادة تلقائية. الردود بيانات ولا تنفذ JavaScript؛ وتقرر القاعدة الإجراءات القائمة التي تتخذها.
+
+```javascript
+(on, v) => {
+  let pending = null;
+  on("panel", ({ data }) => {
+    if (data.controlId !== "ask" || pending) return;
+    pending = v.ai({ prompt: "Summarize this text.", input: data.values?.note ?? "" });
+  });
+  on("ai", ({ data }) => {
+    if (data.requestId !== pending) return;
+    pending = null;
+    if (!data.ok) { v.log("AI request failed:", data.error); return; }
+    v.log(data.text, data.citations);
+  });
+}
+```
+
+لا تعاد الطلبات قيد التنفيذ بعد إعادة التشغيل. Run أو التعطيل/إعادة التفعيل أو الحذف يسقط الردود القديمة؛ والمتصفح غير المتصل يبلغ `ai-unavailable`. تشمل الأخطاء `ai-not-configured`, `ai-invalid-input`, `ai-busy`, `ai-daily-limit`, `ai-request-failed`, `ai-usage-storage-unavailable`. لا تمحو المكالمات الفاشلة نتيجة سابقة احتفظت بها القاعدة؛ وحد حالة القاعدة ما زال64KB.
+
+اكتشف الخيارات الخالية من بيانات الاعتماد عبر `rule_ai_models` على Mac أو `settings-rule-ai-models` في المتصفح، واضبط `ruleAI` عبر مسار set-group الحالي. الحقول `providerModel`, `accountID`, `reasoningEffort` (`default`, `low`, `medium`, `high`) و`dailyRequestLimit` (null أو1–100000). استخدم خيارًا معادًا؛ لا تضع مفتاحًا أو عنوان مزود في مصدر القاعدة.
