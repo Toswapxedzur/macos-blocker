@@ -90,11 +90,22 @@ final class WorkerServiceTests: XCTestCase {
         let web: [String: Any] = ["id": "visit", "category": "web-visit", "key": "example.test", "label": "example.test", "seconds": 15, "startedAtMs": date]
         try await assertAccepted(service, ["kind": "browser-record", "body": ["records": [web]]], 0)
         _ = try await activity(service, ["kind": "setSettings", "category": "web-visit", "enabled": true])
+        let grant = try await activity(service, ["kind": "settings"])
+        let epoch = try XCTUnwrap(grant["epoch"] as? String)
+        let revision = try XCTUnwrap(grant["revision"] as? Int)
+        let issuedAt = try XCTUnwrap(grant["changedAtMs"] as? Double)
+        try await Task.sleep(nanoseconds: 10_000_000)
+        let endedAt = Date().timeIntervalSince1970 * 1_000 - 1
+        var authorized = web
+        authorized["startedAtMs"] = issuedAt
+        authorized["observedEndedAtMs"] = endedAt
+        authorized["seconds"] = (endedAt - issuedAt) / 1_000
+        authorized["authorization"] = ["epoch": epoch, "revision": revision] as [String: Any]
         let icon = "data:image/png;base64,fixture"
-        try await assertAccepted(service, ["kind": "browser-record", "body": ["records": [web], "icons": ["example.test": icon]]], 1)
+        try await assertAccepted(service, ["kind": "browser-record", "body": ["records": [authorized], "icons": ["example.test": icon]]], 1)
         let iconPayload = try object(try await activity(service, ["kind": "snapshot"])["icons"] as Any)
         XCTAssertEqual(iconPayload["example.test"] as? String, icon)
-        try await assertAccepted(service, ["kind": "browser-record", "body": ["records": [web]]], 0)
+        try await assertAccepted(service, ["kind": "browser-record", "body": ["records": [authorized]]], 0)
         _ = try await activity(service, ["kind": "setSettings", "category": "app-usage", "enabled": true])
         var forged = web; forged["id"] = "forged"; forged["category"] = "app-usage"
         try await assertAccepted(service, ["kind": "browser-record", "body": ["records": [forged]]], 0)

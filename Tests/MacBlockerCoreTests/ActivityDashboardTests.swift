@@ -122,8 +122,8 @@ final class ActivityDashboardTests: XCTestCase {
         let now = iso("2026-09-29T12:00:00Z")
         let store = ActivityStore(directory: directory, now: { now }, calendar: utc)
         store.updateSettings { $0.setEnabled(true, for: .appUsage) }
-        for (key, minutes) in [("chrome", 10.0), ("code", 20.0)] {
-            XCTAssertTrue(store.record(ActivityRecord(id: key, category: .appUsage, startedAt: iso("2026-09-29T09:00:00Z"), seconds: minutes * 60, key: key, label: key)))
+        for (key, start, minutes) in [("chrome", "2026-09-29T09:00:00Z", 10.0), ("code", "2026-09-29T09:10:00Z", 20.0)] {
+            XCTAssertTrue(store.record(ActivityRecord(id: key, category: .appUsage, startedAt: iso(start), seconds: minutes * 60, key: key, label: key)))
         }
         let picked = store.detail(pick: .item(.appUsage, "code"), mapDays: 7, barDays: 2)
         XCTAssertEqual(picked.map.daySeconds.last, 20 * 60)

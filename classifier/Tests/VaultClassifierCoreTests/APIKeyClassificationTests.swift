@@ -21,7 +21,7 @@ final class APIKeyClassificationTests: XCTestCase {
         return try JSONSerialization.data(withJSONObject: object)
     }
     func testThreeProvidersUseOfficialEndpointsHeadersAndStructuredBodies() async throws {
-        for (type, host, model, header) in [(APIKeyProviderType.openAI,"api.openai.com","gpt-4.1-mini","Authorization"),(.gemini,"generativelanguage.googleapis.com","gemini-3.1-flash-lite","x-goog-api-key"),(.xAI,"api.x.ai","grok-fixture","Authorization")] {
+        for (type, host, model, header) in [(APIKeyProviderType.openAI,"api.openai.com","gpt-5-fixture","Authorization"),(.gemini,"generativelanguage.googleapis.com","gemini-3.1-flash-lite","x-goog-api-key"),(.xAI,"api.x.ai","grok-4.6-fixture","Authorization")] {
             let profile = APIKeyProviderProfile(id: "fixture", type: type, credential: "fixture-key-not-real")
             let expected = try response(type)
             let http = URLSessionProviderHTTPClient { request in
@@ -131,7 +131,14 @@ final class APIKeyClassificationTests: XCTestCase {
     func testSearchIsExplicitAndUnsupportedGeminiCombinationIsRefused() throws {
         for type in [APIKeyProviderType.openAI,.gemini,.xAI] {
             let profile = APIKeyProviderProfile(type: type)
-            let request = try APIKeyClassificationEngine.prepare([item], configuration: .init(profileID: profile.id, model: "gemini-3.1-flash-lite"), profile: profile)
+            let model: String
+            switch type {
+            case .openAI: model = "gpt-5-fixture"
+            case .gemini: model = "gemini-3.1-flash-lite"
+            case .xAI: model = "grok-4.6-fixture"
+            default: continue
+            }
+            let request = try APIKeyClassificationEngine.prepare([item], configuration: .init(profileID: profile.id, model: model), profile: profile)
             let body = try JSONSerialization.jsonObject(with: request.body) as! [String: Any]
             XCTAssertNotNil(body["tools"])
         }
@@ -172,13 +179,21 @@ private actor APIBatchTransport: ProviderHTTPClient {
     func counts() -> (Int, Int, Int) { (calls, peak, active) }
 }
 
+private func waitForTransportCall(_ transport: APIBatchTransport) async -> Bool {
+    for _ in 0..<200 {
+        if await transport.counts().0 > 0 { return true }
+        try? await Task.sleep(nanoseconds: 10_000_000)
+    }
+    return false
+}
+
 extension APIKeyClassificationTests {
     func testParallelAPIBatchesKeepOrderAndGlobalConcurrencyAcrossCallers() async throws {
         let transport = APIBatchTransport()
         let profile = APIKeyProviderProfile(id: "p", type: .openAI, credential: "fixture-not-real")
         let client = APIKeyClassificationClient(profiles: { _ in profile }, http: transport)
         let type = ClassifierTypeAsset(name: "Fixture", treeID: "t", treeRevision: 1, datasetID: "d", datasetRevision: 1,
-            classificationProvider: .apiKey, apiKey: .init(profileID: "p", model: "fixture"))
+            classificationProvider: .apiKey, apiKey: .init(profileID: "p", model: "gpt-5-fixture"))
         let engine = try await client.resolveCloudEngine(for: type)
         let requests = (0..<32).map { index in LLMClassificationRequest(staticPrefix: item.staticPrefix,
             dynamicSuffix: index < 16 ? "Mathematics" : "Games", allowedTagNames: item.allowedTagNames, maximumTags: 3) }
@@ -198,10 +213,12 @@ extension APIKeyClassificationTests {
         let openAI = APIKeyProviderProfile(id: profile.id, type: .openAI, credential: profile.credential)
         let client = APIKeyClassificationClient(profiles: { _ in openAI }, http: transport)
         let type = ClassifierTypeAsset(name: "Fixture", treeID: "t", treeRevision: 1, datasetID: "d", datasetRevision: 1,
-            classificationProvider: .apiKey, apiKey: .init(profileID: profile.id, model: "fixture"))
+            classificationProvider: .apiKey, apiKey: .init(profileID: profile.id, model: "gpt-5-fixture"))
         let engine = try await client.resolveCloudEngine(for: type), request = item
         let task = Task { try await engine.classify(request) }
-        while await transport.counts().0 == 0 { await Task.yield() }
+        guard await waitForTransportCall(transport) else {
+            task.cancel(); XCTFail("Fixture request never reached transport"); await client.shutdown(); return
+        }
         await client.shutdown()
         do { _ = try await task.value; XCTFail("shutdown must cancel") } catch { XCTAssertTrue(error is CancellationError) }
         let status = await client.status(); XCTAssertTrue(status.failedProfileIDs.isEmpty)
@@ -219,11 +236,13 @@ extension APIKeyClassificationTests {
         catalog.trees.append(tree); let dataset = catalog.datasets[0]
         catalog.classifierTypes = [.init(id: "g", name: "Fixture", treeID: tree.id, treeRevision: tree.revision,
             datasetID: dataset.id, datasetRevision: dataset.revision, applicablePlatformIDs: ["youtube"],
-            classificationProvider: .apiKey, apiKey: .init(profileID: profile.id, model: "model-a"))]
+            classificationProvider: .apiKey, apiKey: .init(profileID: profile.id, model: "gpt-5-model-a"))]
         try coordinator.updateWorkspaceCatalog(catalog); coordinator.setCloudEngineResolver(client)
         let pending = Task { try await coordinator.classifyVideo(platformID: "youtube", entryID: "v", creatorID: "c", title: "Mathematics") }
-        while await transport.counts().0 == 0 { await Task.yield() }
-        catalog.classifierTypes[0].apiKey.model = "model-b"; try coordinator.updateWorkspaceCatalog(catalog)
+        guard await waitForTransportCall(transport) else {
+            pending.cancel(); XCTFail("Fixture request never reached transport"); await client.shutdown(); return
+        }
+        catalog.classifierTypes[0].apiKey.model = "gpt-5-model-b"; try coordinator.updateWorkspaceCatalog(catalog)
         do { _ = try await pending.value; XCTFail("Old-model replies must be discarded") }
         catch { XCTAssertTrue(error is CancellationError) }
         XCTAssertTrue(coordinator.snapshot().workspaceCatalog.videoClassifications.isEmpty)
@@ -241,10 +260,12 @@ extension APIKeyClassificationTests {
         catalog.trees.append(tree); let dataset = catalog.datasets[0]
         catalog.classifierTypes = [.init(id: "g", name: "Fixture", treeID: tree.id, treeRevision: tree.revision,
             datasetID: dataset.id, datasetRevision: dataset.revision, applicablePlatformIDs: ["youtube"],
-            classificationProvider: .apiKey, apiKey: .init(profileID: profile.id, model: "model-a"))]
+            classificationProvider: .apiKey, apiKey: .init(profileID: profile.id, model: "gpt-5-model-a"))]
         try coordinator.updateWorkspaceCatalog(catalog); coordinator.setCloudEngineResolver(client)
         let pending = Task { try await coordinator.classifyVideo(platformID: "youtube", entryID: "v", creatorID: "c", title: "Mathematics") }
-        while await transport.counts().0 == 0 { await Task.yield() }
+        guard await waitForTransportCall(transport) else {
+            pending.cancel(); XCTFail("Fixture request never reached transport"); await client.shutdown(); return
+        }
         catalog.classifierTypes[0].apiKey.reasoningEffort = .high; try coordinator.updateWorkspaceCatalog(catalog)
         do { _ = try await pending.value; XCTFail("Old-effort replies must be discarded") }
         catch { XCTAssertTrue(error is CancellationError) }

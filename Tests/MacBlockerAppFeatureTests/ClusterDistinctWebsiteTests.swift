@@ -32,7 +32,7 @@ final class ClusterDistinctWebsiteTests: XCTestCase {
     }
     private func persistedScopes() throws -> [[String: Any]] {
         let saved = try XCTUnwrap(UserDefaults.standard.data(forKey: registryKey))
-        let payload = try StorageSchemaPolicy(format: "hub.clusters").payload(from: saved)
+        let payload = try StorageSchemaPolicy(format: "hub.clusters", currentSchema: 3).payload(from: saved)
         let registry = try XCTUnwrap(JSONSerialization.jsonObject(with: payload) as? [[String: Any]])
         return try XCTUnwrap(registry.first?["sharedScopes"] as? [[String: Any]])
     }
@@ -102,7 +102,7 @@ final class ClusterDistinctWebsiteTests: XCTestCase {
         send(restored, "chrome", [site("chrome.example")], ts: Date().timeIntervalSince1970 * 1000 + 10)
         XCTAssertEqual(try scopes(restored).count, 1)
         let latest = try XCTUnwrap(UserDefaults.standard.data(forKey: registryKey))
-        let payload = try StorageSchemaPolicy(format: "hub.clusters").payload(from: latest)
+        let payload = try StorageSchemaPolicy(format: "hub.clusters", currentSchema: 3).payload(from: latest)
         let registry = try XCTUnwrap(JSONSerialization.jsonObject(with: payload) as? [[String: Any]])
         XCTAssertEqual((registry.first?["scopeOrigins"] as? [String: String])?.keys.sorted(), ["site"])
     }

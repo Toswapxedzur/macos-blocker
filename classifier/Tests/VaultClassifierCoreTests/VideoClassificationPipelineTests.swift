@@ -122,7 +122,7 @@ final class VideoClassificationPipelineTests: XCTestCase {
         XCTAssertEqual(result.tags.map(\.tagID), ["p", "m"])
         XCTAssertEqual(recorder.last?.minimumConfidence, 4)
         XCTAssertEqual(recorder.last?.minimumTags, 0)
-        XCTAssertTrue(recorder.last?.staticPrefix.contains("zero is valid") == true)
+        XCTAssertTrue(recorder.last?.staticPrefix.contains("zero tags is valid") == true)
 
         let strict = VideoClassificationPipeline(llm: llm, maximumTags: 32, minimumConfidence: 5, promptVersion: "p6")
         let strictResult = try await strict.classify(
