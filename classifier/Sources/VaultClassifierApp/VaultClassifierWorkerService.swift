@@ -42,6 +42,24 @@ public final class VaultClassifierWorkerService {
         switch operation {
         case "snapshot":
             return remapResources(model.webSnapshot(includeCollections: false))
+        case "ruleAIModels":
+            // Windows' native editor and authenticated browser peers share the
+            // worker's credential-free model projection. Never return profiles
+            // or provider credentials over this host channel.
+            return ["models": model.ruleAIModels()]
+        case "ruleAIGenerate":
+            guard let raw = data["configuration"] as? [String: Any],
+                  JSONSerialization.isValidJSONObject(raw),
+                  let encoded = try? JSONSerialization.data(withJSONObject: raw),
+                  encoded.count <= 2_048,
+                  let configuration = try? JSONDecoder().decode(RuleAIConfiguration.self, from: encoded),
+                  model.validateRuleAI(configuration),
+                  let payload = data["payload"] as? String,
+                  payload.utf8.count <= 48_000 else { throw WorkerInputError.invalidRuleAIRequest }
+            let input = try RuleAIInput(payload: payload)
+            let answer = try await model.generateForRule(configuration: configuration, input: input)
+            let response = try JSONEncoder().encode(answer)
+            return try JSONSerialization.jsonObject(with: response)
         case "action":
             guard let action = data["action"] as? String, action.count <= 128 else {
                 throw WorkerInputError.invalidAction
@@ -141,5 +159,6 @@ private enum WorkerInputError: String, Error, LocalizedError {
     case invalidOperation = "invalid-worker-operation"
     case invalidResource = "invalid-classifier-resource"
     case missingResource = "classifier-resource-not-found"
+    case invalidRuleAIRequest = "ai-invalid-input"
     var errorDescription: String? { rawValue }
 }

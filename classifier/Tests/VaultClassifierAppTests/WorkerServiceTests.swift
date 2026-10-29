@@ -84,6 +84,17 @@ final class WorkerServiceTests: XCTestCase {
         await assertRefuses(service, operation: "resource", data: ["url": "file:///private/secret.json"])
     }
 
+    func testRuleAIWorkerChannelExposesOnlyModelsAndRefusesUnconfiguredGeneration() async throws {
+        let service = try worker()
+        let projection = try object(await service.handle(operation: "ruleAIModels", data: [:]))
+        XCTAssertEqual((projection["models"] as? [[String: Any]])?.count, 0)
+        await assertRefuses(service, operation: "ruleAIGenerate", data: [
+            "configuration": ["providerModel": "api:missing:model", "accountID": "", "reasoningEffort": "medium"],
+            "payload": "{\"prompt\":\"test\"}"
+        ])
+        await assertRefuses(service, operation: "ruleAIGenerate", data: ["payload": "{\"prompt\":\"test\"}"])
+    }
+
     func testActivityKeepsBrowserRecordingOptInAndRejectsForgedNativeRecords() async throws {
         let service = try worker()
         let date = Date().timeIntervalSince1970 * 1_000
