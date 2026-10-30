@@ -25,6 +25,11 @@ APP_PATH="${APP_PATH:-$BUILD_DIR/$APP_NAME.app}"
 case "$VAULT_BUILD_ARCH" in arm64|x86_64) ;; *) echo "Unsupported architecture: $VAULT_BUILD_ARCH" >&2; exit 1 ;; esac
 export MACOSX_DEPLOYMENT_TARGET="$MACOS_MIN_VERSION"
 BUILD_FLAGS=(-c release --arch "$VAULT_BUILD_ARCH")
+SPARKLE_ARTIFACTS_ROOT="$ROOT/.build/artifacts"
+if [[ -n "${VAULT_SWIFT_SCRATCH_PATH:-}" ]]; then
+  BUILD_FLAGS+=(--scratch-path "$VAULT_SWIFT_SCRATCH_PATH")
+  SPARKLE_ARTIFACTS_ROOT="$VAULT_SWIFT_SCRATCH_PATH/artifacts"
+fi
 binary_dir="$(swift build "${BUILD_FLAGS[@]}" --show-bin-path --package-path "$ROOT")"
 RELEASE_BINARY="$binary_dir/$SWIFTPM_PRODUCT"
 ICON_SOURCE="${ICON_SOURCE:-$ROOT/Assets/Branding/mac-vault-master.png}"
@@ -35,10 +40,20 @@ echo "[build_app] version=$VERSION build=$BUILD_NUMBER bundle=$BUNDLE_ID"
 swift build "${BUILD_FLAGS[@]}" --product "$SWIFTPM_PRODUCT" --package-path "$ROOT"
 
 rm -rf "$APP_PATH"
-mkdir -p "$APP_PATH/Contents/MacOS" "$APP_PATH/Contents/Resources"
+mkdir -p "$APP_PATH/Contents/MacOS" "$APP_PATH/Contents/Resources" "$APP_PATH/Contents/Frameworks"
 
 cp "$RELEASE_BINARY" "$APP_PATH/Contents/MacOS/$APP_NAME"
 chmod 755 "$APP_PATH/Contents/MacOS/$APP_NAME"
+install_name_tool -add_rpath @executable_path/../Frameworks "$APP_PATH/Contents/MacOS/$APP_NAME"
+
+# Sparkle is a dynamic binary package. Preserve its framework symlinks and
+# helpers in the app bundle before the existing Developer ID signing pass.
+SPARKLE_FRAMEWORK="$(find "$SPARKLE_ARTIFACTS_ROOT" -path '*/Sparkle.xcframework/macos-arm64_x86_64/Sparkle.framework' -type d -print -quit)"
+if [[ ! -d "$SPARKLE_FRAMEWORK" ]]; then
+  echo "[build_app] Sparkle 2 framework is missing after SwiftPM build" >&2
+  exit 1
+fi
+cp -R "$SPARKLE_FRAMEWORK" "$APP_PATH/Contents/Frameworks/"
 
 # Every SwiftPM resource bundle: Mac Vault's own (Core, WebUI) and the Vault
 # Classifier component's (its page assets and seed resources).
@@ -109,6 +124,22 @@ cat > "$APP_PATH/Contents/Info.plist" <<PLIST
   <true/>
   <key>NSSupportsAutomaticTermination</key>
   <false/>
+  <key>VaultEnvironment</key>
+  <string>production</string>
+  <key>SUFeedURL</key>
+  <string>https://customblocker.com/downloads/updates/mac/$VAULT_BUILD_ARCH/appcast.xml</string>
+  <key>SUPublicEDKey</key>
+  <string>kAF7FiYwYuv2rtoYww2Oo8CYV9MzZjdwMRWRbV0YAdA=</string>
+  <key>SUEnableAutomaticChecks</key>
+  <false/>
+  <key>SUAutomaticallyUpdate</key>
+  <false/>
+  <key>SURequireSignedFeed</key>
+  <true/>
+  <key>SUVerifyUpdateBeforeExtraction</key>
+  <true/>
+  <key>SUSignedFeedFailureExpirationInterval</key>
+  <integer>0</integer>
   <key>NSHumanReadableCopyright</key>
   <string>Copyright © 2026 Adamancia Vault. All rights reserved.</string>
 </dict>

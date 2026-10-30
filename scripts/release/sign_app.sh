@@ -39,9 +39,15 @@ if ! security find-identity -v -p codesigning | grep -F "$SIGNING_IDENTITY" >/de
 fi
 
 echo "[sign_app] signing $APP_PATH"
-# Nested code receives hardened runtime signing without the outer app's group.
-# The outer signature alone carries its validated production entitlement.
-codesign --force --deep --timestamp --options runtime --sign "$SIGNING_IDENTITY" "$APP_PATH"
+# Sign Sparkle's nested executables explicitly so the Downloader service keeps
+# its entitlement; broad --deep signing would strip it.
+SPARKLE="$APP_PATH/Contents/Frameworks/Sparkle.framework"
+codesign --force --timestamp --options runtime --sign "$SIGNING_IDENTITY" "$SPARKLE/Versions/B/XPCServices/Installer.xpc"
+codesign --force --timestamp --options runtime --sign "$SIGNING_IDENTITY" --preserve-metadata=entitlements "$SPARKLE/Versions/B/XPCServices/Downloader.xpc"
+codesign --force --timestamp --options runtime --sign "$SIGNING_IDENTITY" "$SPARKLE/Versions/B/Autoupdate"
+codesign --force --timestamp --options runtime --sign "$SIGNING_IDENTITY" "$SPARKLE/Versions/B/Updater.app"
+codesign --force --timestamp --options runtime --sign "$SIGNING_IDENTITY" "$SPARKLE"
+codesign --force --timestamp --options runtime --sign "$SIGNING_IDENTITY" "$APP_PATH/Contents/MacOS/VaultLocalHubNativeHost"
 codesign --force --timestamp --options runtime --sign "$SIGNING_IDENTITY" \
   --entitlements "$ENTITLEMENTS" "$APP_PATH"
 

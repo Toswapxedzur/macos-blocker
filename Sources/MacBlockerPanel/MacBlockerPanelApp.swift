@@ -2,6 +2,7 @@ import SwiftUI
 import MacBlockerAppFeature
 import MacBlockerWebUI
 import MacBlockerCore
+import Sparkle
 
 #if os(macOS)
 import AppKit
@@ -14,6 +15,7 @@ import AppKit
 /// keep-running-after-last-window-close) from `BlockerAppDelegate`.
 final class PanelAppDelegate: BlockerAppDelegate {
     override func applicationDidFinishLaunching(_ notification: Notification) {
+        MacVaultUpdates.shared.startIfBundled()
         if let url = MacBundledResources.directory(target: "MacBlockerPanel", subdirectory: "Resources")?.appendingPathComponent("mac-vault-master.png"),
            let image = NSImage(contentsOf: url) {
             NSApp.applicationIconImage = image
@@ -42,14 +44,7 @@ struct MacBlockerPanelApp: App {
 
         #if os(macOS)
         Settings {
-            VStack(alignment: .leading, spacing: 12) {
-                Text("Mac Vault")
-                    .font(.title2.bold())
-                Text(VaultNativeLanguage.text("native.macSettings", fallback: "Mac Vault runs the shared editor and enforces your groups on this Mac."))
-                    .foregroundStyle(.secondary)
-                    .frame(maxWidth: 420, alignment: .leading)
-            }
-            .padding()
+            MacVaultUpdateSettings()
         }
         #endif
     }

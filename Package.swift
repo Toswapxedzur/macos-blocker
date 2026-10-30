@@ -13,6 +13,7 @@ let package = Package(
         .library(name: "MacBlockerMacControl", targets: ["MacBlockerMacControl"]),
         .library(name: "MacBlockerAppFeature", targets: ["MacBlockerAppFeature"]),
         .library(name: "MacBlockerWebUI", targets: ["MacBlockerWebUI"]),
+        .library(name: "SparkleFramework", targets: ["Sparkle"]),
         .executable(name: "MacBlockerPanel", targets: ["MacBlockerPanel"])
     ],
     dependencies: [
@@ -21,6 +22,7 @@ let package = Package(
         .package(path: "classifier")
     ],
     targets: [
+        .binaryTarget(name: "Sparkle", url: "https://github.com/sparkle-project/Sparkle/releases/download/2.10.0/Sparkle-for-Swift-Package-Manager.zip", checksum: "17e28312b8e18ab7cdbbe09a6fb28cc55a5479ec6c371dbc07cdecd2a14fd959"),
         .target(
             name: "MacBlockerCore",
             dependencies: [.product(name: "VaultActivityCore", package: "classifier"), .product(name: "VaultClassifierCore", package: "classifier")],
@@ -68,7 +70,7 @@ let package = Package(
         ),
         .executableTarget(
             name: "MacBlockerPanel",
-            dependencies: ["MacBlockerAppFeature", "MacBlockerCore"],
+            dependencies: ["MacBlockerAppFeature", "MacBlockerCore", "Sparkle"],
             resources: [.copy("Resources")]
         ),
         .testTarget(

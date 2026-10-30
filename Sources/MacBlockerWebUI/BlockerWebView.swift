@@ -459,7 +459,7 @@ public struct BlockerWebView: NSViewRepresentable {
                 let message = body["message"] as? [String: Any] ?? [:]
                 guard let onLinkRequest else { return }
                 onLinkRequest(kind, message) { [weak self] refusal in
-                    Task { @MainActor in
+                    Task { @MainActor [weak self] in
                         guard let self else { return }
                         if let refusal, let data = try? JSONSerialization.data(withJSONObject: [refusal]),
                            let json = String(data: data, encoding: .utf8) {

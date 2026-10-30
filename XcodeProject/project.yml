@@ -44,12 +44,24 @@ targets:
         LSMinimumSystemVersion: "13.3"
         NSHighResolutionCapable: true
         NSSupportsAutomaticTermination: false
+        VaultEnvironment: development
+        SUFeedURL: https://customblocker.com/downloads/updates/mac/arm64/appcast.xml
+        SUPublicEDKey: kAF7FiYwYuv2rtoYww2Oo8CYV9MzZjdwMRWRbV0YAdA=
+        SUEnableAutomaticChecks: false
+        SUAutomaticallyUpdate: false
+        SURequireSignedFeed: true
+        SUVerifyUpdateBeforeExtraction: true
+        SUSignedFeedFailureExpirationInterval: 0
+        SUEnableInstallerLauncherService: true
     entitlements:
       path: ../XcodeScaffold/Entitlements/AdamanciaVaultMacStore.entitlements
       properties:
         com.apple.security.app-sandbox: true
         com.apple.security.network.client: true
         com.apple.security.network.server: true
+        com.apple.security.temporary-exception.mach-lookup.global-name:
+          - com.adamancia.vault.mac-spks
+          - com.adamancia.vault.mac-spki
     settings:
       base:
         PRODUCT_NAME: AdamanciaVault
@@ -61,3 +73,5 @@ targets:
     dependencies:
       - package: MacBlocker
         product: MacBlockerAppFeature
+      - package: MacBlocker
+        product: SparkleFramework

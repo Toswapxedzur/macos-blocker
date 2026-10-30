@@ -63,16 +63,24 @@ class PackagingTests(unittest.TestCase):
         resource = output / 'FixtureResources.bundle'
         resource.mkdir()
         (resource / 'seed.json').write_text('{}')
+        framework = self.base / 'Sparkle.framework'
+        framework.mkdir()
+        (framework / 'Sparkle').write_text('fixture')
+        find = commands / 'find'
+        find.write_text('#!/bin/bash\nprintf "%s\\n" "$FIXTURE_SPARKLE"\n')
+        find.chmod(0o755)
         swift = commands / 'swift'
         swift.write_text('#!/bin/bash\ncase " $* " in *" --show-bin-path "*) echo "$FIXTURE_BIN" ;; esac\nprintf "%s\\n" "$*" >> "$FIXTURE_LOG"\n')
         swift.chmod(0o755)
         env = dict(self.env, PATH=str(commands) + ':' + os.environ['PATH'], FIXTURE_BIN=str(output),
                    FIXTURE_LOG=str(self.base / 'swift.log'), APP_PATH=str(self.app), APP_NAME='FixtureVault',
-                   BUILD_DIR=str(self.base / 'build'), ICON_SOURCE=str(self.base / 'absent.png'), VAULT_BUILD_ARCH=self.arch)
+                   BUILD_DIR=str(self.base / 'build'), ICON_SOURCE=str(self.base / 'absent.png'), VAULT_BUILD_ARCH=self.arch,
+                   FIXTURE_SPARKLE=str(framework))
         result = subprocess.run(['/bin/bash', str(HERE / 'build_app.sh')], env=env, text=True, capture_output=True)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertTrue((self.app / 'Contents/Resources/FixtureResources.bundle/seed.json').is_file())
         self.assertTrue((self.app / 'Contents/MacOS/VaultLocalHubNativeHost').is_file())
+        self.assertTrue((self.app / 'Contents/Frameworks/Sparkle.framework/Sparkle').is_file())
         self.assertIn('--arch ' + self.arch, (self.base / 'swift.log').read_text())
 
     def test_uninstaller_preserves_safari_state_and_grants(self):
