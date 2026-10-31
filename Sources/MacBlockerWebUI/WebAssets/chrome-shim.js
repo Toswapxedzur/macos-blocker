@@ -386,6 +386,9 @@
     var resolve = nativeReplies[id];
     if (resolve) { delete nativeReplies[id]; resolve(reply); }
   };
+  window.__cbUpdaterRequest = function (action, enabled) {
+    return nativeRequest("updater", { action: action, enabled: enabled }, { available: false, autoInstall: false });
+  };
 
   // cbasset Blob downloads are cancelled by WebKit; save the selected log natively.
   if (window.__CB_DESKTOP_PROGRAM_ID === "macapp") {

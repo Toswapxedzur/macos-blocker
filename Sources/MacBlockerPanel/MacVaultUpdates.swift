@@ -43,22 +43,3 @@ final class MacVaultUpdates: ObservableObject {
         controller?.checkForUpdates(nil)
     }
 }
-
-struct MacVaultUpdateSettings: View {
-    @ObservedObject private var updates = MacVaultUpdates.shared
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Text("Updates").font(.title2.bold())
-            Toggle("Auto install updates", isOn: Binding(
-                get: { updates.autoInstall },
-                set: { updates.setAutoInstall($0) }
-            ))
-            .disabled(!updates.available)
-            Button("Check for updates") { updates.checkManually() }
-                .disabled(!updates.available)
-        }
-        .frame(width: 360, alignment: .leading)
-        .padding(20)
-    }
-}

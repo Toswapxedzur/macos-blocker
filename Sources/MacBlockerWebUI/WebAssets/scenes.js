@@ -41,6 +41,31 @@
   // behavior; AI connections have their own column because custom rules also
   // use them. Both keep the shared dialog and focus lifecycle.
   const settingsModal = document.getElementById("settingsModal");
+  const updatesSection = document.createElement("section");
+  updatesSection.className = "settings-group native-updates";
+  updatesSection.innerHTML = '<span class="label">Updates</span>'
+    + '<label class="checkbox-row compact" for="vaultAutoUpdates">'
+    + '<input id="vaultAutoUpdates" type="checkbox"><span>Auto install updates</span></label>'
+    + '<div class="field-actions"><button id="vaultCheckUpdates" type="button" class="secondary">Check for updates</button></div>';
+  settingsModal.querySelector(".settings-col").appendChild(updatesSection);
+  const autoUpdates = updatesSection.querySelector("#vaultAutoUpdates");
+  const checkUpdates = updatesSection.querySelector("#vaultCheckUpdates");
+  async function refreshUpdates() {
+    const result = await window.__cbUpdaterRequest("status");
+    autoUpdates.checked = result.autoInstall === true;
+    autoUpdates.disabled = result.available !== true;
+    checkUpdates.disabled = result.available !== true || result.checking === true;
+  }
+  autoUpdates.addEventListener("change", async () => {
+    autoUpdates.disabled = true;
+    await window.__cbUpdaterRequest("set", autoUpdates.checked);
+    refreshUpdates();
+  });
+  checkUpdates.addEventListener("click", async () => {
+    checkUpdates.disabled = true;
+    await window.__cbUpdaterRequest("check");
+    refreshUpdates();
+  });
   function settingsMount(parent, id) {
     const host = document.createElement("div");
     host.className = "native-settings-host";
@@ -65,6 +90,7 @@
     const visible = !settingsModal.classList.contains("hidden");
     if (visible === settingsVisible) return;
     settingsVisible = visible;
+    if (visible) refreshUpdates();
     notifyScene(visible ? "settings" : document.body.dataset.scene || "vault");
     window.dispatchEvent(new CustomEvent("vault-settings-changed", { detail: { open: visible } }));
   }

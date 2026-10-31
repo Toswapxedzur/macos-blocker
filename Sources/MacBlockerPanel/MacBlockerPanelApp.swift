@@ -16,6 +16,15 @@ import AppKit
 final class PanelAppDelegate: BlockerAppDelegate {
     override func applicationDidFinishLaunching(_ notification: Notification) {
         MacVaultUpdates.shared.startIfBundled()
+        VaultUpdaterBridge.handle = { action, enabled in
+            let updates = MacVaultUpdates.shared
+            switch action {
+            case "set": if let enabled { updates.setAutoInstall(enabled) }
+            case "check": updates.checkManually()
+            default: break
+            }
+            return ["available": updates.available, "autoInstall": updates.autoInstall]
+        }
         if let url = MacBundledResources.directory(target: "MacBlockerPanel", subdirectory: "Resources")?.appendingPathComponent("mac-vault-master.png"),
            let image = NSImage(contentsOf: url) {
             NSApp.applicationIconImage = image
@@ -42,10 +51,5 @@ struct MacBlockerPanelApp: App {
         .defaultSize(width: 1100, height: 760)
         #endif
 
-        #if os(macOS)
-        Settings {
-            MacVaultUpdateSettings()
-        }
-        #endif
     }
 }

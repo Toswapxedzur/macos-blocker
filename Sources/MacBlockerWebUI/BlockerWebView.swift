@@ -402,6 +402,14 @@ public struct BlockerWebView: NSViewRepresentable {
             }
 
             switch kind {
+            case "updater":
+                guard Self.isTrustedEditorFrame(isMainFrame: message.frameInfo.isMainFrame,
+                                                url: message.frameInfo.request.url) else { return }
+                let payload = body["message"] as? [String: Any] ?? [:]
+                let action = payload["action"] as? String ?? "status"
+                let enabled = payload["enabled"] as? Bool
+                nativeReply(body, VaultUpdaterBridge.handle?(action, enabled)
+                    ?? ["available": false, "autoInstall": false])
             case "editor-definition-edit":
                 guard Self.isTrustedEditorFrame(isMainFrame: message.frameInfo.isMainFrame,
                                                 url: message.frameInfo.request.url),

@@ -18,6 +18,8 @@ body[data-scene="activity"] > main.popup {
 
 /* Native services share the app Settings dialog, independent of active page. */
 .native-settings-host { display: block; height: auto; margin-top: 18px; }
+.native-updates { margin-top: 18px; }
+.native-updates .field-actions { margin-top: 10px; }
 .ai-connections-col .native-settings-host { margin-top: 0; }
 
 /* The shared dialog owns the scroll, so native fields cannot be clipped. */
