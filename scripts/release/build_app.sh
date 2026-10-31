@@ -129,7 +129,7 @@ cat > "$APP_PATH/Contents/Info.plist" <<PLIST
   <key>SUFeedURL</key>
   <string>https://customblocker.com/downloads/updates/mac/$VAULT_BUILD_ARCH/appcast.xml</string>
   <key>SUPublicEDKey</key>
-  <string>GTpz+l+3VIy9rPTzY8hqxEqZ1zHqR/wiqnnBhDtv6D8=</string>
+  <string>kAF7FiYwYuv2rtoYww2Oo8CYV9MzZjdwMRWRbV0YAdA=</string>
   <key>SUEnableAutomaticChecks</key>
   <false/>
   <key>SUAutomaticallyUpdate</key>
