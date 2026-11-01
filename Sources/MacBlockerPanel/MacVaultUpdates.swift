@@ -15,16 +15,25 @@ final class MacVaultUpdates: ObservableObject {
 
     @Published private(set) var autoInstall = false
     @Published private(set) var available = false
+    @Published private(set) var requiresMove = false
     private var controller: SPUStandardUpdaterController?
 
     private init() {}
 
     func startIfBundled() {
-        guard controller == nil,
+        guard controller == nil, !available,
               Bundle.main.bundleURL.pathExtension == "app",
               Bundle.main.bundleIdentifier == "com.adamancia.vault.mac",
               Bundle.main.object(forInfoDictionaryKey: "VaultEnvironment") as? String == "production",
               Bundle.main.object(forInfoDictionaryKey: "SUFeedURL") as? String == Self.feedURL else { return }
+        // A disk image cannot be replaced in place. Keep the manual action
+        // available so it can explain the move, but never schedule a download
+        // that Sparkle could not install from this location.
+        if (try? Bundle.main.bundleURL.resourceValues(forKeys: [.volumeIsReadOnlyKey]).volumeIsReadOnly) == true {
+            requiresMove = true
+            available = true
+            return
+        }
         let controller = SPUStandardUpdaterController(startingUpdater: true, updaterDelegate: nil, userDriverDelegate: nil)
         self.controller = controller
         available = true
@@ -47,6 +56,14 @@ final class MacVaultUpdates: ObservableObject {
     }
 
     func checkManually() {
+        if requiresMove {
+            let alert = NSAlert()
+            alert.messageText = "Move Mac Vault to Applications"
+            alert.informativeText = "Quit Mac Vault, copy it to the Applications folder, then open that copy and check for updates again."
+            alert.addButton(withTitle: "OK")
+            alert.runModal()
+            return
+        }
         controller?.checkForUpdates(nil)
     }
 }

@@ -6,6 +6,9 @@
   display: none;
 }
 
+/* The Mac app uses a plain white canvas in every scene. */
+.popup { background: #ffffff; }
+
 body[data-scene="classifier"] > .vault-scene[data-scene="classifier"],
 body[data-scene="activity"] > .vault-scene[data-scene="activity"] {
   display: block;

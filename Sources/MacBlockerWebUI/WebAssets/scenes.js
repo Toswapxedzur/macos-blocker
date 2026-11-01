@@ -32,7 +32,7 @@
     const scope = host.attachShadow({ mode: "open" });
     scope.innerHTML = ["vault-ui.css", "vault-info.css", ...scene.styles]
       .map((href) => `<link rel="stylesheet" href="${href}">`)
-      .join("") + scene.markup;
+      .join("") + '<style>:host { background: #ffffff; }</style>' + scene.markup;
     document.body.appendChild(host);
     scopes[name] = scope;
   }
@@ -46,15 +46,17 @@
   updatesSection.innerHTML = '<span class="label">Updates</span>'
     + '<label class="checkbox-row compact" for="vaultAutoUpdates">'
     + '<input id="vaultAutoUpdates" type="checkbox"><span>Auto install updates</span></label>'
-    + '<div class="field-actions"><button id="vaultCheckUpdates" type="button" class="secondary">Check for updates</button></div>';
+    + '<div class="field-actions"><button id="vaultCheckUpdates" type="button" class="secondary">Check for updates</button></div>'
+    + '<p id="vaultUpdatesMoveHint" class="small-copy" hidden>Move Mac Vault to Applications, then open it there to install updates.</p>';
   settingsModal.querySelector(".settings-col").appendChild(updatesSection);
   const autoUpdates = updatesSection.querySelector("#vaultAutoUpdates");
   const checkUpdates = updatesSection.querySelector("#vaultCheckUpdates");
   async function refreshUpdates() {
     const result = await window.__cbUpdaterRequest("status");
     autoUpdates.checked = result.autoInstall === true;
-    autoUpdates.disabled = result.available !== true;
+    autoUpdates.disabled = result.available !== true || result.requiresMove === true;
     checkUpdates.disabled = result.available !== true || result.checking === true;
+    updatesSection.querySelector("#vaultUpdatesMoveHint").hidden = result.requiresMove !== true;
   }
   autoUpdates.addEventListener("change", async () => {
     autoUpdates.disabled = true;
@@ -74,6 +76,7 @@
     const scope = host.attachShadow({ mode: "open" });
     scope.innerHTML = ["vault-ui.css", "vault-info.css", "classifier/app.css"]
       .map(href => `<link rel="stylesheet" href="${href}">`).join("")
+      + '<style>:host { background: #ffffff; }</style>'
       + `<div id="${id}" class="utility-settings-body"></div>`;
     return { scope, root: scope.getElementById(id) };
   }

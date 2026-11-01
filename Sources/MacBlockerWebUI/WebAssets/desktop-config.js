@@ -1,1 +1,1 @@
-window.__CB_DESKTOP_MANIFEST={"version": "2.2.8", "name": "Mac Vault"};
+window.__CB_DESKTOP_MANIFEST={"version": "2.2.9", "name": "Mac Vault"};

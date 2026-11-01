@@ -23,7 +23,8 @@ final class PanelAppDelegate: BlockerAppDelegate {
             case "check": updates.checkManually()
             default: break
             }
-            return ["available": updates.available, "autoInstall": updates.autoInstall]
+            return ["available": updates.available, "autoInstall": updates.autoInstall,
+                    "requiresMove": updates.requiresMove]
         }
         if let url = MacBundledResources.directory(target: "MacBlockerPanel", subdirectory: "Resources")?.appendingPathComponent("mac-vault-master.png"),
            let image = NSImage(contentsOf: url) {
