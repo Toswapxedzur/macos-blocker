@@ -1,37 +1,51 @@
 #if os(macOS)
 import XCTest
+import CryptoKit
 @testable import MacBlockerAppFeature
 
 final class RuleAIConversationsTests: XCTestCase {
-    func testLinkedMembersShareHistoryAndKeepDistinctPreexistingNames() async throws {
+    func testGlobalHistoryEvictionAndDeletion() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: directory) }
         let store = RuleAIConversations(root: directory)
         try await store.append(members: ["mac:a"], name: "topic", model: "chatgpt:first", user: "Mac question", assistant: "Mac answer")
+        let initialLimit = try await store.setting(action: "status")
+        XCTAssertEqual(initialLimit, 1024)
+        let shared = try await store.prepare(members: ["chrome:b"], name: "topic")
+        XCTAssertTrue(shared.history.contains("Mac answer"))
         try await store.append(members: ["chrome:b"], name: "topic", model: "api:second", user: "Browser question", assistant: "Browser answer")
-        let linked = ["chrome:b", "mac:a"]
-        let before = try await store.prepare(members: linked, name: "topic")
-        XCTAssertTrue(before.history.contains("question"))
-        XCTAssertEqual(before.preservedNames.count, 1)
         let restarted = RuleAIConversations(root: directory)
-        let resumed = try await restarted.prepare(members: linked, name: "topic")
-        XCTAssertEqual(resumed.preservedNames, before.preservedNames)
-        try await store.append(members: linked, name: "topic", model: "api:third", user: "Shared question", assistant: "Shared answer")
-        for member in linked {
-            let after = try await store.prepare(members: [member], name: "topic")
-            XCTAssertTrue(after.history.contains("Shared answer"), "unlink retains the shared transcript")
-            let preserved = try await store.prepare(members: [member], name: before.preservedNames[0])
-            XCTAssertTrue(preserved.history.contains("question"))
+        let resumed = try await restarted.prepare(members: ["mac:a"], name: "topic")
+        XCTAssertTrue(resumed.history.contains("Browser answer"))
+        try RuleAIConversations.copyAllBeforeUnlink(members: ["mac:a", "chrome:b"], root: directory)
+        let afterUnlink = try await restarted.prepare(members: ["chrome:b"], name: "topic")
+        XCTAssertTrue(afterUnlink.history.contains("Mac answer"))
+        try await store.append(members: ["mac:a"], name: "older", model: "chatgpt:first", user: "Old", assistant: String(repeating: "x", count: 600_000))
+        try await store.append(members: ["mac:a"], name: "newer", model: "chatgpt:first", user: "New", assistant: String(repeating: "y", count: 600_000))
+        let newLimit = try await store.setting(action: "set", mb: 1)
+        XCTAssertEqual(newLimit, 1)
+        let evicted = try await restarted.prepare(members: ["mac:a"], name: "older")
+        XCTAssertEqual(evicted.history, "")
+        let retained = try await restarted.prepare(members: ["chrome:b"], name: "newer")
+        XCTAssertFalse(retained.history.isEmpty)
+        try await store.delete(name: "topic")
+        let deleted = try await restarted.prepare(members: ["chrome:b"], name: "topic")
+        XCTAssertEqual(deleted.history, "")
+        func digest(_ value: String) -> String {
+            SHA256.hash(data: Data(value.utf8)).map { String(format: "%02x", $0) }.joined()
         }
-        let names = try FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)
-            .flatMap { try FileManager.default.contentsOfDirectory(at: $0, includingPropertiesForKeys: nil) }
-            .compactMap { try? JSONDecoder().decode(RuleAIConversations.Document.self, from: Data(contentsOf: $0)).name }
-        XCTAssertTrue(names.contains("topic"))
-        XCTAssertTrue(names.contains { $0.hasPrefix("topic~") }, "independent same-name histories are preserved")
-        try await store.append(members: ["mac:a"], name: "unopened", model: "chatgpt:first", user: "Prior-only question", assistant: "Prior-only answer")
-        try RuleAIConversations.copyAllBeforeUnlink(members: linked, root: directory)
-        let copied = try await restarted.prepare(members: ["chrome:b"], name: "unopened")
-        XCTAssertTrue(copied.history.contains("Prior-only answer"))
+        for (member, value) in [("mac:a", "Mac-only"), ("chrome:b", "Browser-only")] {
+            let folder = directory.appendingPathComponent(digest(member), isDirectory: true)
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            let document = RuleAIConversations.Document(name: "legacy", messages: [
+                .init(id: UUID().uuidString, role: "assistant", text: value, model: "fixture", at: 1)
+            ])
+            try JSONEncoder().encode(document).write(to: folder.appendingPathComponent(digest("legacy") + ".json"))
+        }
+        let imported = try await restarted.prepare(members: ["mac:a"], name: "legacy")
+        XCTAssertEqual(imported.preservedNames.count, 1)
+        let alias = try await restarted.prepare(members: ["chrome:b"], name: imported.preservedNames[0])
+        XCTAssertTrue(alias.history.contains("only"))
     }
 }
 #endif

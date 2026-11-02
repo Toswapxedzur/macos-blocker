@@ -389,6 +389,9 @@
   window.__cbUpdaterRequest = function (action, enabled) {
     return nativeRequest("updater", { action: action, enabled: enabled }, { available: false, autoInstall: false });
   };
+  window.__cbConversationSettings = function (action, limitMB) {
+    return nativeRequest("conversation-settings", { action: action, limitMB: limitMB }, { ok: false });
+  };
 
   // cbasset Blob downloads are cancelled by WebKit; save the selected log natively.
   if (window.__CB_DESKTOP_PROGRAM_ID === "macapp") {

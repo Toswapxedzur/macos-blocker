@@ -5,3 +5,7 @@ import Foundation
 public enum VaultUpdaterBridge {
     public static var handle: ((String, Bool?) -> [String: Any])?
 }
+
+public enum VaultConversationBridge {
+    public static var handle: ((String, Int?) -> [String: Any])?
+}
