@@ -6,6 +6,7 @@ import Foundation
 
 public struct ClassifierTypeAsset: Codable, Equatable, Sendable, Identifiable {
     public static let maximumNameLength = 128
+    public static let youtubeEntryTypes = ["video", "short", "live", "post"]
 
     public var id: String
     public var name: String
@@ -17,6 +18,9 @@ public struct ClassifierTypeAsset: Codable, Equatable, Sendable, Identifiable {
     /// several; a platform belongs to at most one type — WorkspaceCatalog). Their
     /// bindings share the one collected dataset.
     public var applicablePlatformIDs: [String]
+    /// YouTube kinds eligible for new automatic decisions. Saved decisions are
+    /// retained and remain available when a kind is switched off.
+    public var enabledYouTubeEntryTypes: [String]
     /// This group owns concrete dial positions and house rules.
     public var tagging: TaggingSettings
     public var classificationProvider: ClassificationProvider
@@ -35,6 +39,7 @@ public struct ClassifierTypeAsset: Codable, Equatable, Sendable, Identifiable {
         datasetID: String,
         datasetRevision: Int,
         applicablePlatformIDs: [String] = [],
+        enabledYouTubeEntryTypes: [String] = youtubeEntryTypes,
         tagging: TaggingSettings = .init(),
         classificationProvider: ClassificationProvider = .chatGPT,
         chatGPT: ChatGPTClassificationSettings = .init(),
@@ -50,6 +55,7 @@ public struct ClassifierTypeAsset: Codable, Equatable, Sendable, Identifiable {
         self.datasetID = datasetID
         self.datasetRevision = datasetRevision
         self.applicablePlatformIDs = Self.cleanedPlatformIDs(applicablePlatformIDs)
+        self.enabledYouTubeEntryTypes = Self.cleanedYouTubeEntryTypes(enabledYouTubeEntryTypes)
         self.tagging = tagging
         self.classificationProvider = classificationProvider
         self.apiKey = apiKey
@@ -67,8 +73,12 @@ public struct ClassifierTypeAsset: Codable, Equatable, Sendable, Identifiable {
             .filter { !$0.isEmpty && seen.insert($0).inserted }
     }
 
+    public static func cleanedYouTubeEntryTypes(_ kinds: [String]) -> [String] {
+        youtubeEntryTypes.filter { kinds.contains($0) }
+    }
+
     private enum CodingKeys: String, CodingKey {
-        case id, name, treeID, treeRevision, datasetID, datasetRevision, applicablePlatformIDs,
+        case id, name, treeID, treeRevision, datasetID, datasetRevision, applicablePlatformIDs, enabledYouTubeEntryTypes,
              tagging, classificationProvider, chatGPT, apiKey, isPaused, order, updatedAtMilliseconds
         // Pre-dial keys (before 2026-09-23), read only to find the nearest position.
         case retiredLocalModel = "localModel"
@@ -90,6 +100,8 @@ public struct ClassifierTypeAsset: Codable, Equatable, Sendable, Identifiable {
         } else {
             applicablePlatformIDs = Self.cleanedPlatformIDs([try container.decodeIfPresent(String.self, forKey: .applicablePlatformID) ?? ""])
         }
+        enabledYouTubeEntryTypes = Self.cleanedYouTubeEntryTypes(
+            try container.decodeIfPresent([String].self, forKey: .enabledYouTubeEntryTypes) ?? Self.youtubeEntryTypes)
         tagging = try container.decodeIfPresent(TaggingSettings.self, forKey: .tagging)
             ?? container.decodeIfPresent(TaggingSettings.self, forKey: .retiredLocalModel) ?? .init()
         classificationProvider = try container.decodeIfPresent(ClassificationProvider.self, forKey: .classificationProvider) ?? .chatGPT
@@ -110,6 +122,7 @@ public struct ClassifierTypeAsset: Codable, Equatable, Sendable, Identifiable {
         try container.encode(datasetID, forKey: .datasetID)
         try container.encode(datasetRevision, forKey: .datasetRevision)
         try container.encode(applicablePlatformIDs, forKey: .applicablePlatformIDs)
+        try container.encode(enabledYouTubeEntryTypes, forKey: .enabledYouTubeEntryTypes)
         try container.encode(tagging, forKey: .tagging)
         try container.encode(classificationProvider, forKey: .classificationProvider)
         try container.encode(chatGPT, forKey: .chatGPT)

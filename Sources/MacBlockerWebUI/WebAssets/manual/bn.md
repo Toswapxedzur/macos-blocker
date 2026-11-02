@@ -39,7 +39,7 @@ Apps target-এর + picker-এ ইনস্টল করা বা বর্ত
 
 ## কনটেন্ট ট্যাগিং
 
-কনটেন্ট ট্যাগিং নির্ধারিত platform-এর content-এ নিজস্ব tag tree ও model settings দিয়ে tag দেয়। প্রতিটি platform একটি group-এর; তৈরি করার সময় বেছে নিন, পরে বদলানো যায় না। Blocking schedule/filter tagging নিয়ন্ত্রণ করে না। সেটিংস-এ tagging চালু করুন; প্রতিটি group-এর **ট্যাগ দেওয়া বিরতি দিন / ট্যাগ দেওয়া আবার শুরু করুন** আলাদা। **কার্যকলাপ → রেকর্ডিং**-এ platform feed recording বন্ধ করলে tagging-ও থামে।
+কনটেন্ট ট্যাগিং নির্ধারিত platform-এর content-এ নিজস্ব tag tree ও model settings দিয়ে tag দেয়। একটি platform এক সময়ে একটি group-এ থাকে; platform ও content-এর ধরন পরে বদলানো যায়, অথবা সব বন্ধ রাখা যায়। Blocking schedule/filter tagging নিয়ন্ত্রণ করে না। সেটিংস-এ tagging চালু করুন; প্রতিটি group-এর **ট্যাগ দেওয়া বিরতি দিন / ট্যাগ দেওয়া আবার শুরু করুন** আলাদা। **কার্যকলাপ → রেকর্ডিং**-এ platform feed recording বন্ধ করলে tagging-ও থামে।
 
 ### ট্যাগ ও মডেল সেটিং
 

@@ -286,8 +286,6 @@ enum WebBridgeInputError: Error, LocalizedError {
     case missingValue(String)
     case exceedsLimit(String, Int)
     case invalidChoice(String)
-    case fixedPlatforms
-    case noPlatformsSelected
 
     private static func label(for field: String) -> String {
         let labels = [
@@ -315,8 +313,6 @@ enum WebBridgeInputError: Error, LocalizedError {
         case .missingValue(let field): return "Check \(Self.label(for: field)) and try again."
         case .exceedsLimit(let field, let limit): return "Use at most \(limit) characters for \(Self.label(for: field))."
         case .invalidChoice(let field): return "Choose a supported value for \(Self.label(for: field))."
-        case .fixedPlatforms: return "Platforms cannot be changed after the group is created."
-        case .noPlatformsSelected: return "Select at least one platform."
         }
     }
 }

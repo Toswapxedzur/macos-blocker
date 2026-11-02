@@ -67,6 +67,10 @@ final class VaultClassifierCoreTests: XCTestCase {
             title: "A video"
         )
         XCTAssertNoThrow(try request.validate())
+        XCTAssertNoThrow(try NativeVideoTagsRequest(platformID: "youtube", entryID: "youtube:post:abc",
+            creatorID: "youtube:handle:@creator", title: "A post", entryType: "post").validate())
+        XCTAssertThrowsError(try NativeVideoTagsRequest(platformID: "youtube", entryID: "youtube:video:abc",
+            creatorID: "youtube:handle:@creator", title: "A video", entryType: "post").validate())
         XCTAssertThrowsError(try NativeVideoTagsRequest(
             platformID: "youtube",
             entryID: "reddit:post:abc",

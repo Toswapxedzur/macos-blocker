@@ -4,6 +4,39 @@ import Foundation
 // Split out of LocalStore.swift (CLASSIFIER-INDEPENDENCE §7, Phase 5):
 // same type, same behaviour.
 extension LocalClassifierCoordinator {
+    private static func youtubeKind(
+        platformID: String, entryID: String, supplied: String?, catalog: WorkspaceCatalog
+    ) -> String {
+        let stored = collectedEntry(platformID: platformID, entryID: entryID, catalog: catalog)?.entryType
+        if let stored, ClassifierTypeAsset.youtubeEntryTypes.contains(stored) { return stored }
+        if let supplied, ClassifierTypeAsset.youtubeEntryTypes.contains(supplied) { return supplied }
+        return "video"
+    }
+
+    /// Controls new model work only. Existing classifications remain readable.
+    public func permitsNewClassification(platformID: String, entryID: String, entryType: String?) -> Bool {
+        lock.withLock {
+            guard platformID == "youtube" else { return true }
+            let catalog = state.workspaceCatalog
+            guard let type = Self.orderedTypes(for: platformID, in: catalog).first else { return false }
+            return type.enabledYouTubeEntryTypes.contains(Self.youtubeKind(
+                platformID: platformID, entryID: entryID, supplied: entryType, catalog: catalog))
+        }
+    }
+
+    /// A disabled kind returns its last decided tags even if model settings have
+    /// changed since that decision. Switching the kind off does not erase it.
+    public func savedVideoTags(platformID: String, entryID: String) -> VideoTagsProjection? {
+        lock.withLock {
+            let catalog = state.workspaceCatalog
+            let types = Self.orderedTypes(for: platformID, in: catalog)
+            guard types.contains(where: {
+                catalog.videoClassification(classifierTypeID: $0.id, platformID: platformID, entryID: entryID) != nil
+            }) else { return nil }
+            return Self.videoTagsProjection(entryID: entryID, platformID: platformID, types: types, catalog: catalog)
+        }
+    }
+
     public func cachedVideoTags(platformID: String, entryID: String, input: VideoClassificationPipeline.Input? = nil) -> VideoTagsProjection? {
         lock.lock()
         defer { lock.unlock() }
@@ -104,6 +137,10 @@ extension LocalClassifierCoordinator {
             let settings = type.tagging
             var pending: [VideoClassificationPipeline.Input] = []
             for item in items {
+                if platformID == "youtube" && !type.enabledYouTubeEntryTypes.contains(Self.youtubeKind(
+                    platformID: platformID, entryID: item.entryID, supplied: item.entryType, catalog: catalog)) {
+                    continue
+                }
                 // A correction is authoritative for this taxonomy revision. Live
                 // requests and research-triggered refreshes must not overwrite it
                 // with a later model decision.
@@ -118,7 +155,7 @@ extension LocalClassifierCoordinator {
                 } else {
                     pending.append(.init(
                         title: item.title, summary: item.summary, text: item.text,
-                        entryID: item.entryID, creatorID: item.creatorID))
+                        entryID: item.entryID, creatorID: item.creatorID, entryType: item.entryType))
                 }
             }
             guard !pending.isEmpty else { continue }

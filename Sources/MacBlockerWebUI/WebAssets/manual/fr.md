@@ -44,7 +44,7 @@ Le sélecteur + d’une cible Apps affiche les apps installées ou ouvertes ; ro
 
 ## Étiquetage du contenu
 
-Un groupe Étiquetage du contenu étiquette le contenu de ses plateformes avec son arbre de tags et ses réglages de modèle. Chaque plateforme appartient à un groupe ; choisissez-les à la création car elles ne sont plus modifiables ensuite. Les horaires et filtres de blocage ne contrôlent pas le tagging. Activez-le dans Réglages et mettez chaque groupe en pause/reprise séparément. Désactiver l’enregistrement du flux dans **Activité → Enregistrement** arrête aussi son tagging.
+Un groupe Étiquetage du contenu étiquette le contenu de ses plateformes avec son arbre de tags et ses réglages de modèle. Une plateforme ne peut appartenir qu’à un groupe à la fois ; vous pouvez modifier les plateformes et les types de contenu plus tard ou tout laisser désactivé. Les horaires et filtres de blocage ne contrôlent pas le tagging. Activez-le dans Réglages et mettez chaque groupe en pause/reprise séparément. Désactiver l’enregistrement du flux dans **Activité → Enregistrement** arrête aussi son tagging.
 
 ### Tags et réglages du modèle
 

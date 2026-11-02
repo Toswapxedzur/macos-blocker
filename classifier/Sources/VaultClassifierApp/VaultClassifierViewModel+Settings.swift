@@ -45,6 +45,24 @@ extension VaultClassifierViewModel {
         } catch { issue = error.localizedDescription }
     }
 
+    func saveYouTubeEntryTypes(typeID: String, enabledKinds: [String]) {
+        do {
+            guard var catalog = localState?.workspaceCatalog,
+                  let index = catalog.classifierTypes.firstIndex(where: {
+                      $0.id == typeID && $0.applicablePlatformIDs.contains("youtube")
+                  }),
+                  enabledKinds.allSatisfy({ ClassifierTypeAsset.youtubeEntryTypes.contains($0) }) else {
+                throw WebBridgeInputError.invalidChoice("YouTube entry types")
+            }
+            catalog.classifierTypes[index].enabledYouTubeEntryTypes =
+                ClassifierTypeAsset.cleanedYouTubeEntryTypes(enabledKinds)
+            catalog.classifierTypes[index].updatedAtMilliseconds = WorkspaceCatalog.now()
+            try coordinator?.updateWorkspaceCatalog(catalog)
+            refreshLocalState()
+            issue = nil
+        } catch { issue = error.localizedDescription }
+    }
+
     /// Persists a group's evidence threshold and tagging instructions.
     func saveClassifierTypeTagging(typeID: String, settings: TaggingSettings) {
         do {

@@ -135,9 +135,8 @@ final class ClassifierMCPTests: XCTestCase {
             try XCTUnwrap((vm.mcpSnapshot(section: "assets.classifierTypes")?["assets.classifierTypes"]) as? [[String: Any]])
         }
         let before = try types().count
-        XCTAssertEqual(vm.mcpPerform(action: "createClassifierType", data: ["name": "Empty", "platformIDs": []]).issue,
-                       "Select at least one platform.")
-        XCTAssertEqual(try types().count, before)
+        XCTAssertNil(vm.mcpPerform(action: "createClassifierType", data: ["name": "Empty", "platformIDs": []]).issue)
+        XCTAssertEqual(try types().first { ($0["name"] as? String) == "Empty" }?["applicablePlatformIDs"] as? [String], [])
         XCTAssertNil(vm.mcpPerform(action: "createClassifierType", data: ["name": "Videos", "platformIDs": ["reddit", "bilibili"]]).issue)
         let videos = try XCTUnwrap(try types().first { ($0["name"] as? String) == "Videos" })
         XCTAssertEqual(videos["applicablePlatformIDs"] as? [String], ["reddit", "bilibili"])
@@ -146,12 +145,17 @@ final class ClassifierMCPTests: XCTestCase {
                         "Facebook is collected but not classified")
         XCTAssertNotNil(vm.mcpPerform(action: "createClassifierType", data: ["name": "Clash", "platformIDs": ["bilibili"]]).issue,
                         "Bilibili belongs to Videos")
-        XCTAssertEqual(try types().count, before + 1)
+        XCTAssertEqual(try types().count, before + 2)
 
         let id = try XCTUnwrap(videos["id"] as? String)
         let changedPlatforms = vm.mcpPerform(action: "configureClassifierType", data: ["typeID": id, "name": "Changed", "applicablePlatformIDs": ["bilibili"]])
-        XCTAssertEqual(changedPlatforms.issue, "Platforms cannot be changed after the group is created.")
+        XCTAssertNotNil(changedPlatforms.issue, "platforms use their own action")
         XCTAssertEqual(try types().first { ($0["id"] as? String) == id }?["name"] as? String, "Videos")
+        XCTAssertEqual(try types().first { ($0["id"] as? String) == id }?["applicablePlatformIDs"] as? [String], ["reddit", "bilibili"])
+
+        XCTAssertNil(vm.mcpPerform(action: "saveClassifierTypePlatforms", data: ["typeID": id, "platformIDs": []]).issue)
+        XCTAssertEqual(try types().first { ($0["id"] as? String) == id }?["applicablePlatformIDs"] as? [String], [])
+        XCTAssertNil(vm.mcpPerform(action: "saveClassifierTypePlatforms", data: ["typeID": id, "platformIDs": ["reddit", "bilibili"]]).issue)
         XCTAssertEqual(try types().first { ($0["id"] as? String) == id }?["applicablePlatformIDs"] as? [String], ["reddit", "bilibili"])
 
         XCTAssertNil(vm.mcpPerform(action: "configureClassifierType", data: ["typeID": id, "name": "Videos and posts"]).issue)

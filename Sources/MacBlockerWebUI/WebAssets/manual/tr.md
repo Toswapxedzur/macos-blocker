@@ -40,7 +40,7 @@ Apps hedefinin + seçicisinden yüklü veya çalışmakta olan uygulamaları se�
 
 ## İçerik etiketleme
 
-Her İçerik etiketleme, atanan platformların içeriğini kendi tag tree ve model ayarlarıyla etiketler. Her platform tek gruba aittir; oluştururken seçin, sonra değiştirilemez. Engelleme gruplarının çizelge ve filtreleri etiketlemeyi denetlemez. Ayarlar'te etiketlemeyi açın; her grupta **Etiketlemeyi duraklat / Etiketlemeyi sürdür** ayrı çalışır. **Etkinlik → Kayıt** içinde platform feed kaydını kapatmak onun etiketlemesini de durdurur.
+Her İçerik etiketleme, atanan platformların içeriğini kendi tag tree ve model ayarlarıyla etiketler. Her platform aynı anda yalnızca bir gruba ait olabilir; platformları ve içerik türlerini daha sonra değiştirebilir veya hepsini kapalı bırakabilirsiniz. Engelleme gruplarının çizelge ve filtreleri etiketlemeyi denetlemez. Ayarlar'te etiketlemeyi açın; her grupta **Etiketlemeyi duraklat / Etiketlemeyi sürdür** ayrı çalışır. **Etkinlik → Kayıt** içinde platform feed kaydını kapatmak onun etiketlemesini de durdurur.
 
 ### Etiketler ve model ayarları
 

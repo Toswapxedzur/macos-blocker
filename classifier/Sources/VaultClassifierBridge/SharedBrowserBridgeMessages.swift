@@ -81,22 +81,24 @@ public struct NativeVideoTagsRequest: Codable, Equatable, Sendable {
     public var entryID: String
     public var creatorID: String
     public var title: String
+    public var entryType: String?
     public var summary: String?
     public var text: String?
 
     public static let maximumTitleLength = 500
     public static let maximumEvidenceLength = 4_000
 
-    public init(platformID: String, entryID: String, creatorID: String, title: String, summary: String? = nil, text: String? = nil) {
+    public init(platformID: String, entryID: String, creatorID: String, title: String, summary: String? = nil, text: String? = nil, entryType: String? = nil) {
         self.platformID = platformID
         self.entryID = entryID
         self.creatorID = creatorID
         self.title = title
+        self.entryType = entryType
         self.summary = summary
         self.text = text
     }
 
-    private enum CodingKeys: String, CodingKey { case platformID, entryID, creatorID, title, summary, text }
+    private enum CodingKeys: String, CodingKey { case platformID, entryID, creatorID, title, summary, text, entryType }
 
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
@@ -104,6 +106,7 @@ public struct NativeVideoTagsRequest: Codable, Equatable, Sendable {
         entryID = try container.decode(String.self, forKey: .entryID)
         creatorID = try container.decode(String.self, forKey: .creatorID)
         title = try container.decode(String.self, forKey: .title)
+        entryType = try container.decodeIfPresent(String.self, forKey: .entryType)
         summary = try container.decodeIfPresent(String.self, forKey: .summary)
         text = try container.decodeIfPresent(String.self, forKey: .text)
     }
@@ -130,6 +133,18 @@ public struct NativeVideoTagsRequest: Codable, Equatable, Sendable {
               (text?.count ?? 0) <= Self.maximumEvidenceLength else {
             throw NativeVideoTagsError.invalidEvidence
         }
+        if let entryType {
+            guard entryType.count <= 32, !entryType.isEmpty,
+                  entryType.unicodeScalars.allSatisfy({ ($0.value >= 0x61 && $0.value <= 0x7a) || $0.value == 0x2d }) else {
+                throw NativeVideoTagsError.invalidEvidence
+            }
+            if platformID == "youtube" {
+                guard ["video", "short", "live", "post"].contains(entryType),
+                      entryID.hasPrefix(entryType == "post" ? "youtube:post:" : "youtube:video:") else {
+                    throw NativeVideoTagsError.invalidEvidence
+                }
+            }
+        }
     }
 
     static func isValidPlatformID(_ value: String) -> Bool {
@@ -149,16 +164,19 @@ public struct NativeVideoTagsResponse: Codable, Equatable, Sendable {
     /// True when the video is not yet classified: classification was queued and
     /// the caller should re-request shortly (the pill fills in on the next pass).
     public var pending: Bool
+    /// No saved decision and this kind is switched off; the browser shows no pill.
+    public var skipped: Bool
 
-    public init(platformID: String, entryID: String, tags: [NativeVideoTag], predicted: Bool = false, pending: Bool = false) {
+    public init(platformID: String, entryID: String, tags: [NativeVideoTag], predicted: Bool = false, pending: Bool = false, skipped: Bool = false) {
         self.platformID = platformID
         self.entryID = entryID
         self.tags = NativeVideoTag.accepted(tags)
         self.predicted = predicted
         self.pending = pending
+        self.skipped = skipped
     }
 
-    private enum CodingKeys: String, CodingKey { case platformID, entryID, tags, predicted, pending }
+    private enum CodingKeys: String, CodingKey { case platformID, entryID, tags, predicted, pending, skipped }
 
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
@@ -167,6 +185,7 @@ public struct NativeVideoTagsResponse: Codable, Equatable, Sendable {
         tags = NativeVideoTag.accepted(try container.decode([NativeVideoTag].self, forKey: .tags))
         predicted = try container.decodeIfPresent(Bool.self, forKey: .predicted) ?? false
         pending = try container.decodeIfPresent(Bool.self, forKey: .pending) ?? false
+        skipped = try container.decodeIfPresent(Bool.self, forKey: .skipped) ?? false
     }
 }
 
@@ -190,24 +209,27 @@ public struct NativeVideoTagsBatchItem: Codable, Equatable, Sendable {
     public var entryID: String
     public var creatorID: String
     public var title: String
+    public var entryType: String?
     public var summary: String?
     public var text: String?
 
-    public init(entryID: String, creatorID: String, title: String, summary: String? = nil, text: String? = nil) {
+    public init(entryID: String, creatorID: String, title: String, summary: String? = nil, text: String? = nil, entryType: String? = nil) {
         self.entryID = entryID
         self.creatorID = creatorID
         self.title = title
+        self.entryType = entryType
         self.summary = summary
         self.text = text
     }
 
-    private enum CodingKeys: String, CodingKey { case entryID, creatorID, title, summary, text }
+    private enum CodingKeys: String, CodingKey { case entryID, creatorID, title, summary, text, entryType }
 
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         entryID = try container.decode(String.self, forKey: .entryID)
         creatorID = try container.decode(String.self, forKey: .creatorID)
         title = try container.decode(String.self, forKey: .title)
+        entryType = try container.decodeIfPresent(String.self, forKey: .entryType)
         summary = try container.decodeIfPresent(String.self, forKey: .summary)
         text = try container.decodeIfPresent(String.self, forKey: .text)
     }
@@ -233,7 +255,7 @@ public struct NativeVideoTagsBatchRequest: Codable, Equatable, Sendable {
         for item in items {
             try NativeVideoTagsRequest(
                 platformID: platformID, entryID: item.entryID, creatorID: item.creatorID,
-                title: item.title, summary: item.summary, text: item.text
+                title: item.title, summary: item.summary, text: item.text, entryType: item.entryType
             ).validate()
         }
     }
@@ -244,15 +266,17 @@ public struct NativeVideoTagsBatchResponseItem: Codable, Equatable, Sendable {
     public var tags: [NativeVideoTag]
     public var predicted: Bool
     public var pending: Bool
+    public var skipped: Bool
 
-    public init(entryID: String, tags: [NativeVideoTag], predicted: Bool = false, pending: Bool = false) {
+    public init(entryID: String, tags: [NativeVideoTag], predicted: Bool = false, pending: Bool = false, skipped: Bool = false) {
         self.entryID = entryID
         self.tags = NativeVideoTag.accepted(tags)
         self.predicted = predicted
         self.pending = pending
+        self.skipped = skipped
     }
 
-    private enum CodingKeys: String, CodingKey { case entryID, tags, predicted, pending }
+    private enum CodingKeys: String, CodingKey { case entryID, tags, predicted, pending, skipped }
 
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
@@ -260,6 +284,7 @@ public struct NativeVideoTagsBatchResponseItem: Codable, Equatable, Sendable {
         tags = NativeVideoTag.accepted(try container.decode([NativeVideoTag].self, forKey: .tags))
         predicted = try container.decodeIfPresent(Bool.self, forKey: .predicted) ?? false
         pending = try container.decodeIfPresent(Bool.self, forKey: .pending) ?? false
+        skipped = try container.decodeIfPresent(Bool.self, forKey: .skipped) ?? false
     }
 }
 

@@ -63,9 +63,11 @@ A blocked app is asked to quit. **Ask a blocked app to quit again every (minutes
 
 ## Content tagging
 
-A Content tagging group tags content from its assigned platforms with its own tag tree and model settings. Each platform belongs to one group. Choose platforms when creating the group; they cannot be changed afterward. Blocking-group schedules and filters do not control tagging.
+A Content tagging group tags content from its assigned platforms with its own tag tree and model settings. Each platform belongs to one group at a time. You can change platforms and content kinds later, or leave every option off. Blocking-group schedules and filters do not control tagging.
 
 Enable tagging in Settings. Use each group's **Pause tagging / Resume tagging** separately. Turning off a platform feed's recording in **Activity → Recording** also stops its tagging.
+
+Under YouTube, choose Videos, Shorts, Live, and Posts independently. Vault tags rendered entries as you browse, including the current item, feeds, search results, recommendations, and creator pages. Turning a kind off stops new AI decisions for it; saved decisions remain available.
 
 ### Tags and model settings
 

@@ -230,13 +230,21 @@ extension VaultClassifierViewModel {
             case "createClassifierType":
                 createClassifierType(
                     name: try webString(data, key: "name", limit: ClassifierTypeAsset.maximumNameLength),
+                    platformIDs: try webStringArray(data, key: "platformIDs", limit: 16, elementLimit: 64),
+                    enabledYouTubeEntryTypes: data.keys.contains("enabledYouTubeEntryTypes")
+                        ? try webStringArray(data, key: "enabledYouTubeEntryTypes", limit: 4, elementLimit: 32)
+                        : ClassifierTypeAsset.youtubeEntryTypes
+                )
+            case "saveClassifierTypePlatforms":
+                saveClassifierTypePlatforms(
+                    typeID: try webString(data, key: "typeID", limit: 256),
                     platformIDs: try webStringArray(data, key: "platformIDs", limit: 16, elementLimit: 64)
                 )
             case "reorderClassifierTypes":
                 reorderClassifierTypes(orderedIDs: try webStringArray(data, key: "orderedIDs", limit: 256, elementLimit: 256))
             case "configureClassifierType":
                 if data.keys.contains("applicablePlatformIDs") {
-                    throw WebBridgeInputError.fixedPlatforms
+                    throw WebBridgeInputError.invalidChoice("Use saveClassifierTypePlatforms to change platforms")
                 }
                 configureClassifierType(
                     typeID: try webString(data, key: "typeID", limit: 256),
@@ -339,6 +347,16 @@ extension VaultClassifierViewModel {
                     providerModel: webString(data, key: "providerModel", limit: 520), reasoningEffort: effort)
             case "setClassifierTypePaused":
                 setClassifierTypePaused(typeID: try webString(data, key: "typeID", limit: 256), paused: try webBool(data, key: "paused"))
+            case "saveYouTubeEntryTypes":
+                let typeID = try webString(data, key: "typeID", limit: 256)
+                let choices = [
+                    ("video", try webBool(data, key: "video")),
+                    ("short", try webBool(data, key: "short")),
+                    ("live", try webBool(data, key: "live")),
+                    ("post", try webBool(data, key: "post"))
+                ]
+                let enabled = choices.filter { $0.1 }.map { $0.0 }
+                saveYouTubeEntryTypes(typeID: typeID, enabledKinds: enabled)
             case "saveClassifierTypeTagging":
                 let input = try Self.parseClassifierTypeTaggingWebInput(data)
                 saveClassifierTypeTagging(typeID: input.typeID, settings: input.settings)

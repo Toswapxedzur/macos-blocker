@@ -411,14 +411,6 @@
     "template": "Choose a supported value for {field}."
   },
   {
-    "translationKey": "notice.fixedPlatforms",
-    "template": "Platforms cannot be changed after the group is created."
-  },
-  {
-    "translationKey": "notice.noPlatforms",
-    "template": "Select at least one platform."
-  },
-  {
     "translationKey": "notice.backupCodeMismatch",
     "template": "The local backup owner code did not match."
   },

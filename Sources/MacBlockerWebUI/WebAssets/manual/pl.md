@@ -40,7 +40,7 @@ Użyj selektora + celu Apps, by wybrać zainstalowane lub uruchomione aplikacje.
 
 ## Oznaczanie treści
 
-Grupa taguje treści z przypisanych platform przy użyciu własnego drzewa tagów i ustawień modelu. Każda platforma należy do jednej grupy; wybierz je przy tworzeniu, później nie można ich zmienić. Harmonogramy i filtry blokowania nie sterują tagowaniem. Włącz tagowanie w Ustawienia; używaj **Wstrzymaj tagowanie / Wznów tagowanie** osobno dla każdej grupy. Wyłączenie nagrywania feedu w **Aktywność → Nagrywanie** także zatrzymuje jego tagowanie.
+Grupa taguje treści z przypisanych platform przy użyciu własnego drzewa tagów i ustawień modelu. Każda platforma należy do jednej grupy naraz; platformy i rodzaje treści można później zmienić albo pozostawić wszystkie opcje wyłączone. Harmonogramy i filtry blokowania nie sterują tagowaniem. Włącz tagowanie w Ustawienia; używaj **Wstrzymaj tagowanie / Wznów tagowanie** osobno dla każdej grupy. Wyłączenie nagrywania feedu w **Aktywność → Nagrywanie** także zatrzymuje jego tagowanie.
 
 ### Tagi i ustawienia modelu
 

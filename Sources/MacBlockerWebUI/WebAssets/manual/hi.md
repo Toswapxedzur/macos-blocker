@@ -40,7 +40,7 @@ Apps target के + picker से installed या चल रहे apps चु
 
 ## सामग्री टैगिंग
 
-Group अपनी platforms की सामग्री को अपने tag tree और model settings से tag करता है। हर platform एक group में होता है; creation के समय चुनें, बाद में बदल नहीं सकते। Blocking schedules/filters tagging नियंत्रित नहीं करते। सेटिंग्स में tagging enable करें और हर group का **टैगिंग रोकें / टैगिंग फिर शुरू करें** अलग करें। **गतिविधि → रिकॉर्डिंग** में platform feed recording बंद करने से tagging भी बंद होता है।
+Group अपनी platforms की सामग्री को अपने tag tree और model settings से tag करता है। हर platform एक समय में एक group में होता है; platform और सामग्री के प्रकार बाद में बदल सकते हैं या सब बंद रख सकते हैं। Blocking schedules/filters tagging नियंत्रित नहीं करते। सेटिंग्स में tagging enable करें और हर group का **टैगिंग रोकें / टैगिंग फिर शुरू करें** अलग करें। **गतिविधि → रिकॉर्डिंग** में platform feed recording बंद करने से tagging भी बंद होता है।
 
 ### टैग और मॉडल सेटिंग
 

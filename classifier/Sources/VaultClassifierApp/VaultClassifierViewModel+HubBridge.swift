@@ -118,7 +118,8 @@ extension VaultClassifierViewModel {
         guard !isShuttingDown, !Task.isCancelled, let coordinator else { return [:] }
         let inputs = chunk.map {
             VideoClassificationPipeline.Input(
-                title: $0.title, summary: $0.summary, text: $0.text, entryID: $0.entryID, creatorID: $0.creatorID)
+                title: $0.title, summary: $0.summary, text: $0.text, entryID: $0.entryID, creatorID: $0.creatorID,
+                entryType: $0.entryType)
         }
         var projections: [String: VideoTagsProjection]
         let cloud = coordinator.snapshot().workspaceCatalog.classifierTypes.contains { $0.applicablePlatformIDs.contains(platformID) }
@@ -240,8 +241,15 @@ extension VaultClassifierViewModel {
                     return try sharedHubReply(NativeVideoTagsResponse(
                         platformID: videoTags.platformID, entryID: videoTags.entryID, tags: [], predicted: false, pending: false))
                 }
+                if !coordinator.permitsNewClassification(platformID: videoTags.platformID, entryID: videoTags.entryID,
+                    entryType: videoTags.entryType) {
+                    let saved = coordinator.savedVideoTags(platformID: videoTags.platformID, entryID: videoTags.entryID)
+                    return try sharedHubReply(NativeVideoTagsResponse(platformID: videoTags.platformID,
+                        entryID: videoTags.entryID, tags: saved.map { Self.nativeVideoTags(from: $0) } ?? [],
+                        predicted: saved?.predicted ?? false, pending: false, skipped: saved == nil))
+                }
                 if let cached = coordinator.cachedVideoTags(platformID: videoTags.platformID, entryID: videoTags.entryID,
-                    input: .init(title: videoTags.title, summary: videoTags.summary, text: videoTags.text, entryID: videoTags.entryID, creatorID: videoTags.creatorID)) {
+                    input: .init(title: videoTags.title, summary: videoTags.summary, text: videoTags.text, entryID: videoTags.entryID, creatorID: videoTags.creatorID, entryType: videoTags.entryType)) {
                     devLog("video-tags", ["platform": videoTags.platformID, "entry": videoTags.entryID, "outcome": "cached", "tags": "\(cached.tags.count)"])
                     return try sharedHubReply(NativeVideoTagsResponse(
                         platformID: videoTags.platformID, entryID: videoTags.entryID,
@@ -260,7 +268,7 @@ extension VaultClassifierViewModel {
                 // hub, so the pill resolves without polling.
                 queueVideoClassification(platformID: videoTags.platformID, items: [NativeVideoTagsBatchItem(
                     entryID: videoTags.entryID, creatorID: videoTags.creatorID,
-                    title: videoTags.title, summary: videoTags.summary, text: videoTags.text)])
+                    title: videoTags.title, summary: videoTags.summary, text: videoTags.text, entryType: videoTags.entryType)])
                 return try sharedHubReply(NativeVideoTagsResponse(
                     platformID: videoTags.platformID, entryID: videoTags.entryID, tags: [], predicted: false, pending: true))
             case .videoTagsBatch:
@@ -287,8 +295,14 @@ extension VaultClassifierViewModel {
                 var pendingItems: [NativeVideoTagsBatchItem] = []
                 var cachedCount = 0
                 for item in batch.items {
-                    if let cached = coordinator.cachedVideoTags(platformID: batch.platformID, entryID: item.entryID,
-                        input: .init(title: item.title, summary: item.summary, text: item.text, entryID: item.entryID, creatorID: item.creatorID)) {
+                    if !coordinator.permitsNewClassification(platformID: batch.platformID, entryID: item.entryID,
+                        entryType: item.entryType) {
+                        let saved = coordinator.savedVideoTags(platformID: batch.platformID, entryID: item.entryID)
+                        responses.append(NativeVideoTagsBatchResponseItem(entryID: item.entryID,
+                            tags: saved.map { Self.nativeVideoTags(from: $0) } ?? [], predicted: saved?.predicted ?? false,
+                            pending: false, skipped: saved == nil))
+                    } else if let cached = coordinator.cachedVideoTags(platformID: batch.platformID, entryID: item.entryID,
+                        input: .init(title: item.title, summary: item.summary, text: item.text, entryID: item.entryID, creatorID: item.creatorID, entryType: item.entryType)) {
                         cachedCount += 1
                         responses.append(NativeVideoTagsBatchResponseItem(
                             entryID: item.entryID, tags: Self.nativeVideoTags(from: cached), predicted: cached.predicted, pending: false))

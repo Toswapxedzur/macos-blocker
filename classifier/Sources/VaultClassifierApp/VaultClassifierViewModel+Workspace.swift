@@ -58,7 +58,7 @@ extension VaultClassifierViewModel {
         } catch { issue = error.localizedDescription }
     }
 
-    /// The platforms a type may take (owner 2026-09-30): classifiable ones only,
+    /// The platforms a type may take: classifiable ones only,
     /// each once, none held by another type (a platform belongs to at most one
     /// type — refused here so the owner sees why, rather than reconciled away).
     /// Makes sure each has its binding; returns them with the shared dataset.
@@ -68,7 +68,6 @@ extension VaultClassifierViewModel {
         in catalog: inout WorkspaceCatalog
     ) throws -> (ids: [String], dataset: ClassificationDataset) {
         let cleaned = ClassifierTypeAsset.cleanedPlatformIDs(ids)
-        guard !cleaned.isEmpty else { throw WebBridgeInputError.noPlatformsSelected }
         var datasetID = catalog.datasets.first?.id
         for platformID in cleaned {
             guard CollectionPlatformRegistry.definition(for: platformID)?.supportsLocalModel == true else {
@@ -88,12 +87,13 @@ extension VaultClassifierViewModel {
     /// Creates a classifier type (a "group") for the chosen platforms. It starts
     /// with an empty tree and independent Balanced dials and empty house rules
     /// and follows the app-wide research consent.
-    func createClassifierType(name: String, platformIDs: [String]) {
+    func createClassifierType(name: String, platformIDs: [String], enabledYouTubeEntryTypes: [String] = ClassifierTypeAsset.youtubeEntryTypes) {
         do {
             let cleaned = name.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !cleaned.isEmpty,
                   cleaned.count <= ClassifierTypeAsset.maximumNameLength,
-                  var catalog = localState?.workspaceCatalog else {
+                  var catalog = localState?.workspaceCatalog,
+                  enabledYouTubeEntryTypes.allSatisfy({ ClassifierTypeAsset.youtubeEntryTypes.contains($0) }) else {
                 throw WebBridgeInputError.invalidChoice("Classifier group")
             }
             let (platforms, dataset) = try claimPlatforms(platformIDs, forType: nil, in: &catalog)
@@ -108,8 +108,30 @@ extension VaultClassifierViewModel {
                 datasetID: dataset.id,
                 datasetRevision: dataset.revision,
                 applicablePlatformIDs: platforms,
+                enabledYouTubeEntryTypes: enabledYouTubeEntryTypes,
                 order: nextOrder
             ))
+            try coordinator?.updateWorkspaceCatalog(catalog)
+            refreshLocalState()
+            issue = nil
+        } catch { issue = error.localizedDescription }
+    }
+
+    /// Reassigns an existing group's platforms. Empty selection is a valid
+    /// dormant group; collected data and prior decisions stay in local storage.
+    func saveClassifierTypePlatforms(typeID: String, platformIDs: [String]) {
+        do {
+            guard var catalog = localState?.workspaceCatalog,
+                  let index = catalog.classifierTypes.firstIndex(where: { $0.id == typeID }) else {
+                throw WebBridgeInputError.invalidChoice("Classifier group")
+            }
+            let (platforms, _) = try claimPlatforms(platformIDs, forType: typeID, in: &catalog)
+            let datasetID = catalog.classifierTypes[index].datasetID
+            guard platforms.allSatisfy({ platformID in
+                catalog.bindings.contains { $0.id == platformID && $0.datasetID == datasetID }
+            }) else { throw WebBridgeInputError.invalidChoice("platform dataset") }
+            catalog.classifierTypes[index].applicablePlatformIDs = platforms
+            catalog.classifierTypes[index].updatedAtMilliseconds = WorkspaceCatalog.now()
             try coordinator?.updateWorkspaceCatalog(catalog)
             refreshLocalState()
             issue = nil

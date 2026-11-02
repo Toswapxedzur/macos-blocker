@@ -27,7 +27,7 @@ window.testState = {
   backup:{unlocked:true,hasOwnerCode:true,enabled:false,savedEnabled:false,directory:'/tmp/test-backups'},
   assets:{classifierTypes:[{id:'group-1',name:'Test group',treeID:'tree-1',applicablePlatformIDs:['youtube'],tagging:{minimumConfidence:4,houseRules:''},researchEnabled:null,order:0}],
     trees:[{id:'tree-1',name:'Test tags',nodes:[{id:'tag-1',name:'Science',description:'',parentID:null,positionX:24,positionY:24}]}],datasets:[],
-    collectionPlatforms:[{id:'youtube',name:'YouTube',supportsLocalModel:true}],bindings:[],
+    collectionPlatforms:[{id:'youtube',name:'YouTube',supportsLocalModel:true},{id:'reddit',name:'Reddit',supportsLocalModel:true}],bindings:[],
     knowledge:{creators:[],terms:[{id:'term-1',subject:'Physics',meaning:'Original meaning',writtenByUser:true}],knownCreators:[]},
     providerProfiles:[{id:'provider-1',name:'Test provider',type:'openAI',customEndpoint:'',testModelIdentifier:'',credential:'',hasCredential:false,protocolConfiguration:{}}],
     providerProtocols:{openAI:{supportsGenerateText:true,supportsLLMConfiguration:true,supportsNativeWebSearch:true,credentialRequired:true,allowsEndpointOverride:true,configurationRequirements:[]}},
@@ -42,6 +42,9 @@ window.webkit={messageHandlers:{vaultClassifier:{postMessage(message){
   const {action,data}=message, type=testState.assets.classifierTypes.find(t=>t.id===data.typeID);
   switch(action){
     case 'setClassifierTypePaused':type.isPaused=data.paused;break;
+    case 'saveYouTubeEntryTypes':type.enabledYouTubeEntryTypes=['video','short','live','post'].filter(kind=>data[kind]===true);break;
+    case 'saveClassifierTypePlatforms':type.applicablePlatformIDs=data.platformIDs;break;
+    case 'createClassifierType':testState.assets.classifierTypes.push({id:'group-created',name:data.name,treeID:'tree-1',applicablePlatformIDs:data.platformIDs,enabledYouTubeEntryTypes:data.enabledYouTubeEntryTypes,tagging:{minimumConfidence:4,houseRules:''},order:1});break;
     case 'saveClassificationSettings':testState.settings.classificationEnabled=data.classificationEnabled;testState.settings.maximumConcurrentTaggingRequests=Number(data.maximumConcurrentTaggingRequests);break;
     case 'saveClassificationProvider':if(data.providerModel.startsWith('api:')){const parts=data.providerModel.slice(4).split(':');type.classificationProvider='apiKey';type.apiKey={profileID:parts.shift(),model:parts.join(':'),reasoningEffort:data.reasoningEffort};}else{type.classificationProvider='chatGPT';type.chatGPT={accountID:testState.assets.chatGPT?.accountID||'',model:data.providerModel.startsWith('chatgpt:')?data.providerModel.slice(8):type.chatGPT?.model||'',reasoningEffort:data.reasoningEffort};}break;
     case 'saveChatGPTUsageLimit':testState.assets.chatGPT.dailyRequestLimit=data.dailyRequestLimit===''?null:Number(data.dailyRequestLimit);break;

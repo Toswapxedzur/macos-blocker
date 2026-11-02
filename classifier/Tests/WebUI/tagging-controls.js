@@ -3,6 +3,38 @@ window.runTaggingControlTests = async () => {
   const check = (ok, label) => { if (!ok) throw Error(label); results.push('PASS ' + label); };
   const tick = () => new Promise(resolve => setTimeout(resolve, 60));
   q('[data-action="selectType"][data-type-id="group-1"]').click();
+  const kinds = ['video', 'short', 'live', 'post'];
+  check(kinds.every(kind => q(`[data-form-id="youtube-kinds-group-1"] [data-field="${kind}"]`)?.checked),
+    'all four YouTube entry kinds start enabled in an existing group');
+  const youtube = q('.classifier-type-panel [data-platform-choice][value="youtube"]');
+  check(youtube?.checked && youtube.closest('.classifier-platform-option')?.querySelector('.classifier-platform-children'),
+    'YouTube kinds are indented beneath the selected platform');
+  q('[data-form-id="youtube-kinds-group-1"] [data-field="short"]').click(); await tick();
+  check(commands.at(-1).action === 'saveYouTubeEntryTypes' && commands.at(-1).data.short === false
+    && testState.assets.classifierTypes[0].enabledYouTubeEntryTypes.join(',') === 'video,live,post',
+    'Shorts switch autosaves without changing the other kinds');
+  q('[data-form-id="youtube-kinds-group-1"] [data-field="short"]').click(); await tick();
+  check(testState.assets.classifierTypes[0].enabledYouTubeEntryTypes.length === 4,
+    'Shorts can be re-enabled independently');
+  for (const kind of kinds) q(`[data-form-id="youtube-kinds-group-1"] [data-field="${kind}"]`).click();
+  await tick();
+  check(testState.assets.classifierTypes[0].enabledYouTubeEntryTypes.length === 0 &&
+    q('[data-platform-choice][value="youtube"]')?.checked, 'YouTube may remain selected with zero content kinds');
+  q('.classifier-type-panel [data-platform-choice][value="youtube"]').click(); await tick();
+  check(testState.assets.classifierTypes[0].applicablePlatformIDs.length === 0 &&
+    !q('[data-form-id="youtube-kinds-group-1"]'), 'group may have zero platforms');
+  q('.classifier-type-panel [data-platform-choice][value="youtube"]').click(); await tick();
+  check(testState.assets.classifierTypes[0].applicablePlatformIDs.join(',') === 'youtube' &&
+    testState.assets.classifierTypes[0].enabledYouTubeEntryTypes.length === 0,
+    'reselecting YouTube keeps its content kind choices');
+  q('[data-action="newType"]').click();
+  check(q('[data-create-type-dialog]'), 'new group dialog opens with platform choices');
+  q('[data-create-type-dialog] [data-platform-choice]:checked')?.click();
+  q('[data-action="confirmCreateType"]').click(); await tick();
+  check(commands.at(-1).action === 'createClassifierType' &&
+    commands.at(-1).data.platformIDs.length === 0,
+    'new group can be created with zero platforms');
+  q('[data-action="selectType"][data-type-id="group-1"]').click();
   let pause = q('[data-action="setClassifierTypePaused"]');
   check(pause && !pause.closest('details') && pause.textContent === 'Pause tagging', 'group pause is visible outside More and new groups start active');
   pause.click(); await tick();

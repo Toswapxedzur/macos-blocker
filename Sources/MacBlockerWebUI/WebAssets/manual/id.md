@@ -40,7 +40,7 @@ Gunakan pemilih + pada target Apps untuk memilih app terpasang atau berjalan. Bu
 
 ## Penandaan konten
 
-Grup Penandaan konten memberi tag pada konten platform yang ditetapkan memakai pohon tag dan pengaturan modelnya sendiri. Tiap platform milik satu grup; pilih saat membuat grup, tidak dapat diubah setelahnya. Jadwal dan filter blokir Grup tidak mengendalikan tagging. Aktifkan tagging di Pengaturan. Gunakan **Jeda penandaan / Lanjutkan penandaan** secara terpisah untuk tiap grup. Mematikan recording feed platform di **Aktivitas → Perekaman** juga menghentikan tagging-nya.
+Grup Penandaan konten memberi tag pada konten platform yang ditetapkan memakai pohon tag dan pengaturan modelnya sendiri. Satu platform hanya dapat berada dalam satu grup pada satu waktu; platform dan jenis konten dapat diubah nanti atau semuanya dibiarkan nonaktif. Jadwal dan filter blokir Grup tidak mengendalikan tagging. Aktifkan tagging di Pengaturan. Gunakan **Jeda penandaan / Lanjutkan penandaan** secara terpisah untuk tiap grup. Mematikan recording feed platform di **Aktivitas → Perekaman** juga menghentikan tagging-nya.
 
 ### Tag dan pengaturan model
 

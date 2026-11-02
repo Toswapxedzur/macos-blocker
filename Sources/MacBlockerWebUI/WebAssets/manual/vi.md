@@ -40,7 +40,7 @@ Dùng bộ chọn + của mục tiêu Apps để chọn ứng dụng đã cài h
 
 ## Gắn thẻ nội dung
 
-Mỗi nhóm gắn thẻ nội dung từ nền tảng được gán bằng cây thẻ và cài đặt mô hình riêng. Mỗi nền tảng thuộc một nhóm; chọn khi tạo vì sau đó không đổi được. Lịch và bộ lọc nhóm chặn không điều khiển tagging. Bật tagging trong Cài đặt và dùng **Tạm dừng gắn thẻ / Tiếp tục gắn thẻ** riêng từng nhóm. Tắt ghi feed nền tảng tại **Hoạt động → Ghi dữ liệu** cũng dừng tagging của feed đó.
+Mỗi nhóm gắn thẻ nội dung từ nền tảng được gán bằng cây thẻ và cài đặt mô hình riêng. Mỗi nền tảng chỉ thuộc một nhóm tại một thời điểm; bạn có thể thay đổi nền tảng và loại nội dung sau hoặc tắt tất cả. Lịch và bộ lọc nhóm chặn không điều khiển tagging. Bật tagging trong Cài đặt và dùng **Tạm dừng gắn thẻ / Tiếp tục gắn thẻ** riêng từng nhóm. Tắt ghi feed nền tảng tại **Hoạt động → Ghi dữ liệu** cũng dừng tagging của feed đó.
 
 ### Thẻ và cài đặt mô hình
 

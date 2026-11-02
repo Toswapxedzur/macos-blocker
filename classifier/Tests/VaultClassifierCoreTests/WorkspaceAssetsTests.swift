@@ -105,6 +105,7 @@ final class WorkspaceAssetsTests: XCTestCase {
             "platformLocked": true, "decisionPriority": "humanFirst", "order": 0,
         ]
         let type = try JSONDecoder().decode(ClassifierTypeAsset.self, from: JSONSerialization.data(withJSONObject: legacy))
+        XCTAssertEqual(type.enabledYouTubeEntryTypes, ClassifierTypeAsset.youtubeEntryTypes)
         let encoded = String(decoding: try JSONEncoder().encode(type), as: UTF8.self)
         for retiredKey in [
             "localModelID", "selectedLLMProviderProfileID", "llmAssistDraftConfiguration",
@@ -112,6 +113,37 @@ final class WorkspaceAssetsTests: XCTestCase {
         ] {
             XCTAssertFalse(encoded.contains(retiredKey), "Retired key was re-encoded: \(retiredKey)")
         }
+    }
+
+    func testYouTubeEntrySwitchesRoundTripIncludingAllOff() throws {
+        var type = ClassifierTypeAsset(name: "YouTube", treeID: "tree", treeRevision: 1,
+            datasetID: "dataset", datasetRevision: 1, applicablePlatformIDs: ["youtube"])
+        type.enabledYouTubeEntryTypes = []
+        let restored = try JSONDecoder().decode(ClassifierTypeAsset.self, from: JSONEncoder().encode(type))
+        XCTAssertEqual(restored.enabledYouTubeEntryTypes, [])
+    }
+
+    func testRemovingAndRestoringPlatformKeepsItsSavedDecisions() throws {
+        var catalog = WorkspaceCatalog.starter()
+        let tree = TagTreeAsset(name: "Group tags", nodes: [])
+        catalog.trees.append(tree)
+        let dataset = try XCTUnwrap(catalog.datasets.first)
+        let group = ClassifierTypeAsset(id: "group", name: "Group", treeID: tree.id,
+            treeRevision: tree.revision, datasetID: dataset.id, datasetRevision: dataset.revision,
+            applicablePlatformIDs: ["youtube"])
+        catalog.classifierTypes.append(group)
+        let saved = VideoClassification(classifierTypeID: group.id, platformID: "youtube",
+            entryID: "youtube:video:v1", creatorID: "youtube:handle:c1", treeID: tree.id,
+            treeRevision: tree.revision, tags: [], source: .model, modelVersion: "cloud/v1")
+        catalog.videoClassifications = [saved]
+        catalog.classifierTypes[0].applicablePlatformIDs = []
+        catalog.reconcileClassifierTypes()
+        XCTAssertEqual(catalog.videoClassifications, [saved])
+        XCTAssertNoThrow(try catalog.validate())
+        catalog.classifierTypes[0].applicablePlatformIDs = ["youtube"]
+        catalog.reconcileClassifierTypes()
+        XCTAssertEqual(catalog.videoClassifications, [saved])
+        XCTAssertNoThrow(try catalog.validate())
     }
 
     /// A platform belongs to at most one classifier type: the classify path runs

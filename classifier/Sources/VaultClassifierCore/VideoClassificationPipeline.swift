@@ -58,12 +58,14 @@ public struct VideoClassificationPipeline: Sendable {
         public let text: String?
         public let entryID: String
         public let creatorID: String
-        public init(title: String, summary: String? = nil, text: String? = nil, entryID: String, creatorID: String) {
+        public let entryType: String?
+        public init(title: String, summary: String? = nil, text: String? = nil, entryID: String, creatorID: String, entryType: String? = nil) {
             self.title = title
             self.summary = summary
             self.text = text
             self.entryID = entryID
             self.creatorID = creatorID
+            self.entryType = entryType
         }
     }
 

@@ -53,6 +53,31 @@ private struct BatchingLLM: BatchClassificationEngine {
 }
 
 final class VideoClassificationCoordinatorTests: XCTestCase {
+    func testYouTubeKindsGateNewModelWorkAndKeepPriorDecision() async throws {
+        let (coordinator, root) = try makeCoordinatorWithYouTubeType()
+        defer { LocalStateFile.flushAllPendingWrites(); try? FileManager.default.removeItem(at: root) }
+        _ = try await coordinator.classifyVideos(platformID: "youtube", items: [
+            .init(title: "Games short", entryID: "youtube:video:old", creatorID: "youtube:channel:old", entryType: "short")
+        ])
+        XCTAssertEqual(coordinator.savedVideoTags(platformID: "youtube", entryID: "youtube:video:old")?.tags.map(\.id), ["g"])
+
+        var catalog = coordinator.snapshot().workspaceCatalog
+        catalog.classifierTypes[0].enabledYouTubeEntryTypes = ["video", "live", "post"]
+        try coordinator.updateWorkspaceCatalog(catalog)
+        XCTAssertFalse(coordinator.permitsNewClassification(platformID: "youtube", entryID: "youtube:video:new", entryType: "short"))
+        XCTAssertTrue(coordinator.permitsNewClassification(platformID: "youtube", entryID: "youtube:video:new", entryType: "video"))
+        XCTAssertEqual(coordinator.savedVideoTags(platformID: "youtube", entryID: "youtube:video:old")?.tags.map(\.id), ["g"])
+
+        let recorder = CoordinatorRequestRecorder()
+        coordinator.setFixtureEngine(CoordinatorRecordingLLM(recorder: recorder))
+        _ = try await coordinator.classifyVideos(platformID: "youtube", items: [
+            .init(title: "Skipped Games short", entryID: "youtube:video:new-short", creatorID: "youtube:channel:new", entryType: "short"),
+            .init(title: "Allowed Games video", entryID: "youtube:video:new-video", creatorID: "youtube:channel:new", entryType: "video")
+        ])
+        XCTAssertEqual(recorder.requests.count, 1)
+        XCTAssertNil(coordinator.savedVideoTags(platformID: "youtube", entryID: "youtube:video:new-short"))
+    }
+
     func testNativePauseAndGlobalDisableNeverRunTheModel() async throws {
         let (coordinator, root) = try makeCoordinatorWithYouTubeType()
         defer { LocalStateFile.flushAllPendingWrites(); try? FileManager.default.removeItem(at: root) }

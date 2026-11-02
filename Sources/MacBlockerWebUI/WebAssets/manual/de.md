@@ -40,7 +40,7 @@ Im + Auswahlfeld eines Apps-Ziels wählen Sie installierte oder laufende Apps; �
 
 ## Inhaltskennzeichnung
 
-Eine Content-tagging-Gruppe versieht Inhalte ihrer Plattformen mit einem eigenen Tag-Baum und Modelleinstellungen. Jede Plattform gehört zu einer Gruppe; wählen Sie sie bei der Erstellung, später kann sie nicht geändert werden. Blocking-Zeitpläne und Filter steuern kein Tagging. Aktivieren Sie Tagging in Einstellungen und pausieren/fortsetzen Sie jede Gruppe separat. Wird die Feed-Aufzeichnung unter **Aktivität → Aufzeichnung** ausgeschaltet, stoppt auch das Tagging.
+Eine Content-tagging-Gruppe versieht Inhalte ihrer Plattformen mit einem eigenen Tag-Baum und Modelleinstellungen. Jede Plattform gehört gleichzeitig nur zu einer Gruppe; Plattformen und Inhaltstypen können später geändert oder alle ausgeschaltet werden. Blocking-Zeitpläne und Filter steuern kein Tagging. Aktivieren Sie Tagging in Einstellungen und pausieren/fortsetzen Sie jede Gruppe separat. Wird die Feed-Aufzeichnung unter **Aktivität → Aufzeichnung** ausgeschaltet, stoppt auch das Tagging.
 
 ### Tags und Modelleinstellungen
 

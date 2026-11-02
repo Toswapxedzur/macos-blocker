@@ -40,7 +40,7 @@ Usa el selector + de un destino Apps para elegir apps instaladas o en ejecución
 
 ## Etiquetado de contenido
 
-Un grupo Etiquetado de contenido etiqueta contenido de sus plataformas asignadas con su árbol de tags y modelos. Cada plataforma pertenece a un grupo; elígelas al crearlo, pues no se cambian después. Los horarios y filtros de bloqueo no controlan el etiquetado. Actívalo en Ajustes y pausa/reanuda cada grupo por separado. Desactivar el registro de un feed en **Actividad → Grabación** también detiene su etiquetado.
+Un grupo Etiquetado de contenido etiqueta contenido de sus plataformas asignadas con su árbol de tags y modelos. Cada plataforma pertenece a un solo grupo a la vez; puedes cambiar las plataformas y los tipos de contenido después o dejar todo desactivado. Los horarios y filtros de bloqueo no controlan el etiquetado. Actívalo en Ajustes y pausa/reanuda cada grupo por separado. Desactivar el registro de un feed en **Actividad → Grabación** también detiene su etiquetado.
 
 ### Tags y ajustes del modelo
 

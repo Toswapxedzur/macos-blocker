@@ -253,6 +253,8 @@
         minimumConfidence: String(type.tagging?.minimumConfidence ?? 4),
         houseRules: type.tagging?.houseRules || "",
       };
+      case "saveYouTubeEntryTypes": return type && Object.fromEntries(
+        ["video", "short", "live", "post"].map(kind => [kind, (type.enabledYouTubeEntryTypes || ["video", "short", "live", "post"]).includes(kind)]));
       case "saveClassificationProvider": return type && { providerModel: selectedTaggingModel(type), reasoningEffort: (type.classificationProvider === "apiKey" ? type.apiKey : type.chatGPT)?.reasoningEffort || "medium" };
       case "saveChatGPTUsageLimit": return { dailyRequestLimit: state.assets?.chatGPT?.dailyRequestLimit == null ? "" : String(state.assets.chatGPT.dailyRequestLimit) };
       case "saveChatGPTRetryPolicy": return { retryIntervalSeconds: String(state.assets?.chatGPT?.retryIntervalSeconds ?? 60), retryMaximumAttempts: String(state.assets?.chatGPT?.retryMaximumAttempts ?? 3) };
@@ -370,8 +372,8 @@
 
     "bridge.typeName": "The name shown for this content tagging group.",
     "createType.nameLabel": "The name of the new content tagging group.",
-    "createType.platformLabel": "Choose the platforms this group will classify. A platform can belong to only one content tagging group.",
-    "bridge.applicablePlatform": "The platforms assigned when this content tagging group was created. Platform assignments are fixed for that group.",
+    "createType.platformLabel": "Choose platforms and content kinds for this group. You can change them later or leave every option off.",
+    "bridge.applicablePlatform": "Change the platforms and content kinds this group tags. Leave every option off to keep the group without tagging new entries.",
 
     "llm.providerType": "Choose the provider’s API type before adding its configuration. Adding a provider does not create an API key.",
     "llm.apiKeyOrToken": "Paste the credential issued by this provider. Vault uses it to authenticate requests to that provider.",
@@ -822,9 +824,8 @@
     return `<section class="tagging-key-fields" data-tagging-key-fields><div data-form-id="tagging-key-${esc(connectionType)}" data-autosave-action="saveTaggingConnection" data-connection-type="${esc(connectionType)}">${field("llm.apiKeyOrToken", "", "credential", profile?.credential || "", "password", `autocapitalize="off" spellcheck="false"${disabled(conflict)}`)}</div><div class="tagging-retry-fields" data-form-id="tagging-retry-${esc(connectionType)}" data-autosave-action="saveTaggingRetryPolicy" data-connection-type="${esc(connectionType)}">${field("connections.retryInterval", "", "retryIntervalSeconds", profile?.retryIntervalSeconds ?? 60, "number", `min="1" max="3600" step="1"${disabled(conflict)}`)}${field("connections.retryAttempts", "", "retryMaximumAttempts", profile?.retryMaximumAttempts ?? 3, "number", `min="1" max="10" step="1"${disabled(conflict)}`)}</div><p class="small-copy" data-info>${tx("connections.retryHint")}</p><div class="action-row"><button type="button" class="secondary" data-action="probeProviderModelCatalog" data-profile-id="${esc(id)}"${disabled(!profile?.hasCredential || loading || conflict)}>${tx(loading ? "research.fetchingModels" : error ? "research.retryModels" : count ? "research.refreshModels" : "research.fetchModels")}</button>${count ? `<span class="small-copy">${tx("connections.modelCount", {count})}</span>` : ""}</div>${notice(error,"red")}</section>`;
   }
 
-  // The classifiable platforms as a checklist (owner 2026-09-30: a type may take
-  // several; a platform belongs to at most one type. Creation is the only
-  // time this choice can change; existing types show their fixed selection.
+  // The classifiable platforms as an editable checklist. A platform belongs
+  // to at most one group; YouTube's content kinds sit beneath its selected row.
   function platformChoices(selectedIDs, typeID) {
     const selected = new Set(selectedIDs);
     const owners = new Map();
@@ -832,10 +833,20 @@
       for (const id of type.applicablePlatformIDs || []) owners.set(id, type);
     }
     const platforms = (state.assets?.collectionPlatforms || []).filter((platform) => platform.supportsLocalModel === true);
+    const type = (state.assets?.classifierTypes || []).find((item) => item.id === typeID);
+    const youtubeKinds = typeID
+      ? (type?.enabledYouTubeEntryTypes || ["video", "short", "live", "post"])
+      : (pendingCreateType?.enabledYouTubeEntryTypes || ["video", "short", "live", "post"]);
     return `<div class="platform-choices">${platforms.map((platform) => {
       const owner = owners.get(platform.id);
       const taken = Boolean(owner && owner.id !== typeID);
-      return `<label class="toggle-row platform-choice"><input type="checkbox" value="${esc(platform.id)}" data-platform-choice${selected.has(platform.id) ? " checked" : ""}${typeID || taken ? " disabled" : ""}><span>${esc(platform.name)}</span>${taken ? `<span class="field-hint">${tx("bridge.platformTakenBy", { name: owner.name })}</span>` : ""}</label>`;
+      const children = platform.id === "youtube" && selected.has("youtube")
+        ? `<div class="classifier-platform-children" ${typeID
+          ? `data-form-id="youtube-kinds-${esc(typeID)}" data-autosave-action="saveYouTubeEntryTypes" data-type-id="${esc(typeID)}"`
+          : "data-create-youtube-kinds"}><span class="field-label">${tx("classification.youtubeKinds")}</span>${["video", "short", "live", "post"].map(kind =>
+            toggle(`classification.youtubeKind.${kind}`, kind, youtubeKinds.includes(kind), 'data-youtube-kind-choice')).join("")}</div>`
+        : "";
+      return `<div class="classifier-platform-option"><label class="toggle-row platform-choice"><input type="checkbox" value="${esc(platform.id)}" data-platform-choice${selected.has(platform.id) ? " checked" : ""}${taken ? " disabled" : ""}><span>${esc(platform.name)}</span>${taken ? `<span class="field-hint">${tx("bridge.platformTakenBy", { name: owner.name })}</span>` : ""}</label>${children}</div>`;
     }).join("")}</div>`;
   }
 
@@ -870,7 +881,7 @@
       return `<section class="classifier-type-panel" data-form-id="${esc(formID)}" data-type-id="${esc(classifierType.id)}" data-autosave-action="configureClassifierType">
         <div class="classifier-group-header"><div class="classifier-name-row">${field("bridge.typeName", "", "name", classifierType.name, "text", 'maxlength="128"')}</div>
           <div class="action-row classifier-tagging-control"><button type="button" class="secondary" data-action="setClassifierTypePaused" data-type-id="${esc(classifierType.id)}" data-paused="${classifierType.isPaused !== true}">${tx(classifierType.isPaused === true ? "classification.resume" : "classification.pause")}</button>${statusPill(tx(classifierType.isPaused === true ? "classification.paused" : state.settings?.classificationEnabled === false ? "classification.disabled" : "classification.active"), classifierType.isPaused === true || state.settings?.classificationEnabled === false ? "muted" : "cyan")}</div></div>
-        <section class="section-card cyan classifier-type-section classifier-applicable-platform-section"><span class="field-label" ${infoAttrs("bridge.applicablePlatform")}>${tx("bridge.applicablePlatform")}</span>${platformChoices(chosen, classifierType.id)}<p class="small-copy" data-info="bridge.platformsFixed">${tx("bridge.platformsFixed")}</p>${platformNotes.map((note) => `<p class="small-copy">${esc(note)}</p>`).join("")}</section>
+        <section class="section-card cyan classifier-type-section classifier-applicable-platform-section"><span class="field-label" ${infoAttrs("bridge.applicablePlatform")}>${tx("bridge.applicablePlatform")}</span>${platformChoices(chosen, classifierType.id)}${platformNotes.map((note) => `<p class="small-copy">${esc(note)}</p>`).join("")}</section>
         ${cloudProviderSection(classifierType)}
         <div class="classifier-tagging-form" data-form-id="${esc(taggingFormID)}" data-autosave-action="saveClassifierTypeTagging" data-type-id="${esc(classifierType.id)}">
           ${taggingSection}
@@ -879,7 +890,7 @@
         <div class="action-row classifier-type-delete"><button class="danger" data-action="confirmDeleteClassifierType" data-type-id="${esc(classifierType.id)}">${deleteLabel(`type:${classifierType.id}`, tx("bridge.deleteType"))}</button></div>
       </section>`;
     };
-    // A type targets one or more platforms and owns a fresh tree. The
+    // A type may target zero or more platforms and owns a fresh tree. The
     // left panel selects which type is open; a selected type shows its config
     // and owned tree together.
     const selectedType = selectedTypeID ? classifierTypes.find((type) => type.id === selectedTypeID) : null;
@@ -1044,11 +1055,11 @@
     editor.scrollTop = position.y;
   }
 
-  // Create-a-group dialog: platform and name. The new group follows the global
+  // Create-a-group dialog: optional platforms and name. The new group follows the global
   // dials and house rules until given its own.
   function createTypeModal() {
     if (!pendingCreateType) return "";
-    return `<div class="utility-popover-layer" role="presentation"><button class="utility-popover-dismiss" data-action="cancelCreateType" aria-label="${tx("common.cancel")}"></button><div class="deletion-dialog create-type-dialog" role="dialog" aria-modal="true" aria-label="${tx("createType.title")}" data-create-type-dialog><h3>${tx("createType.title")}</h3><p class="section-copy" data-info>${tx("createType.copy")}</p><div class="field"><span class="field-label" ${infoAttrs("createType.platformLabel")}>${tx("createType.platformLabel")}</span>${platformChoices(pendingCreateType.platformIDs || [], null)}${pendingCreateType.issue ? notice(t("createType.platformRequired"), "red") : ""}</div><label class="field"><span class="field-label" ${infoAttrs("createType.nameLabel")}>${tx("createType.nameLabel")}</span><input type="text" data-create-type-name autocomplete="off" spellcheck="false" value="${esc(pendingCreateType.name != null ? pendingCreateType.name : t("createType.defaultName"))}"></label><div class="action-row"><button class="secondary" data-action="cancelCreateType">${tx("common.cancel")}</button><button class="primary" data-action="confirmCreateType">${tx("createType.create")}</button></div></div></div>`;
+    return `<div class="utility-popover-layer" role="presentation"><button class="utility-popover-dismiss" data-action="cancelCreateType" aria-label="${tx("common.cancel")}"></button><div class="deletion-dialog create-type-dialog" role="dialog" aria-modal="true" aria-label="${tx("createType.title")}" data-create-type-dialog><h3>${tx("createType.title")}</h3><p class="section-copy" data-info>${tx("createType.copy")}</p><div class="field"><span class="field-label" ${infoAttrs("createType.platformLabel")}>${tx("createType.platformLabel")}</span>${platformChoices(pendingCreateType.platformIDs || [], null)}</div><label class="field"><span class="field-label" ${infoAttrs("createType.nameLabel")}>${tx("createType.nameLabel")}</span><input type="text" data-create-type-name autocomplete="off" spellcheck="false" value="${esc(pendingCreateType.name != null ? pendingCreateType.name : t("createType.defaultName"))}"></label><div class="action-row"><button class="secondary" data-action="cancelCreateType">${tx("common.cancel")}</button><button class="primary" data-action="confirmCreateType">${tx("createType.create")}</button></div></div></div>`;
   }
 
   function chatGPTWelcome() {
@@ -1219,16 +1230,11 @@
       const nameInput = uiQuery("[data-create-type-name]");
       const name = ((nameInput?.value) || t("createType.defaultName")).trim() || t("createType.defaultName");
       const platformIDs = checkedPlatforms(uiQuery("[data-create-type-dialog]"));
-      if (!platformIDs.length) {
-        pendingCreateType.name = name;
-        pendingCreateType.issue = true;
-        render();
-        return;
-      }
+      const enabledYouTubeEntryTypes = pendingCreateType.enabledYouTubeEntryTypes || ["video", "short", "live", "post"];
       pendingSelectNewType = new Set((state.assets?.classifierTypes || []).map((type) => type.id));
       pendingCreateType = null;
       render();
-      send("createClassifierType", { name, platformIDs });
+      send("createClassifierType", { name, platformIDs, enabledYouTubeEntryTypes });
       return;
     }
     if (action === "confirmDeleteClassifierType") {
@@ -1360,6 +1366,13 @@
 
     if (queueLiveEdit(event.target, true)) return;
 
+    const kindChoice = event.target.closest("input[data-youtube-kind-choice]");
+    if (kindChoice?.closest("[data-create-type-dialog]") && pendingCreateType) {
+      pendingCreateType.enabledYouTubeEntryTypes = ["video", "short", "live", "post"].filter(kind =>
+        uiQuery(`[data-create-youtube-kinds] [data-field="${kind}"]`)?.checked);
+      return;
+    }
+
     // Preserve creation choices across page re-renders.
     const choice = event.target.closest("input[data-platform-choice]");
     if (choice) {
@@ -1367,9 +1380,13 @@
       if (dialog && pendingCreateType) {
         pendingCreateType.platformIDs = checkedPlatforms(dialog);
         pendingCreateType.name = uiQuery("[data-create-type-name]")?.value;
-        const hadIssue = pendingCreateType.issue;
         pendingCreateType.issue = false;
-        if (hadIssue) render();
+        render();
+      } else {
+        const panel = choice.closest(".classifier-type-panel");
+        if (panel?.dataset.typeId) send("saveClassifierTypePlatforms", {
+          typeID: panel.dataset.typeId, platformIDs: checkedPlatforms(panel)
+        });
       }
       return;
     }

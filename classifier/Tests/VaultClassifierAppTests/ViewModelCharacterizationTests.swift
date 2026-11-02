@@ -115,6 +115,21 @@ final class ViewModelCharacterizationTests: XCTestCase {
         let refreshed = try browserPull()
         XCTAssertEqual(refreshed.tags.map(\.name), ["Renamed Games"])
         XCTAssertFalse(refreshed.pending)
+        _ = vm.performWebAction("saveYouTubeEntryTypes", data: [
+            "typeID": "rename-type", "video": false, "short": true, "live": true, "post": true
+        ])
+        XCTAssertNil(vm.issue)
+        let decidedWhileOff = try browserPull()
+        XCTAssertEqual(decidedWhileOff.tags.map(\.name), ["Renamed Games"])
+        XCTAssertFalse(decidedWhileOff.skipped)
+        let newRequest = NativeVideoTagsRequest(platformID: "youtube", entryID: "youtube:video:new00000001",
+            creatorID: "youtube:handle:@fixture", title: "New video", entryType: "video")
+        let newReply = vm.handleSharedHubRequest(.init(sourcePeerID: "test-browser", requestID: "off-request",
+            operation: .videoTags, bodyData: try JSONEncoder().encode(newRequest)))
+        let newResult = try JSONDecoder().decode(NativeVideoTagsResponse.self,
+            from: JSONSerialization.data(withJSONObject: XCTUnwrap(newReply.body)))
+        XCTAssertTrue(newResult.skipped)
+        XCTAssertFalse(newResult.pending)
         XCTAssertEqual(coordinator.snapshot().workspaceCatalog.videoClassifications, decisions)
         XCTAssertEqual(vm.localState?.workspaceCatalog.videoClassifications, decisions)
         XCTAssertTrue(vm.inFlightVideoClassifications.isEmpty)
@@ -183,6 +198,21 @@ final class ViewModelCharacterizationTests: XCTestCase {
         _ = vm.performWebAction("saveTaggingSettings", data: ["minimumConfidence": "1"])
         XCTAssertNotNil(vm.issue)
         XCTAssertEqual(vm.localState, before)
+    }
+
+    func testYouTubeKindSwitchesPersistAndRejectOtherGroups() throws {
+        let vm = try makeViewModel()
+        _ = vm.performWebAction("createClassifierType", data: ["name": "YouTube", "platformIDs": ["youtube"]])
+        _ = vm.performWebAction("createClassifierType", data: ["name": "Reddit", "platformIDs": ["reddit"]])
+        let groups = try XCTUnwrap(vm.localState?.workspaceCatalog.classifierTypes)
+        XCTAssertEqual(groups[0].enabledYouTubeEntryTypes, ClassifierTypeAsset.youtubeEntryTypes)
+        let choices: [String: Any] = ["video": true, "short": false, "live": true, "post": false]
+        _ = vm.performWebAction("saveYouTubeEntryTypes", data: choices.merging(["typeID": groups[0].id]) { _, new in new })
+        XCTAssertNil(vm.issue)
+        XCTAssertEqual(vm.localState?.workspaceCatalog.classifierTypes[0].enabledYouTubeEntryTypes, ["video", "live"])
+        _ = vm.performWebAction("saveYouTubeEntryTypes", data: choices.merging(["typeID": groups[1].id]) { _, new in new })
+        XCTAssertNotNil(vm.issue)
+        XCTAssertEqual(vm.localState?.workspaceCatalog.classifierTypes[1].enabledYouTubeEntryTypes, ClassifierTypeAsset.youtubeEntryTypes)
     }
 
     /// The complete web-action vocabulary. Each is probed with EMPTY data: a
