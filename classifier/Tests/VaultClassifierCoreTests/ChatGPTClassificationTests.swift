@@ -73,7 +73,7 @@ final class ChatGPTClassificationTests: XCTestCase {
         let client=try ChatGPTAccountClient(directory:directory,dailyRequestLimit:1,http:http)
         let status=await client.status()
         let configuration=ChatGPTClassificationSettings(accountID:status.accountID,model:"gpt-5",reasoningEffort:.low)
-        let input=try RuleAIInput(payload:#"{"prompt":"Answer a general question"}"#)
+        let input=try RuleAIInput(payload:#"{"model":"chatgpt:gpt-5","prompt":"Answer a general question"}"#)
         let reply=try await client.generateForRule(configuration:configuration,input:input)
         XCTAssertEqual(reply.text,"A generic answer");XCTAssertEqual(reply.citations.first?.url,"https://example.com/source")
         do {_ = try await client.generateForRule(configuration:configuration,input:input);XCTFail("shared account cap must apply")}

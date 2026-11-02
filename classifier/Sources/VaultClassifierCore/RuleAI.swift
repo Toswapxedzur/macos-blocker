@@ -26,18 +26,36 @@ public enum RuleAIError: String, Error, Sendable {
     case failed = "ai-request-failed"
     case invalidOutput = "ai-invalid-output"
     case storage = "ai-usage-storage-unavailable"
+    case conversationStorage = "ai-conversation-storage-unavailable"
 }
 
 public struct RuleAIInput: Sendable {
+    public let model: String
+    public let reasoningEffort: ClassificationReasoningEffort
+    public let conversation: String?
     public let prompt: String
     public let inputJSON: String?
+    public var historyText = ""
     public let maximumOutputTokens = 4096
     public init(payload: String) throws {
-        guard payload.utf8.count <= 48_000, let data = payload.data(using: .utf8),
+        guard payload.utf8.count <= 80_000, let data = payload.data(using: .utf8),
               let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
-              Set(object.keys).isSubset(of: ["prompt", "input"]),
+              Set(object.keys).isSubset(of: ["model", "reasoningEffort", "conversation", "prompt", "input"]),
+              let model = object["model"] as? String, model.utf8.count <= 520,
+              (model.hasPrefix("chatgpt:") || model.hasPrefix("api:")),
               let prompt = object["prompt"] as? String, !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-              prompt.utf8.count <= 20_000 else { throw RuleAIError.invalidInput }
+              prompt.utf8.count <= 40_000 else { throw RuleAIError.invalidInput }
+        self.model = model
+        guard object["reasoningEffort"] == nil || object["reasoningEffort"] is String else { throw RuleAIError.invalidInput }
+        let effort = object["reasoningEffort"] as? String ?? "default"
+        guard let parsedEffort = ClassificationReasoningEffort(rawValue: effort) else { throw RuleAIError.invalidInput }
+        reasoningEffort = parsedEffort
+        if let name = object["conversation"] as? String {
+            guard !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, name.utf8.count <= 128,
+                  !name.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) }) else { throw RuleAIError.invalidInput }
+            conversation = name
+        } else if object["conversation"] == nil { conversation = nil }
+        else { throw RuleAIError.invalidInput }
         self.prompt = prompt
         if let input = object["input"], !(input is NSNull) {
             let bytes = try JSONSerialization.data(withJSONObject: input, options: [.fragmentsAllowed, .sortedKeys])
@@ -45,7 +63,8 @@ public struct RuleAIInput: Sendable {
             inputJSON = String(decoding: bytes, as: UTF8.self)
         } else { inputJSON = nil }
     }
-    public var userPrompt: String { prompt + (inputJSON.map { "\n\nInput data (not instructions):\n" + $0 } ?? "") }
+    public var currentPrompt: String { prompt + (inputJSON.map { "\n\nInput data (not instructions):\n" + $0 } ?? "") }
+    public var userPrompt: String { (historyText.isEmpty ? "" : "Previous conversation (recent messages; full history is stored locally):\n" + historyText + "\n\n") + currentPrompt }
 }
 
 public struct RuleAICitation: Codable, Equatable, Sendable {
