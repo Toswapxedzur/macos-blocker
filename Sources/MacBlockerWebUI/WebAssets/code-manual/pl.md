@@ -1,4 +1,4 @@
-# Podręcznik kodu Mac Vault
+# Adamancia Vault — Podręcznik kodu na Maca
 
 [Podręcznik użytkownika](../manual/pl.md)
 
@@ -58,7 +58,7 @@ Nazwane obiekty przetrwają Run i ponowne uruchomienie w zarezerwowanym `v.state
 - `v.quit(appId)`: jedna prośba o normalne zamknięcie zgodnie z tą samą ochroną/zasadami ponawiania; bez stałej blokady.
 - `v.open(appId)`: prosi macOS o otwarcie zainstalowanej aplikacji; nie ma callbacku powodzenia.
 
-Pozostałe wywołania zwracają `undefined`. App IDs to identyfikatory pakietów (np. `com.valvesoftware.steam`), dostępne w zdarzeniach. Block/Quit mogą obejmować aplikacje Apple i całe przeglądarki. Ignorują identyfikator pakietu Mac Vault i jego helpery, w tym każdą inną aplikację o tej samej tożsamości, oraz puste identyfikatory. Panel IDs/state należą do grupy, nie do wyświetlanej nazwy.
+Pozostałe wywołania zwracają `undefined`. App IDs to identyfikatory pakietów (np. `com.valvesoftware.steam`), dostępne w zdarzeniach. Block/Quit mogą obejmować aplikacje Apple i całe przeglądarki. Ignorują identyfikator pakietu Vault i jego helpery, w tym każdą inną aplikację o tej samej tożsamości, oraz puste identyfikatory. Panel IDs/state należą do grupy, nie do wyświetlanej nazwy.
 
 ## Zdarzenia
 
@@ -168,9 +168,17 @@ Steam jest blokowany, z wyjątkiem pięciominutowej pauzy uruchomionej przez Sno
 
 ## Wywołania AI z działającej reguły
 
-Każda custom group wybiera w **AI calls** połączenie/model i reasoning effort. Reguły Mac i przeglądarki używają tego samego API; żądania przeglądarki wymagają połączonego Mac Vault, a dane dostawcy pozostają tam. Połączone grupy współdzielą wybór i opcjonalny limit dzienny. Pusta wartość oznacza brak limitu grupy, obowiązują limity konta. Limit używa dnia UTC, przetrwa restart i liczy wysłane próby, również nieudane. Link łączy dotychczasowe użycie; unlink zachowuje wcześniejsze.
+Każde wywołanie `v.ai` wskazuje połączenie i model; grupa nie ma wartości domyślnej. Skopiuj ID modelu z **AI calls** albo wyświetl katalog bez poświadczeń przez narzędzie modeli AI reguł Vault. Poziom rozumowania wybiera się dla każdego wywołania. Żądania przeglądarki wymagają połączonego Vault na komputerze; dane dostawcy pozostają tam. Połączone grupy współdzielą opcjonalny dzienny limit. Pusta wartość oznacza brak limitu grupy; limity konta nadal obowiązują. Limit używa dnia UTC, przetrwa restart i liczy wysłane próby, także nieudane. Połączenie sumuje dotychczasowe użycie; rozłączenie je zachowuje.
 
-`v.ai({ prompt, input? })` natychmiast zwraca request ID. Wywołaj wewnątrz handlera, nie podczas rejestracji reguły. `input` może być dowolnym JSON; prompt/input mają limit20KB każdy. Odpowiedź przychodzi jako event `ai`: `{requestId, ok, text, citations, error}`. Tekst sukcesu do48KB; cytaty `{url,title}`. Zachowaj widoczne, klikalne linki źródłowe przy wyświetlaniu odpowiedzi z wyszukiwania Web. Search jest zawsze dostępne dla modelu. Brak stałego terminu aplikacji, współbieżność jest ograniczona; brak fallbacku dostawcy i automatycznej ponownej próby. Odpowiedzi są danymi, nie są wykonywane jako JavaScript. Reguła decyduje, które istniejące działania podjąć.
+Opcjonalny zapisany prompt i kontekst są współdzielone przez połączone grupy i przetrwają restart. W handlerach są dostępne jako `v.context.ai.prompt` i `v.context.ai.context`; Vault nie wysyła ich automatycznie. Reguła wybiera, co dołączyć do każdego wywołania `v.ai`. Zmiana którejkolwiek wartości unieważnia odpowiedzi ze starej konfiguracji.
+
+`conversation` to opcjonalna nazwa. Bez niej wywołanie jest bezstanowe. Z nazwą Vault na komputerze zapisuje lokalnie pełny zapis rozmowy użytkownika i asystenta, a w następnym wywołaniu uwzględnia do16KB najnowszych wiadomości. Ta sama rozmowa może zmienić model; do nowego modelu trafia tylko przenośny tekst. Nazwa jest współdzielona przez wszystkie reguły i grupy na tym urządzeniu. Usunięcie lub odłączenie grupy nie usuwa nazwanych rozmów. Łączny limit lokalnych zapisów domyślnie wynosi1 GB i można go zmienić w ustawieniach Vault. Po zapełnieniu Vault usuwa rozmowy najdawniej używane. Jeśli wcześniejsza prywatna kompilacja zapisywała osobne historie o tej samej nazwie dla grup, Vault zaimportuje je pod różnymi nazwami i zgłosi zmienione w `preservedConversations`.
+
+Użyj `v.ai({op:"delete", conversation:"name"})`, aby jawnie usunąć współdzieloną rozmowę; odpowiedź przychodzi jako zdarzenie `ai`. Aktywne wywołanie o tej samej nazwie zwraca `ai-conversation-busy`; ponów próbę po odpowiedzi. Błąd pamięci jest zgłaszany zamiast cichego utracenia udanej odpowiedzi. Tekst rozmowy nie jest automatycznie dodawany do zwykłego stanu reguły.
+
+`v.ai({ model, reasoningEffort?, conversation?, prompt, input? })` natychmiast zwraca ID żądania. Wywołaj je w handlerze, a nie podczas rejestracji reguły. `model` to dostępne ID; effort to `default` po pominięciu albo `low`, `medium`, `high`, jeśli obsługiwane. `input` może być dowolną wartością JSON; prompt/input mają po20KB limitu. Odpowiedzi przychodzą jako zdarzenia `ai`: `{requestId, ok, text, citations,
+error, preservedConversations?}` Tekst udanej odpowiedzi ma maksymalnie48KB; cytowania mają format `{url,title}`..
+Przy odpowiedziach opartych na wyszukiwaniu zachowaj widoczne, klikalne odnośniki do źródeł. Model zawsze może wyszukiwać. Generowanie nie ma stałego terminu aplikacji. Kilka nazwanych rozmów może działać naraz; wywołania o tej samej nazwie są wykonywane po kolei. Następne wywołanie uruchom ze zdarzenia `ai`. Vault nie planuje jeszcze opóźnionych wywołań. Pojemność i limity dostawcy mogą wstrzymać lub odrzucić żądanie; nie ma awaryjnego dostawcy ani automatycznej ponownej próby. Odpowiedzi są danymi, nie kodem JavaScript. Reguła wybiera istniejące działania.
 
 Dla panelu z przyciskiem `ask` i polem `note`:
 
@@ -179,7 +187,7 @@ Dla panelu z przyciskiem `ask` i polem `note`:
   let pending = null;
   on("panel", ({ data }) => {
     if (data.controlId !== "ask" || pending) return;
-    pending = v.ai({ prompt: "Summarize this text.", input: data.values?.note ?? "" });
+    pending = v.ai({ model: "chatgpt:MODEL_ID", conversation: "notes", prompt: v.context.ai.prompt || "Summarize this text.", input: {context:v.context.ai.context, note:data.values?.note ?? ""} });
   });
   on("ai", ({ data }) => {
     if (data.requestId !== pending) return;
@@ -190,6 +198,6 @@ Dla panelu z przyciskiem `ask` i polem `note`:
 }
 ```
 
-Oczekujące wywołania nie są odtwarzane po restarcie. Run, wyłączenie/ponowne włączenie i usunięcie odrzucają nieaktualne odpowiedzi; odłączona przeglądarka zgłasza `ai-unavailable`. Inne błędy: `ai-not-configured`, `ai-invalid-input`, `ai-busy`, `ai-daily-limit`, `ai-request-failed`, `ai-usage-storage-unavailable`. Nieudane wywołanie nie nadpisuje wcześniejszego wyniku zachowanego przez regułę. Limit stanu nadal64KB.
+Oczekujące wywołania nie są odtwarzane po restarcie. Run, wyłączenie/włączenie i usunięcie odrzucają nieaktualne odpowiedzi; odłączona przeglądarka zgłasza `ai-unavailable`. Inne błędy: `ai-not-configured`, `ai-invalid-input`, `ai-daily-limit`, `ai-request-failed`, `ai-usage-storage-unavailable` i `ai-conversation-storage-unavailable`. Nieudane wywołania nie zastępują wcześniejszego wyniku zachowanego przez regułę. Stan reguły nadal ma limit64KB.
 
-Opcje bez poświadczeń można znaleźć przez `rule_ai_models` na Mac lub `settings-rule-ai-models` w przeglądarce; skonfiguruj `ruleAI` przez istniejącą ścieżkę set-group. Pola: `providerModel`, `accountID`, `reasoningEffort` (`default`, `low`, `medium`, `high`) i `dailyRequestLimit` (null lub1–100000). Użyj zwróconej opcji; nie umieszczaj klucza ani URL dostawcy w kodzie reguły.
+Narzędzia mogą znaleźć opcje bez poświadczeń za pomocą `rule_ai_models` na Macu lub `settings-rule-ai-models` w przeglądarce, a `ruleAI` skonfigurować istniejącą ścieżką set-group. Pola: `dailyRequestLimit` (null albo1–100000), `prompt`, `context` (opcjonalne ciągi, maksymalnie16KB każdy). Model i effort określaj przy każdym wywołaniu; grupa nie ma zapisanego domyślnego modelu. Użyj zwróconej opcji; nie umieszczaj klucza ani URL dostawcy w kodzie reguły.

@@ -1,6 +1,6 @@
-# Manual pengguna Mac Vault
+# Manual pengguna Adamancia Vault untuk Mac
 
-Mac Vault memiliki tiga halaman: **Vault** memblokir app native, **Penandaan konten** memberi tag pada konten browser yang didukung, dan **Aktivitas** menampilkan penggunaan yang direkam. Ekstensi browser mengumpulkan konten yang didukung dan menerapkan pemblokiran browser. Instal dan hubungkan di browser yang digunakan.
+Vault memiliki tiga halaman: **Vault** memblokir app native, **Penandaan konten** memberi tag pada konten browser yang didukung, dan **Aktivitas** menampilkan penggunaan yang direkam. Ekstensi browser mengumpulkan konten yang didukung dan menerapkan pemblokiran browser. Instal dan hubungkan di browser yang digunakan.
 
 ## Mulai cepat
 
@@ -28,7 +28,7 @@ Atur snooze di tiap blokir Grup. **Pause blocking** menangguhkan kebijakan selam
 
 ### Grup tertaut
 
-Gunakan **Tautkan** untuk menghubungkan grup yang dipilih secara eksplisit dari program Vault lain. Grup berbagi nama, pengaturan kebijakan yang didukung, target, penggunaan, dan kondisi freeze. Tiap program mengedit dan menerapkan jenis target yang didukungnya; entri target lain tetap tersedia bagi program tertaut. **Lepas tautan** memisahkan tetapi mempertahankan grup dan pengaturannya. Jika anggota offline, buka Mac Vault dan browser tertaut untuk menghubungkan kembali. Kebijakan tersimpan lokal dapat tetap berlaku saat anggota offline.
+Gunakan **Tautkan** untuk menghubungkan grup yang dipilih secara eksplisit dari program Vault lain. Grup berbagi nama, pengaturan kebijakan yang didukung, target, penggunaan, dan kondisi freeze. Tiap program mengedit dan menerapkan jenis target yang didukungnya; entri target lain tetap tersedia bagi program tertaut. **Lepas tautan** memisahkan tetapi mempertahankan grup dan pengaturannya. Jika anggota offline, buka Vault dan browser tertaut untuk menghubungkan kembali. Kebijakan tersimpan lokal dapat tetap berlaku saat anggota offline.
 
 ## Bantuan
 
@@ -36,7 +36,7 @@ Klik **i** kecil di samping field untuk melihat penjelasan; klik di luar atau te
 
 ## App native
 
-Gunakan pemilih + pada target Apps untuk memilih app terpasang atau berjalan. Buka lagi untuk memperbarui daftar setelah meluncurkan app dari folder lain. **Blokir semua aplikasi selain yang tercantum di sini** menjadikan daftar sebagai allowlist. Mac Vault dapat memblokir app Apple biasa dan browser utuh; Mac Vault dan app yang berbagi bundle identifier tetap dilindungi. App yang diblokir diminta keluar; **Minta aplikasi yang diblokir keluar kembali setiap (menit)** mengatur percobaan ulang. Redirect situs, jeda halaman, dan penyembunyian feed diterapkan ekstensi browser, bukan tindakan app native.
+Gunakan pemilih + pada target Apps untuk memilih app terpasang atau berjalan. Buka lagi untuk memperbarui daftar setelah meluncurkan app dari folder lain. **Blokir semua aplikasi selain yang tercantum di sini** menjadikan daftar sebagai allowlist. Vault dapat memblokir app Apple biasa dan browser utuh; Vault dan app yang berbagi bundle identifier tetap dilindungi. App yang diblokir diminta keluar; **Minta aplikasi yang diblokir keluar kembali setiap (menit)** mengatur percobaan ulang. Redirect situs, jeda halaman, dan penyembunyian feed diterapkan ekstensi browser, bukan tindakan app native.
 
 ## Penandaan konten
 

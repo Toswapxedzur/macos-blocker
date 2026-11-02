@@ -1,6 +1,6 @@
-# Manual de usuario de Mac Vault
+# Manual de usuario de Adamancia Vault para Mac
 
-Mac Vault tiene tres páginas: **Vault** bloquea apps nativas, **Etiquetado de contenido** etiqueta contenido compatible del navegador y **Actividad** muestra el uso registrado. La extensión del navegador recopila contenido compatible y aplica el bloqueo del navegador. Instálala y conéctala en el navegador que uses.
+Vault tiene tres páginas: **Vault** bloquea apps nativas, **Etiquetado de contenido** etiqueta contenido compatible del navegador y **Actividad** muestra el uso registrado. La extensión del navegador recopila contenido compatible y aplica el bloqueo del navegador. Instálala y conéctala en el navegador que uses.
 
 ## Inicio rápido
 
@@ -28,7 +28,7 @@ Configura snooze para cada grupo. **Pause blocking** suspende la política duran
 
 ### Grupos vinculados
 
-**Vincular** conecta grupos seleccionados expresamente de otros programas Vault. Comparten nombre, ajustes compatibles, destinos, uso y condiciones de congelación. Cada programa edita y aplica los tipos de destino que admite; las demás entradas de destino siguen disponibles para los programas vinculados. **Desvincular** separa los grupos y conserva su configuración. Si un miembro está desconectado, quizá no se pueda editar. Abre Mac Vault y el navegador vinculado para reconectar. La política guardada localmente puede seguir aplicándose mientras el miembro está sin conexión.
+**Vincular** conecta grupos seleccionados expresamente de otros programas Vault. Comparten nombre, ajustes compatibles, destinos, uso y condiciones de congelación. Cada programa edita y aplica los tipos de destino que admite; las demás entradas de destino siguen disponibles para los programas vinculados. **Desvincular** separa los grupos y conserva su configuración. Si un miembro está desconectado, quizá no se pueda editar. Abre Vault y el navegador vinculado para reconectar. La política guardada localmente puede seguir aplicándose mientras el miembro está sin conexión.
 
 ## Ayuda
 
@@ -36,7 +36,7 @@ Pulsa la pequeña **i** junto a un campo para ver la explicación; haz clic fuer
 
 ## Apps nativas
 
-Usa el selector + de un destino Apps para elegir apps instaladas o en ejecución. Vuelve a abrirlo para actualizar la lista después de iniciar una app desde otra carpeta. **Bloquear todas las apps excepto estas** convierte la lista en una lista de permitidas. Mac Vault puede bloquear apps Apple normales y navegadores completos; Mac Vault y cualquier app con el mismo bundle ID están protegidas. Se pide a una app bloqueada que se cierre; **Volver a pedir el cierre de una app bloqueada cada (minutos)** controla los reintentos. La extensión del navegador aplica redirecciones web, pausas de páginas y ocultación de feeds; no son acciones de apps nativas.
+Usa el selector + de un destino Apps para elegir apps instaladas o en ejecución. Vuelve a abrirlo para actualizar la lista después de iniciar una app desde otra carpeta. **Bloquear todas las apps excepto estas** convierte la lista en una lista de permitidas. Vault puede bloquear apps Apple normales y navegadores completos; Vault y cualquier app con el mismo bundle ID están protegidas. Se pide a una app bloqueada que se cierre; **Volver a pedir el cierre de una app bloqueada cada (minutos)** controla los reintentos. La extensión del navegador aplica redirecciones web, pausas de páginas y ocultación de feeds; no son acciones de apps nativas.
 
 ## Etiquetado de contenido
 

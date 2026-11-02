@@ -1,6 +1,6 @@
-# Manuel utilisateur de Mac Vault
+# Manuel utilisateur de Adamancia Vault pour Mac
 
-Mac Vault comprend trois pages : **Vault** bloque les apps natives, **Étiquetage du contenu** étiquette le contenu navigateur pris en charge et **Activité** affiche l’utilisation enregistrée. L’extension recueille le contenu pris en charge et applique le blocage dans le navigateur. Installez-la et connectez-la dans votre navigateur.
+Vault comprend trois pages : **Vault** bloque les apps natives, **Étiquetage du contenu** étiquette le contenu navigateur pris en charge et **Activité** affiche l’utilisation enregistrée. L’extension recueille le contenu pris en charge et applique le blocage dans le navigateur. Installez-la et connectez-la dans votre navigateur.
 
 ## Démarrage rapide
 
@@ -30,7 +30,7 @@ Configurez le snooze dans chaque groupe. **Pause blocking** suspend la politique
 
 ### Groupes liés
 
-**Associer** relie les groupes explicitement choisis dans d’autres programmes Vault. Ils partagent nom, réglages pris en charge, cibles, usage et conditions de gel. Chaque programme modifie et applique les types de cibles qu’il prend en charge ; les autres entrées restent disponibles aux programmes liés. **Dissocier** dissocie les groupes sans les supprimer. Si un membre est hors ligne, la modification peut être indisponible. Ouvrez Mac Vault et le navigateur lié pour rétablir la connexion. Une politique enregistrée localement peut continuer à s’appliquer pendant cette déconnexion.
+**Associer** relie les groupes explicitement choisis dans d’autres programmes Vault. Ils partagent nom, réglages pris en charge, cibles, usage et conditions de gel. Chaque programme modifie et applique les types de cibles qu’il prend en charge ; les autres entrées restent disponibles aux programmes liés. **Dissocier** dissocie les groupes sans les supprimer. Si un membre est hors ligne, la modification peut être indisponible. Ouvrez Vault et le navigateur lié pour rétablir la connexion. Une politique enregistrée localement peut continuer à s’appliquer pendant cette déconnexion.
 
 ## Aide
 
@@ -40,7 +40,7 @@ Cliquez sur le petit **i** à côté d’un champ pour afficher son explication 
 
 Cliquez sur le petit **i** d’un champ pour son explication ; cliquez ailleurs ou appuyez sur Échap pour fermer. Les listes restent dans des zones défilantes ; la recherche filtre les éléments visibles sans les supprimer. Le [manuel du code](../code-manual/fr.md) décrit l’éditeur des règles personnalisées, l’activation, les journaux, l’accès aux fichiers et l’API.
 
-Le sélecteur + d’une cible Apps affiche les apps installées ou ouvertes ; rouvrez-le pour actualiser la liste après avoir lancé une app depuis un autre dossier. **Bloquer toutes les applications sauf celles-ci** transforme la liste en liste d’autorisation. Mac Vault peut bloquer les apps Apple ordinaires et des navigateurs entiers ; Mac Vault et toute app partageant son bundle ID restent protégés. Une app bloquée reçoit une demande de fermeture ; **Redemander à une application bloquée de quitter toutes les (minutes)** règle les nouvelles tentatives. Les redirections web, pauses de page et masquage de flux relèvent de l’extension.
+Le sélecteur + d’une cible Apps affiche les apps installées ou ouvertes ; rouvrez-le pour actualiser la liste après avoir lancé une app depuis un autre dossier. **Bloquer toutes les applications sauf celles-ci** transforme la liste en liste d’autorisation. Vault peut bloquer les apps Apple ordinaires et des navigateurs entiers ; Vault et toute app partageant son bundle ID restent protégés. Une app bloquée reçoit une demande de fermeture ; **Redemander à une application bloquée de quitter toutes les (minutes)** règle les nouvelles tentatives. Les redirections web, pauses de page et masquage de flux relèvent de l’extension.
 
 ## Étiquetage du contenu
 

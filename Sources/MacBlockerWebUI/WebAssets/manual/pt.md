@@ -1,6 +1,6 @@
-# Manual do usuário do Mac Vault
+# Manual do usuário do Adamancia Vault para Mac
 
-O Mac Vault tem três páginas: **Vault** bloqueia apps nativos, **Marcação de conteúdo** marca conteúdo compatível do navegador e **Atividade** mostra o uso registrado. A extensão do navegador coleta conteúdo compatível e aplica bloqueios no navegador. Instale-a e conecte-a ao navegador usado.
+O Vault tem três páginas: **Vault** bloqueia apps nativos, **Marcação de conteúdo** marca conteúdo compatível do navegador e **Atividade** mostra o uso registrado. A extensão do navegador coleta conteúdo compatível e aplica bloqueios no navegador. Instale-a e conecte-a ao navegador usado.
 
 ## Início rápido
 
@@ -28,7 +28,7 @@ Configure snooze em cada grupo de blocos. **Pause blocking** suspende a polític
 
 ### Grupos vinculados
 
-Use **Vincular** para conectar grupos escolhidos explicitamente em outros programas Vault. Eles compartilham nome, configurações de política compatíveis, destinos, uso e condições de freeze. Cada programa edita e aplica os tipos de destino que suporta; outros destinos permanecem disponíveis aos programas vinculados. **Desvincular** separa sem remover grupos ou configurações. Se um membro estiver offline, abra o Mac Vault e o navegador vinculado para reconectar. Uma política salva localmente pode continuar aplicada offline.
+Use **Vincular** para conectar grupos escolhidos explicitamente em outros programas Vault. Eles compartilham nome, configurações de política compatíveis, destinos, uso e condições de freeze. Cada programa edita e aplica os tipos de destino que suporta; outros destinos permanecem disponíveis aos programas vinculados. **Desvincular** separa sem remover grupos ou configurações. Se um membro estiver offline, abra o Vault e o navegador vinculado para reconectar. Uma política salva localmente pode continuar aplicada offline.
 
 ## Ajuda
 
@@ -36,7 +36,7 @@ Clique no pequeno **i** ao lado do campo para ver a explicação; clique fora ou
 
 ## Apps nativos
 
-Use o seletor + do destino Apps para escolher apps instalados ou em execução. Reabra-o para atualizar a lista após iniciar um app de outra pasta. **Bloquear todos os apps, exceto os listados aqui** transforma a lista em allowlist. O Mac Vault pode bloquear apps Apple comuns e navegadores inteiros; ele próprio e apps com o mesmo bundle identifier permanecem protegidos. Um app bloqueado recebe pedido para sair; **Pedir que um app bloqueado feche novamente a cada (minutos)** define as tentativas. Redirecionamentos de sites, pausas de páginas e ocultação de feeds são aplicados pela extensão, não são ações nativas.
+Use o seletor + do destino Apps para escolher apps instalados ou em execução. Reabra-o para atualizar a lista após iniciar um app de outra pasta. **Bloquear todos os apps, exceto os listados aqui** transforma a lista em allowlist. O Vault pode bloquear apps Apple comuns e navegadores inteiros; ele próprio e apps com o mesmo bundle identifier permanecem protegidos. Um app bloqueado recebe pedido para sair; **Pedir que um app bloqueado feche novamente a cada (minutos)** define as tentativas. Redirecionamentos de sites, pausas de páginas e ocultação de feeds são aplicados pela extensão, não são ações nativas.
 
 ## Marcação de conteúdo
 

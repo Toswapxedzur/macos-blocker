@@ -1,6 +1,6 @@
-# Mac Vault Kullanım Kılavuzu
+# Mac için Adamancia Vault Kullanım Kılavuzu
 
-Mac Vault üç sayfadan oluşur: **Vault** yerel uygulamaları engeller, **İçerik etiketleme** desteklenen tarayıcı içeriğini etiketler, **Etkinlik** kaydedilen kullanımı gösterir. Tarayıcı uzantısı desteklenen içeriği toplar ve tarayıcı engellemesini uygular. Kullandığınız tarayıcıya yükleyip bağlayın.
+Vault üç sayfadan oluşur: **Vault** yerel uygulamaları engeller, **İçerik etiketleme** desteklenen tarayıcı içeriğini etiketler, **Etkinlik** kaydedilen kullanımı gösterir. Tarayıcı uzantısı desteklenen içeriği toplar ve tarayıcı engellemesini uygular. Kullandığınız tarayıcıya yükleyip bağlayın.
 
 ## Hızlı başlangıç
 
@@ -28,7 +28,7 @@ Her grubu Engelle için snooze yapılandırın. **Pause blocking** grup ilkesini
 
 ### Bağlı gruplar
 
-Diğer Vault programlarında açıkça seçilen grupları bağlamak için **Bağla** kullanın. Adı, desteklenen ilke ayarlarını, hedefleri, kullanımı ve freeze koşullarını paylaşırlar. Her program yalnızca desteklediği hedef türlerini düzenler ve uygular; diğer hedefler bağlı programlarda kullanılabilir. **Bağlantıyı kaldır** bağlantıyı keser, grupları ve ayarlarını tutar. Bir üye çevrimdışıysa Mac Vault ve bağlı tarayıcıyı açıp yeniden bağlanın. Yerel kayıtlı ilke çevrimdışıyken uygulanmayı sürdürebilir.
+Diğer Vault programlarında açıkça seçilen grupları bağlamak için **Bağla** kullanın. Adı, desteklenen ilke ayarlarını, hedefleri, kullanımı ve freeze koşullarını paylaşırlar. Her program yalnızca desteklediği hedef türlerini düzenler ve uygular; diğer hedefler bağlı programlarda kullanılabilir. **Bağlantıyı kaldır** bağlantıyı keser, grupları ve ayarlarını tutar. Bir üye çevrimdışıysa Vault ve bağlı tarayıcıyı açıp yeniden bağlanın. Yerel kayıtlı ilke çevrimdışıyken uygulanmayı sürdürebilir.
 
 ## Yardım
 
@@ -36,7 +36,7 @@ Açıklama için alanın yanındaki küçük **i** simgesine tıklayın; kapatma
 
 ## Yerel uygulamalar
 
-Apps hedefinin + seçicisinden yüklü veya çalışmakta olan uygulamaları seçin. Başka klasörden uygulama başlattıktan sonra listeyi yenilemek için seçiciyi yeniden açın. **Burada listelenenler dışındaki tüm uygulamaları engelle** listeyi izin listesine dönüştürür. Mac Vault sıradan Apple uygulamalarını ve tüm tarayıcıları engelleyebilir; Mac Vault'un kendisi ve aynı bundle identifier'ı paylaşan uygulamalar korunur. Engellenen uygulamadan çıkması istenir; **Yasaklanan uygulamanın kapatılmasını şu aralıkla yeniden iste (dakika)** yeniden isteme aralığını ayarlar. Site yönlendirmeleri, sayfa duraklatmaları ve feed gizleme tarayıcı uzantısınca uygulanır; yerel uygulama eylemi değildir.
+Apps hedefinin + seçicisinden yüklü veya çalışmakta olan uygulamaları seçin. Başka klasörden uygulama başlattıktan sonra listeyi yenilemek için seçiciyi yeniden açın. **Burada listelenenler dışındaki tüm uygulamaları engelle** listeyi izin listesine dönüştürür. Vault sıradan Apple uygulamalarını ve tüm tarayıcıları engelleyebilir; Vault'un kendisi ve aynı bundle identifier'ı paylaşan uygulamalar korunur. Engellenen uygulamadan çıkması istenir; **Yasaklanan uygulamanın kapatılmasını şu aralıkla yeniden iste (dakika)** yeniden isteme aralığını ayarlar. Site yönlendirmeleri, sayfa duraklatmaları ve feed gizleme tarayıcı uzantısınca uygulanır; yerel uygulama eylemi değildir.
 
 ## İçerik etiketleme
 

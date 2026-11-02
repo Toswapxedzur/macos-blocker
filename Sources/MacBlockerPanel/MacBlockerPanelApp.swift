@@ -48,7 +48,7 @@ struct MacBlockerPanelApp: App {
     #endif
 
     var body: some Scene {
-        WindowGroup("Mac Vault") {
+        WindowGroup("Vault") {
             BlockerMainView()
                 .frame(minWidth: 720, minHeight: 560)
         }

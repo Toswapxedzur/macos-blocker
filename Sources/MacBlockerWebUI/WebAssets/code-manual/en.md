@@ -1,4 +1,4 @@
-# Mac Vault code manual
+# Adamancia Vault on Mac code manual
 
 [User manual](../manual/en.md)
 
@@ -58,7 +58,7 @@ Named objects survive Run and restart in reserved `v.state.$vaultTime`; do not e
 - `v.quit(appId)`: one normal quit request, subject to the same protection/retry policy; no ongoing block.
 - `v.open(appId)`: asks macOS to open an installed app; no success callback.
 
-Other calls return `undefined`. App IDs are bundle identifiers (for example `com.valvesoftware.steam`), available in events. Block/Quit can target Apple apps and whole browsers. They ignore Mac Vault's bundle identifier and its helpers, including any other app sharing that identity, and empty IDs. Panel IDs/state belong to one group, not its display name.
+Other calls return `undefined`. App IDs are bundle identifiers (for example `com.valvesoftware.steam`), available in events. Block/Quit can target Apple apps and whole browsers. They ignore Vault on Mac's bundle identifier and its helpers, including any other app sharing that identity, and empty IDs. Panel IDs/state belong to one group, not its display name.
 
 ## Events
 

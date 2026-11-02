@@ -12,7 +12,7 @@ enum LinkMCPTools {
         [
             MCPTool(
                 name: "list_links",
-                description: "The current links (each with its shared name and its member groups: program + group id) and every connected program's groups (program → [{id, name, frozen}]) that a group can be linked with. Mac Vault's own program is \"macapp\".",
+                description: "The current links (each with its shared name and its member groups: program + group id) and every connected program's groups (program → [{id, name, frozen}]) that a group can be linked with. Vault on Mac uses the program id \"macapp\".",
                 inputSchema: ["type": "object", "properties": [:]]
             ) { _ in
                 .ok(hub.clustersJSON())
@@ -47,7 +47,7 @@ enum LinkMCPTools {
             },
             MCPTool(
                 name: "unlink_group",
-                description: "Take a group out of its link, as the editor's Unlink button does: both keep the shared settings; each keeps only its own program's lines (a browser keeps websites and platforms, Mac Vault keeps apps). Refused while the link is locked.",
+                description: "Take a group out of its link, as the editor's Unlink button does: both keep the shared settings; each keeps only its own program's lines (a browser keeps websites and platforms, Vault on Mac keeps apps). Refused while the link is locked.",
                 inputSchema: [
                     "type": "object",
                     "properties": [

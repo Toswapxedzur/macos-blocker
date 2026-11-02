@@ -1,9 +1,9 @@
 #if os(macOS)
 import Foundation
 
-/// The Vault MCP tool surface: the editor's own actions on Mac Vault's groups,
+/// The Vault MCP tool surface: the editor's own actions on the Mac app's groups,
 /// with its gates (owner: tools do exactly what the user can) — never arbitrary
-/// control. Each wraps `GroupStore`, which runs the editor's rules. Mac Vault
+/// control. Each wraps `GroupStore`, which runs the editor's rules. Vault on Mac
 /// controls apps only (the scope line): these tools never edit a website or
 /// platform line. Results are JSON, like the extension tools'.
 public enum VaultMCPTools {
@@ -38,7 +38,7 @@ public enum VaultMCPTools {
 
             MCPTool(
                 name: "set_group",
-                description: "Change a group's fields, as the editor does: name, enabled, mode (instant | after-minutes; a custom group stays instant), allowedMinutes, resetIntervalHours, resetAtMidnight, rollingLimit, activeDays (at least one), timeWindowsText (HH:MM-HH:MM lines, e.g. 09:00-10:00), allowSnooze, snoozeKind (time | budget — a time-limit group's snooze either pauses it for the snooze minutes, or adds them to its allowance until the next budget reset), snoozeMinutes, snoozeActivationDelayMinutes, snoozeCooldownMinutes (≤ 5), snoozeConfirmations, fallbackUrl, pauseSeconds, ruleAI (custom groups only: {dailyRequestLimit: null or1–100000, prompt, context}; each v.ai call chooses its model and effort), and scopes — Mac Vault's own lines only (the Apps lines; website and platform lines are a browser's and are refused). A value the editor refuses is refused, never replaced by a default. A frozen group can't be changed; the freeze has its own tools. Returns the group.",
+                description: "Change a group's fields, as the editor does: name, enabled, mode (instant | after-minutes; a custom group stays instant), allowedMinutes, resetIntervalHours, resetAtMidnight, rollingLimit, activeDays (at least one), timeWindowsText (HH:MM-HH:MM lines, e.g. 09:00-10:00), allowSnooze, snoozeKind (time | budget — a time-limit group's snooze either pauses it for the snooze minutes, or adds them to its allowance until the next budget reset), snoozeMinutes, snoozeActivationDelayMinutes, snoozeCooldownMinutes (≤ 5), snoozeConfirmations, fallbackUrl, pauseSeconds, ruleAI (custom groups only: {dailyRequestLimit: null or1–100000, prompt, context}; each v.ai call chooses its model and effort), and scopes — the Mac app's own lines only (the Apps lines; website and platform lines are a browser's and are refused). A value the editor refuses is refused, never replaced by a default. A frozen group can't be changed; the freeze has its own tools. Returns the group.",
                 inputSchema: [
                     "type": "object",
                     "properties": [
@@ -55,7 +55,7 @@ public enum VaultMCPTools {
 
             MCPTool(
                 name: "set_settings",
-                description: "Change Mac Vault's settings — exactly the editor's Settings: quitRetryMinutes (whole minutes 0–1440: how often a blocked or rule-closed app that stayed open is asked to quit again; 0 = never), quickAddEnabled (the floating \"+\"), quickAddGroupId (its target group, or \"\"). A value the editor refuses is refused. Returns the settings.",
+                description: "Change the Mac app's settings — exactly the editor's Settings: quitRetryMinutes (whole minutes 0–1440: how often a blocked or rule-closed app that stayed open is asked to quit again; 0 = never), quickAddEnabled (the floating \"+\"), quickAddGroupId (its target group, or \"\"). A value the editor refuses is refused. Returns the settings.",
                 inputSchema: ["type": "object", "properties": ["patch": ["type": "object", "description": "The settings to change."]], "required": ["patch"]]
             ) { args in
                 guard let patch = args["patch"] as? [String: Any], !patch.isEmpty else { return .failure("Missing 'patch' object.") }
@@ -92,7 +92,7 @@ public enum VaultMCPTools {
 
             MCPTool(
                 name: "create_group",
-                description: "Create an unlocked group as the editor's New group does in Mac Vault: groupType site (an Apps group, the default) or custom (a rule group); a 30-minute snooze duration; a free numbered name unless patch.name is given (names are unique, ignoring letter case); optional patch fields as set_group takes them. Returns the group.",
+                description: "Create an unlocked group as the editor's New group does in Vault on Mac: groupType site (an Apps group, the default) or custom (a rule group); a 30-minute snooze duration; a free numbered name unless patch.name is given (names are unique, ignoring letter case); optional patch fields as set_group takes them. Returns the group.",
                 inputSchema: [
                     "type": "object",
                     "properties": [
@@ -169,7 +169,7 @@ public enum VaultMCPTools {
 
             MCPTool(
                 name: "run_custom_rule",
-                description: "Run a custom group's rule, as the editor's Run does: the source becomes the group's rule and keeps its memory (v.state); the group is enabled. A rule that doesn't load changes nothing — the one running keeps running — and the answer says why (ran: false, error). Omit source to run the group's current rule text. Refused when the group is frozen. Mac Vault's rules control apps only. Write the source to this reference:\n" + ruleReference("mac"),
+                description: "Run a custom group's rule, as the editor's Run does: the source becomes the group's rule and keeps its memory (v.state); the group is enabled. A rule that doesn't load changes nothing — the one running keeps running — and the answer says why (ran: false, error). Omit source to run the group's current rule text. Refused when the group is frozen. the Mac app's rules control apps only. Write the source to this reference:\n" + ruleReference("mac"),
                 inputSchema: [
                     "type": "object",
                     "properties": ["id": ["type": "string", "description": "The custom group's id."], "source": ["type": "string", "description": "The rule: (on, v) => { … }"]],
@@ -309,7 +309,7 @@ public enum VaultMCPTools {
         ]
     }
 
-    /// A custom group's snooze press, supplied by Mac Vault's rule engine.
+    /// A custom group's snooze press, supplied by the Mac app's rule engine.
     nonisolated(unsafe) public static var snoozePress: ((String) -> Void)?
     /// Credential-free custom-rule connection choices supplied by the host.
     nonisolated(unsafe) public static var ruleAIModels: (() -> [[String: Any]])?

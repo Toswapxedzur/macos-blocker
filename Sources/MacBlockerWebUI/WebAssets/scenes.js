@@ -47,7 +47,7 @@
     + '<label class="checkbox-row compact" for="vaultAutoUpdates">'
     + '<input id="vaultAutoUpdates" type="checkbox"><span>Auto install updates</span></label>'
     + '<div class="field-actions"><button id="vaultCheckUpdates" type="button" class="secondary">Check for updates</button></div>'
-    + '<p id="vaultUpdatesMoveHint" class="small-copy" hidden>Move Mac Vault to Applications, then open it there to install updates.</p>';
+    + '<p id="vaultUpdatesMoveHint" class="small-copy" hidden>Move Vault to Applications, then open it there to install updates.</p>';
   settingsModal.querySelector(".settings-col").appendChild(updatesSection);
   const conversationSection = document.createElement("section");
   conversationSection.className = "settings-group";

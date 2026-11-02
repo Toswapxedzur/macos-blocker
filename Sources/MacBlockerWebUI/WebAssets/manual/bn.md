@@ -1,6 +1,6 @@
-# Mac Vault ব্যবহারকারী নির্দেশিকা
+# Mac-এর Adamancia Vault ব্যবহারকারী নির্দেশিকা
 
-Mac Vault-এর তিনটি পৃষ্ঠা: **Vault** নেটিভ অ্যাপ ব্লক করে, **কনটেন্ট ট্যাগিং** সমর্থিত ব্রাউজার কনটেন্টে ট্যাগ দেয় এবং **কার্যকলাপ** রেকর্ড করা ব্যবহার দেখায়। ব্রাউজার এক্সটেনশন সমর্থিত কনটেন্ট সংগ্রহ করে এবং ব্রাউজার ব্লকিং প্রয়োগ করে। ব্যবহৃত ব্রাউজারে এটি ইনস্টল ও সংযোগ করুন।
+Vault-এর তিনটি পৃষ্ঠা: **Vault** নেটিভ অ্যাপ ব্লক করে, **কনটেন্ট ট্যাগিং** সমর্থিত ব্রাউজার কনটেন্টে ট্যাগ দেয় এবং **কার্যকলাপ** রেকর্ড করা ব্যবহার দেখায়। ব্রাউজার এক্সটেনশন সমর্থিত কনটেন্ট সংগ্রহ করে এবং ব্রাউজার ব্লকিং প্রয়োগ করে। ব্যবহৃত ব্রাউজারে এটি ইনস্টল ও সংযোগ করুন।
 
 ## দ্রুত শুরু
 
@@ -28,14 +28,14 @@ Mac Vault-এর তিনটি পৃষ্ঠা: **Vault** নেটিভ �
 
 ### লিঙ্ক করা গ্রুপ
 
-**লিঙ্ক** দিয়ে অন্য Vault program-এর স্পষ্টভাবে নির্বাচিত group যুক্ত করুন। নাম, সমর্থিত policy setting, target, usage ও freeze condition ভাগ হয়। প্রতিটি program নিজের সমর্থিত target type edit ও enforce করে; অন্য target linked program-এ থাকে। **আনলিঙ্ক** group ও settings রেখে আলাদা করে। linked member offline হলে Mac Vault ও browser খুলে reconnect করুন। local saved policy offline অবস্থায়ও চলতে পারে.
+**লিঙ্ক** দিয়ে অন্য Vault program-এর স্পষ্টভাবে নির্বাচিত group যুক্ত করুন। নাম, সমর্থিত policy setting, target, usage ও freeze condition ভাগ হয়। প্রতিটি program নিজের সমর্থিত target type edit ও enforce করে; অন্য target linked program-এ থাকে। **আনলিঙ্ক** group ও settings রেখে আলাদা করে। linked member offline হলে Vault ও browser খুলে reconnect করুন। local saved policy offline অবস্থায়ও চলতে পারে.
 ## সহায়তা
 
 Field-এর পাশে **i** চাপলে ব্যাখ্যা; বাইরে click বা Escape চাপলে বন্ধ হয়। তালিকা scrollable box-এ থাকে; search দৃশ্যমান item ছাঁকে, মুছে না। কাস্টম নিয়মের [Code manual](../code-manual/bn.md)-এ editor, activation, logs, file access ও API ব্যাখ্যা করা আছে।
 
 ## নেটিভ অ্যাপ
 
-Apps target-এর + picker-এ ইনস্টল করা বা বর্তমানে চলমান app বেছে নিন। অন্য folder থেকে app চালু করলে তালিকা refresh করতে picker আবার খুলুন। **এখানে তালিকাভুক্ত অ্যাপ ছাড়া সব অ্যাপ ব্লক করুন** তালিকাকে allowlist করে। Mac Vault সাধারণ Apple app এবং সম্পূর্ণ browser block করতে পারে; Mac Vault নিজে এবং একই bundle identifier-সহ app সুরক্ষিত থাকে। ব্লক করা app-কে স্বাভাবিকভাবে quit করতে বলা হয়; **حোল্ড করা অ্যাপকে আবার বন্ধ হতে বলুন প্রতি (মিনিটে)** পুনরায় অনুরোধের ব্যবধান নির্ধারণ করে। Website redirect, page pause এবং feed লুকানো browser extension প্রয়োগ করে; এগুলো native app-এর কাজ নয়।
+Apps target-এর + picker-এ ইনস্টল করা বা বর্তমানে চলমান app বেছে নিন। অন্য folder থেকে app চালু করলে তালিকা refresh করতে picker আবার খুলুন। **এখানে তালিকাভুক্ত অ্যাপ ছাড়া সব অ্যাপ ব্লক করুন** তালিকাকে allowlist করে। Vault সাধারণ Apple app এবং সম্পূর্ণ browser block করতে পারে; Vault নিজে এবং একই bundle identifier-সহ app সুরক্ষিত থাকে। ব্লক করা app-কে স্বাভাবিকভাবে quit করতে বলা হয়; **حোল্ড করা অ্যাপকে আবার বন্ধ হতে বলুন প্রতি (মিনিটে)** পুনরায় অনুরোধের ব্যবধান নির্ধারণ করে। Website redirect, page pause এবং feed লুকানো browser extension প্রয়োগ করে; এগুলো native app-এর কাজ নয়।
 
 ## কনটেন্ট ট্যাগিং
 

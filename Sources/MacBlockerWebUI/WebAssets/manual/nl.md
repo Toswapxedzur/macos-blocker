@@ -1,6 +1,6 @@
-# Mac Vault-gebruikershandleiding
+# Gebruikershandleiding van Adamancia Vault voor Mac
 
-Mac Vault heeft drie pagina’s: **Vault** blokkeert native apps, **Content taggen** tagt ondersteunde browserinhoud en **Activiteit** toont vastgelegd gebruik. De browserextensie verzamelt ondersteunde inhoud en past browserblokkeringen toe. Installeer en verbind haar in de browser die je gebruikt.
+Vault heeft drie pagina’s: **Vault** blokkeert native apps, **Content taggen** tagt ondersteunde browserinhoud en **Activiteit** toont vastgelegd gebruik. De browserextensie verzamelt ondersteunde inhoud en past browserblokkeringen toe. Installeer en verbind haar in de browser die je gebruikt.
 
 ## Snelstart
 
@@ -28,7 +28,7 @@ Stel snooze per blokkeergroep in. **Pause blocking** onderbreekt het groepsbelei
 
 ### Gekoppelde groepen
 
-Gebruik **Koppelen** om expliciet geselecteerde groepen uit andere Vault-programma’s te verbinden. Ze delen naam, ondersteunde beleidsinstellingen, doelen, gebruik en freeze-voorwaarden. Elk programma wijzigt en handhaaft alleen ondersteunde doeltypen; andere doelen blijven beschikbaar voor gekoppelde programma’s. **Ontkoppelen** verbreekt de koppeling maar behoudt de groep en instellingen. Is een lid offline, open Mac Vault en de gekoppelde browser om opnieuw te verbinden. Lokaal opgeslagen beleid kan offline actief blijven.
+Gebruik **Koppelen** om expliciet geselecteerde groepen uit andere Vault-programma’s te verbinden. Ze delen naam, ondersteunde beleidsinstellingen, doelen, gebruik en freeze-voorwaarden. Elk programma wijzigt en handhaaft alleen ondersteunde doeltypen; andere doelen blijven beschikbaar voor gekoppelde programma’s. **Ontkoppelen** verbreekt de koppeling maar behoudt de groep en instellingen. Is een lid offline, open Vault en de gekoppelde browser om opnieuw te verbinden. Lokaal opgeslagen beleid kan offline actief blijven.
 
 ## Hulp
 
@@ -36,7 +36,7 @@ Klik op de kleine **i** naast een veld voor uitleg; klik erbuiten of druk op Esc
 
 ## Native toepassingen
 
-Gebruik de + kiezer van een Apps-doel voor geïnstalleerde of actieve apps. Open de kiezer opnieuw om de lijst te vernieuwen nadat je een app uit een andere map hebt gestart. **Alle apps blokkeren behalve de apps in deze lijst** maakt de lijst een allowlist. Mac Vault kan gewone Apple-apps en volledige browsers blokkeren; Mac Vault zelf en apps met dezelfde bundle identifier blijven beschermd. Een geblokkeerde app krijgt een verzoek om te stoppen; **Ponownie proś zablokowaną aplikację o zamknięcie co (minuty)** bepaalt herhaling. Websiteomleidingen, paginapauzes en feed verbergen worden door de browserextensie afgehandeld, niet als native app-acties.
+Gebruik de + kiezer van een Apps-doel voor geïnstalleerde of actieve apps. Open de kiezer opnieuw om de lijst te vernieuwen nadat je een app uit een andere map hebt gestart. **Alle apps blokkeren behalve de apps in deze lijst** maakt de lijst een allowlist. Vault kan gewone Apple-apps en volledige browsers blokkeren; Vault zelf en apps met dezelfde bundle identifier blijven beschermd. Een geblokkeerde app krijgt een verzoek om te stoppen; **Ponownie proś zablokowaną aplikację o zamknięcie co (minuty)** bepaalt herhaling. Websiteomleidingen, paginapauzes en feed verbergen worden door de browserextensie afgehandeld, niet als native app-acties.
 
 ## Inhoud taggen
 

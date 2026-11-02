@@ -1,4 +1,4 @@
-# Mac Vaultコードマニュアル
+# Adamancia Vault — Mac 版コードマニュアル
 
 [ユーザーマニュアル](../manual/ja.md)
 
@@ -58,7 +58,7 @@
 - `v.quit(appId)`: 同じ保護/再試行方針に従う通常終了要求一回。継続的なブロックではありません。
 - `v.open(appId)`: macOSにインストール済みアプリの起動を要求します。成功コールバックはありません。
 
-その他の呼び出しは `undefined` を返します。アプリIDはイベントで取得できるbundle identifier（例: `com.valvesoftware.steam`）です。Block/QuitはAppleのアプリとブラウザー全体を対象にできます。Mac Vaultのbundle identifierとそのヘルパー（同じIDを共有する別のアプリを含む）、および空のIDは無視します。パネルID/stateは表示名ではなく一つのグループに属します。
+その他の呼び出しは `undefined` を返します。アプリIDはイベントで取得できるbundle identifier（例: `com.valvesoftware.steam`）です。Block/QuitはAppleのアプリとブラウザー全体を対象にできます。Vaultのbundle identifierとそのヘルパー（同じIDを共有する別のアプリを含む）、および空のIDは無視します。パネルID/stateは表示名ではなく一つのグループに属します。
 
 ## イベント
 
@@ -166,20 +166,28 @@ Snoozeまたはパネルボタンで起動する5分間の一時停止中を除�
 ```
 
 
-## 実行中ルールからの AI 呼び出し
+## 実行中のルールからの AI 呼び出し
 
-各 custom group は **AI calls** で接続/モデルと reasoning effort を選択します。Mac とブラウザーのルールは同じ API を使います。ブラウザー要求には Mac Vault 接続が必要で、プロバイダー認証情報はそこに保持されます。リンク済みグループは選択と任意の日次上限を共有します。空欄はグループ上限なしですが、アカウント制限は適用されます。上限は UTC 日で計算し、再起動後も維持、失敗を含む送信試行を数えます。Link は既存使用量を合算し、Unlink 後も過去分は保持されます。
+各 `v.ai` 呼び出しでは接続とモデルを指定します。グループ既定値はありません。**AI calls** からモデル ID をコピーするか、Vault のルール AI モデルツールで認証情報不要の一覧を確認します。推論の強さは呼び出しごとに選びます。ブラウザー要求にはデスクトップ Vault への接続が必要で、プロバイダー認証情報はそこに保持されます。リンクしたグループは任意の日次上限を共有します。空欄ならグループ上限はなく、アカウント上限は適用されます。上限は UTC 日単位で、再起動後も保持され、失敗を含む送信試行を数えます。リンク時に既存使用量を合算し、解除後も保持します。
 
-`v.ai({ prompt, input? })` は即時に request ID を返します。ルール登録時でなくハンドラー内で呼びます。`input` は任意の JSON 値で、prompt/input はそれぞれ20KBまでです。応答は `ai` イベント `{requestId, ok, text, citations, error}` で届きます。成功テキストは最大48KB、引用は `{url,title}`。Web 検索の回答を表示する際はソースリンクを見えるクリック可能な状態に保ちます。検索は常にモデルから利用可能です。アプリの固定期限はなく、並行処理は制限されます。プロバイダーフォールバックや自動再試行はありません。応答はデータであり JavaScript として実行されません。既存アクションを取るかはルールが決めます。
+任意の保存済み prompt と context はリンク済みグループで共有され、再起動後も残ります。ハンドラー内では `v.context.ai.prompt` と `v.context.ai.context` として利用できますが、Vault は自動送信しません。各 `v.ai` 呼び出しに何を含めるかはルールが決めます。どちらかを編集すると旧設定の応答は無効になります。
 
-`ask` ボタンと `note` フィールドを持つパネルの例:
+`conversation` は任意の名前です。指定しなければ呼び出しは状態を保持しません。指定するとデスクトップ Vault はユーザー/アシスタントの完全な会話記録をローカル保存し、次回に最新メッセージの最大16KBを含めます。同じ会話でモデルを切り替えられますが、新モデルに渡るのは移植可能なテキストだけです。名前はこの端末のすべてのルールとグループで共有されます。グループを削除またはリンク解除しても名前付き会話は残ります。ローカル記録の合計上限は既定1 GBで、Vault 設定から変更できます。満杯になると最も長く使われていない会話を削除します。以前の非公開ビルドがグループごとに同名の履歴を保存していた場合、Vault は別名で読み込み、変更名を `preservedConversations` として報告します。
+
+共有会話を明示的に削除するには `v.ai({op:"delete", conversation:"name"})` を呼びます。応答は `ai` イベントで届きます。同名の呼び出しが実行中なら `ai-conversation-busy` が返るので、応答後に再試行します。保存失敗は成功応答を黙って失う代わりにエラーとして通知されます。会話のテキストは通常のルール状態へ自動追加されません。
+
+`v.ai({ model, reasoningEffort?, conversation?, prompt, input? })` は直ちに要求 ID を返します。ルール登録時ではなくハンドラー内で呼び出してください。`model` は利用可能なモデル ID です。effort を省略すると `default`、対応時は `low`、`medium`、`high` を指定できます。`input` は任意の JSON 値で、prompt/input は各20KBまでです。応答は `ai` イベント `{requestId, ok, text, citations,
+error, preservedConversations?}` 成功時のテキストは最大48KBです。引用の形式は`{url,title}`です。.
+Web 検索に基づく回答を表示する場合、出典リンクを見える状態かつクリック可能にしてください。モデルは常に検索できます。生成要求にアプリ側の固定期限はありません。複数の名前付き会話を並行実行でき、同名の呼び出しは順番に処理されます。続きは `ai` イベントから呼び出します。Vault はまだ遅延呼び出しをスケジュールしません。プロバイダーの容量や上限により待機または拒否されることがあります。別プロバイダーへの切替や自動再試行はありません。応答はデータであり JavaScript として実行されません。実行する既存アクションはルールが決めます。
+
+`ask` ボタンと `note` フィールドのあるパネルでは:
 
 ```javascript
 (on, v) => {
   let pending = null;
   on("panel", ({ data }) => {
     if (data.controlId !== "ask" || pending) return;
-    pending = v.ai({ prompt: "Summarize this text.", input: data.values?.note ?? "" });
+    pending = v.ai({ model: "chatgpt:MODEL_ID", conversation: "notes", prompt: v.context.ai.prompt || "Summarize this text.", input: {context:v.context.ai.context, note:data.values?.note ?? ""} });
   });
   on("ai", ({ data }) => {
     if (data.requestId !== pending) return;
@@ -190,6 +198,6 @@ Snoozeまたはパネルボタンで起動する5分間の一時停止中を除�
 }
 ```
 
-未完了呼び出しは再起動後に再送されません。Run、無効化/再有効化、削除は古い応答を破棄します。未接続ブラウザーは `ai-unavailable` を返します。その他のエラー: `ai-not-configured`, `ai-invalid-input`, `ai-busy`, `ai-daily-limit`, `ai-request-failed`, `ai-usage-storage-unavailable`。失敗した呼び出しはルールが保持した前の結果を上書きしません。state 上限は64KBのままです。
+保留中の呼び出しは再起動後に再実行されません。Run、無効化/再有効化、削除は古い応答を破棄します。切断されたブラウザーは `ai-unavailable` を報告します。その他のエラーは `ai-not-configured`、`ai-invalid-input`、`ai-daily-limit`、`ai-request-failed`、`ai-usage-storage-unavailable`、`ai-conversation-storage-unavailable` です。失敗した呼び出しはルールが保持していた結果を上書きしません。ルール状態の上限は引き続き64KBです。
 
-認証情報なしの候補は Mac の `rule_ai_models`、ブラウザーの `settings-rule-ai-models` で取得し、既存の set-group 経路から `ruleAI` を設定します。フィールドは `providerModel`, `accountID`, `reasoningEffort` (`default`, `low`, `medium`, `high`), `dailyRequestLimit` (null または1～100000) です。返された候補を使い、キーやプロバイダー URL をルールソースに書かないでください。
+認証情報不要の候補は Mac の `rule_ai_models` またはブラウザーの `settings-rule-ai-models` で調べ、既存の set-group 経由で `ruleAI` を設定できます。項目は `dailyRequestLimit`（null または1–100000）、`prompt`、`context`（任意の文字列、各最大16KB）です。モデルと effort は毎回指定し、グループ既定値は保存されません。返された候補を使い、キーやプロバイダー URL をルールソースに記述しないでください。

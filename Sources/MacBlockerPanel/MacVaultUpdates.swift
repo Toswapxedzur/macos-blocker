@@ -58,8 +58,8 @@ final class MacVaultUpdates: ObservableObject {
     func checkManually() {
         if requiresMove {
             let alert = NSAlert()
-            alert.messageText = "Move Mac Vault to Applications"
-            alert.informativeText = "Quit Mac Vault, copy it to the Applications folder, then open that copy and check for updates again."
+        alert.messageText = "Move Vault to Applications"
+        alert.informativeText = "Quit Vault, copy it to the Applications folder, then open that copy and check for updates again."
             alert.addButton(withTitle: "OK")
             alert.runModal()
             return

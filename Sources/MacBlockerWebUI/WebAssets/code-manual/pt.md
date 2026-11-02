@@ -1,4 +1,4 @@
-# Manual de código Mac Vault
+# Adamancia Vault — Manual de código para Mac
 
 [Manual do usuário](../manual/pt.md)
 
@@ -58,7 +58,7 @@ Os objetos com nome sobrevivem a Run e à reinicialização no campo reservado `
 - `v.quit(appId)`: uma solicitação normal de encerramento, sob a mesma política de proteção/tentativa; sem bloqueio contínuo.
 - `v.open(appId)`: pede ao macOS para abrir um app instalado; sem callback de sucesso.
 
-Outras chamadas retornam `undefined`. Os identificadores de apps são identificadores de bundle (por exemplo, `com.valvesoftware.steam`), disponíveis em eventos. Block/Quit podem ter como alvo apps da Apple e navegadores inteiros. Eles ignoram o identificador de bundle do Mac Vault e seus helpers, incluindo qualquer outro app que compartilhe essa identidade, além de IDs vazios. Panel IDs/state pertencem ao grupo, não ao nome exibido.
+Outras chamadas retornam `undefined`. Os identificadores de apps são identificadores de bundle (por exemplo, `com.valvesoftware.steam`), disponíveis em eventos. Block/Quit podem ter como alvo apps da Apple e navegadores inteiros. Eles ignoram o identificador de bundle do Vault e seus helpers, incluindo qualquer outro app que compartilhe essa identidade, além de IDs vazios. Panel IDs/state pertencem ao grupo, não ao nome exibido.
 
 ## Eventos
 
@@ -166,20 +166,28 @@ Steam é bloqueado, exceto durante uma pausa de cinco minutos iniciada pelo Snoo
 ```
 
 
-## Chamadas de IA em uma regra em execução
+## Chamadas de IA de uma regra em execução
 
-Cada custom group escolhe conexão/modelo e reasoning effort em **AI calls**. Regras Mac e navegador usam a mesma API; pedidos do navegador exigem Mac Vault conectado e as credenciais do provedor ficam lá. Grupos vinculados compartilham seleção e limite diário opcional. Em branco significa sem limite do grupo; limites da conta continuam valendo. O limite usa o dia UTC, persiste após reinício e conta tentativas enviadas, inclusive falhas. Link combina uso existente; unlink mantém o uso anterior.
+Cada chamada `v.ai` indica a conexão e o modelo; não há padrão do grupo. Copie um ID de modelo em **AI calls** ou consulte o catálogo sem credenciais pela ferramenta de modelos de IA de regras do Vault. O esforço de raciocínio é escolhido por chamada. Solicitações do navegador exigem Vault conectado no desktop; as credenciais do provedor ficam lá. Grupos vinculados compartilham o limite diário opcional. Em branco significa sem limite do grupo; limites da conta continuam valendo. O limite segue o dia UTC, persiste após reinício e conta tentativas enviadas, inclusive falhas. Vincular combina o uso existente; desvincular o mantém.
 
-`v.ai({ prompt, input? })` retorna um request ID imediatamente. Chame dentro de um handler, não ao registrar a regra. `input` pode ser qualquer JSON; prompt/input limitados a20KB cada. Respostas chegam como eventos `ai`: `{requestId, ok, text, citations, error}`. Texto de sucesso até48KB; citations `{url,title}`. Preserve links de fonte visíveis e clicáveis ao exibir respostas da pesquisa Web. Search está sempre disponível ao modelo. Não há prazo fixo do app; concorrência limitada; sem fallback de provedor ou retry automático. Respostas são dados, nunca executadas como JavaScript. A regra decide quais ações existentes tomar.
+O prompt e o contexto salvos opcionalmente são compartilhados por grupos vinculados e persistem após reinício. Eles ficam disponíveis nos handlers como `v.context.ai.prompt` e `v.context.ai.context`; o Vault não os envia automaticamente. A regra escolhe o que incluir em cada chamada `v.ai`. Editar qualquer um invalida respostas da configuração antiga.
 
-Para um painel com um botão `ask` e um campo `note`:
+`conversation` é um nome opcional. Sem ele, a chamada não mantém estado. Com ele, o Vault desktop salva localmente a transcrição completa de usuário/assistente e inclui até16KB das mensagens mais recentes na chamada seguinte. A mesma conversa pode trocar de modelo; somente texto portátil vai para o novo modelo. O nome é compartilhado por todas as regras e grupos neste dispositivo. Excluir ou desvincular um grupo mantém as conversas nomeadas. O limite total local da transcrição é1 GB por padrão e pode ser alterado nas configurações do Vault. Quando cheio, o Vault remove as conversas menos usadas recentemente. Se uma versão privada antiga salvou históricos separados com o mesmo nome por grupo, o Vault os importa com nomes distintos e informa os renomeados em `preservedConversations`.
+
+Use `v.ai({op:"delete", conversation:"name"})` para excluir explicitamente uma conversa compartilhada; a resposta chega como evento `ai`. Uma chamada ativa com o mesmo nome retorna `ai-conversation-busy`; tente novamente depois da resposta. Falha de armazenamento gera erro em vez de esquecer silenciosamente uma resposta bem-sucedida. O texto da conversa não é acrescentado automaticamente ao estado comum da regra.
+
+`v.ai({ model, reasoningEffort?, conversation?, prompt, input? })` retorna um ID de solicitação imediatamente. Chame-o em um handler, não ao registrar a regra. `model` é um ID disponível; effort é `default` se omitido, ou `low`, `medium`, `high` quando compatível. `input` pode ser qualquer valor JSON; prompt/input têm limite de20KB cada. As respostas chegam como eventos `ai`: `{requestId, ok, text, citations,
+error, preservedConversations?}` O texto bem-sucedido tem no máximo48KB; as citações usam o formato `{url,title}`..
+Mantenha links de fontes visíveis e clicáveis ao exibir respostas da pesquisa na web. A pesquisa está sempre disponível ao modelo. A geração não tem prazo fixo do app. Várias conversas nomeadas podem rodar ao mesmo tempo; chamadas com o mesmo nome seguem em ordem. Inicie a próxima chamada a partir de um evento `ai`. O Vault ainda não agenda chamadas atrasadas. Capacidade e cotas do provedor podem enfileirar ou rejeitar solicitações; não há fallback de provedor nem repetição automática. Respostas são dados, nunca executadas como JavaScript. A regra escolhe as ações existentes.
+
+Para um painel com botão `ask` e campo `note`:
 
 ```javascript
 (on, v) => {
   let pending = null;
   on("panel", ({ data }) => {
     if (data.controlId !== "ask" || pending) return;
-    pending = v.ai({ prompt: "Summarize this text.", input: data.values?.note ?? "" });
+    pending = v.ai({ model: "chatgpt:MODEL_ID", conversation: "notes", prompt: v.context.ai.prompt || "Summarize this text.", input: {context:v.context.ai.context, note:data.values?.note ?? ""} });
   });
   on("ai", ({ data }) => {
     if (data.requestId !== pending) return;
@@ -190,6 +198,6 @@ Para um painel com um botão `ask` e um campo `note`:
 }
 ```
 
-Chamadas pendentes não são reproduzidas após reiniciar. Run, desabilitar/habilitar e exclusão descartam respostas antigas; navegador desconectado informa `ai-unavailable`. Outros erros: `ai-not-configured`, `ai-invalid-input`, `ai-busy`, `ai-daily-limit`, `ai-request-failed`, `ai-usage-storage-unavailable`. Chamadas falhas não substituem resultado anterior que a regra escolheu manter. O estado da regra continua limitado a64KB.
+Chamadas pendentes não são reproduzidas após reinício. Run, desativar/reativar e excluir descartam respostas antigas; um navegador desconectado informa `ai-unavailable`. Outros erros: `ai-not-configured`, `ai-invalid-input`, `ai-daily-limit`, `ai-request-failed`, `ai-usage-storage-unavailable` e `ai-conversation-storage-unavailable`. Falhas não substituem resultado anterior que a regra decidiu manter. O estado da regra continua limitado a64KB.
 
-Descubra opções sem credenciais com `rule_ai_models` no Mac ou `settings-rule-ai-models` no navegador; configure `ruleAI` pelo caminho set-group existente. Campos: `providerModel`, `accountID`, `reasoningEffort` (`default`, `low`, `medium`, `high`) e `dailyRequestLimit` (null ou1–100000). Use uma opção retornada; não coloque chave ou URL do provedor no código-fonte.
+As ferramentas podem descobrir opções sem credenciais com `rule_ai_models` no Mac ou `settings-rule-ai-models` no navegador e configurar `ruleAI` pelo caminho set-group existente. Campos: `dailyRequestLimit` (null ou1–100000), `prompt`, `context` (strings opcionais, até16KB cada). Especifique modelo e esforço em cada chamada; não há padrão salvo do grupo. Use uma opção retornada; não coloque chave ou URL do provedor no código da regra.

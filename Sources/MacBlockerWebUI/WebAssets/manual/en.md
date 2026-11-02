@@ -1,6 +1,6 @@
-# Mac Vault user manual
+# Adamancia Vault on Mac user manual
 
-Mac Vault has three pages: **Vault** blocks native apps, **Content tagging** tags supported browser content, and **Activity** shows recorded use. The browser extension collects supported content and applies browser blocking. Install and connect it in the browser you use.
+Vault has three pages: **Vault** blocks native apps, **Content tagging** tags supported browser content, and **Activity** shows recorded use. The browser extension collects supported content and applies browser blocking. Install and connect it in the browser you use.
 
 ## Quick start
 
@@ -47,7 +47,7 @@ While frozen, the wait can be extended and a PIN can be added if none exists. Th
 
 Use **Link** to connect explicitly selected groups in other Vault programs. Linked groups share their name, supported policy settings, targets, usage, and freeze conditions. Each program edits and enforces the target types it supports; other target entries remain available to linked programs. Unlinking keeps each group and its settings.
 
-If a linked member is offline, editing can be unavailable. Open Mac Vault and the linked browser to reconnect. A local saved policy can continue to apply while a member is offline.
+If a linked member is offline, editing can be unavailable. Open Vault on Mac and the linked browser to reconnect. A local saved policy can continue to apply while a member is offline.
 
 ## Getting help
 
@@ -57,7 +57,7 @@ Custom rules have their own [Code manual](../code-manual/en.md). It explains the
 
 ## Native apps
 
-Use an Apps target's + picker to select installed or currently running apps. Reopen the picker to refresh its list when you launch an app from another folder. **Block every app except these** turns the list into an allowlist. Mac Vault can block ordinary Apple apps and whole browsers; Mac Vault itself and any app sharing its bundle identifier remain protected.
+Use an Apps target's + picker to select installed or currently running apps. Reopen the picker to refresh its list when you launch an app from another folder. **Block every app except these** turns the list into an allowlist. Vault on Mac can block ordinary Apple apps and whole browsers; Vault on Mac itself and any app sharing its bundle identifier remain protected.
 
 A blocked app is asked to quit. **Ask a blocked app to quit again every (minutes)** controls retries. Website redirects, page pauses, and feed hiding are enforced by the browser extension; they do not become native app actions.
 
@@ -106,7 +106,7 @@ Platform feeds collect content shown on supported platform pages, whether opened
 
 Choose the interface language in Settings. Field explanations are available through the small Info buttons in the selected interface language.
 
-Under **Updates**, choose **Check for updates** to check manually. **Auto install updates** starts off; turn it on if you want Vault to install available app updates automatically. If you opened Vault directly from a downloaded DMG or another read-only location, move it to **Applications** and reopen it there before installing an update. An older Mac Vault without these controls needs a fresh download of the current installer once.
+Under **Updates**, choose **Check for updates** to check manually. **Auto install updates** starts off; turn it on if you want Vault to install available app updates automatically. If you opened Vault directly from a downloaded DMG or another read-only location, move it to **Applications** and reopen it there before installing an update. An older Vault on Mac without these controls needs a fresh download of the current installer once.
 
 ## Saving and troubleshooting
 

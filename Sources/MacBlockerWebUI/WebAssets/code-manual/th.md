@@ -1,4 +1,4 @@
-# คู่มือโค้ด Mac Vault
+# Adamancia Vault — คู่มือโค้ดสำหรับ Mac
 
 [คู่มือผู้ใช้](../manual/th.md)
 
@@ -58,7 +58,7 @@ Object IDs เดียวกันใน custom groups ที่เชื่อ
 - `v.quit(appId)`: ขอปิดตามปกติหนึ่งครั้ง ภายใต้นโยบาย protection/retry เดียวกัน; ไม่ใช่ block ต่อเนื่อง
 - `v.open(appId)`: ขอให้ macOS เปิดแอปที่ติดตั้งไว้; ไม่มี success callback
 
-Calls อื่นคืน `undefined` App IDs คือ bundle identifiers (เช่น `com.valvesoftware.steam`) ที่มีให้ใน events Block/Quit สามารถกำหนดเป้าหมายเป็น Apple apps และ browsers ทั้งแอปได้ โดยจะละเว้น bundle identifier ของ Mac Vault และ helpers ของแอป รวมถึงแอปอื่นใดที่ใช้ identity เดียวกันและ IDs ว่าง Panel IDs/state เป็นของกลุ่ม ไม่ใช่ชื่อที่แสดง
+Calls อื่นคืน `undefined` App IDs คือ bundle identifiers (เช่น `com.valvesoftware.steam`) ที่มีให้ใน events Block/Quit สามารถกำหนดเป้าหมายเป็น Apple apps และ browsers ทั้งแอปได้ โดยจะละเว้น bundle identifier ของ Vault และ helpers ของแอป รวมถึงแอปอื่นใดที่ใช้ identity เดียวกันและ IDs ว่าง Panel IDs/state เป็นของกลุ่ม ไม่ใช่ชื่อที่แสดง
 
 ## เหตุการณ์
 
@@ -168,18 +168,26 @@ Steam ถูกบล็อก ยกเว้นช่วงพักห้า�
 
 ## การเรียก AI จากกฎที่กำลังทำงาน
 
-แต่ละ custom group เลือก connection/model และ reasoning effort ใน **AI calls** กฎ Mac และ browser ใช้ API เดียวกัน; browser request ต้องเชื่อม Mac Vault และ credentials ของ provider อยู่ที่นั่น กลุ่มที่เชื่อมกันแชร์ตัวเลือกและ daily cap แบบเลือกได้ ค่าว่างหมายถึงไม่จำกัดระดับกลุ่ม แต่ข้อจำกัดบัญชียังใช้ cap คิดตามวัน UTC อยู่หลัง restart และนับทุก attempt ที่ส่งรวมถึงที่ล้มเหลว Link รวม usage เดิม; unlink เก็บ usage ที่ผ่านมา
+ทุกการเรียก `v.ai` ต้องระบุ connection/model; ไม่มีค่าเริ่มต้นระดับกลุ่ม เลือก model ID จาก **AI calls** หรือดูแค็ตตาล็อกที่ไม่ต้องใช้ข้อมูลรับรองผ่านเครื่องมือ rule AI model ของ Vault กำหนด reasoning effort ต่อการเรียก คำขอจากเบราว์เซอร์ต้องเชื่อมต่อ desktop Vault และข้อมูลผู้ให้บริการจะอยู่ที่นั่น กลุ่มที่เชื่อมกันใช้เพดานคำขอรายวันที่เลือกได้ร่วมกัน เว้นว่างคือไม่มีเพดานกลุ่ม แต่ยังใช้เพดานบัญชี เพดานนับตามวัน UTC คงอยู่หลังรีสตาร์ต และนับคำขอที่ส่งทั้งหมดรวมถึงที่ล้มเหลว Link รวมการใช้งานเดิม ส่วน unlink เก็บการใช้งานไว้
 
-`v.ai({ prompt, input? })` คืน request ID ทันที เรียกใน handler ไม่ใช่ตอนลงทะเบียน rule `input` เป็น JSON ใดก็ได้; prompt/input จำกัดอย่างละ20KB คำตอบมาใน `ai` event: `{requestId, ok, text, citations, error}` ข้อความสำเร็จไม่เกิน48KB; citations เป็น `{url,title}` เก็บลิงก์แหล่งที่มาให้มองเห็นและคลิกได้เมื่อแสดงคำตอบจาก web search Search มีให้โมเดลเสมอ ไม่มี app deadline คงที่และจำกัด concurrency; ไม่มี provider fallback หรือ auto retry คำตอบเป็นข้อมูล ไม่ถูก execute เป็น JavaScript และ rule ตัดสินใจว่าจะใช้ action เดิมใด
+prompt และ context ที่บันทึกไว้โดยเลือกได้จะแชร์ในกลุ่มที่เชื่อมกันและคงอยู่หลังรีสตาร์ต ใช้ได้ใน handler ผ่าน `v.context.ai.prompt` และ `v.context.ai.context`; Vault ไม่ส่งให้อัตโนมัติ กฎเลือกสิ่งที่จะใส่ในการเรียก `v.ai` แต่ละครั้ง การแก้ค่าใดค่าหนึ่งทำให้คำตอบจากการตั้งค่าเดิมใช้ไม่ได้
 
-สำหรับแผงที่มีปุ่ม `ask` และช่อง `note`:
+`conversation` เป็นชื่อที่เลือกใช้ได้ หากไม่ระบุ การเรียกจะไม่มีสถานะ หากระบุ desktop Vault จะบันทึกบทสนทนาผู้ใช้/ผู้ช่วยฉบับเต็มไว้ในเครื่อง และใส่ข้อความล่าสุดได้ถึง16KB ในการเรียกครั้งถัดไป บทสนทนาเดิมเปลี่ยน model ได้ โดยส่งต่อเฉพาะข้อความที่ย้ายรูปแบบได้ ชื่อนี้ใช้ร่วมกันในทุกกฎ/กลุ่มบนอุปกรณ์ การลบหรือ unlink กลุ่มไม่ลบบทสนทนาที่มีชื่อ เพดาน transcript ในเครื่องรวมเริ่มต้น1 GB และเปลี่ยนได้ใน Vault Settings เมื่อเต็ม Vault จะลบบทสนทนาที่ไม่ได้ใช้นานที่สุด หาก private build รุ่นก่อนบันทึกประวัติชื่อเดียวกันแยกตามกลุ่ม Vault จะนำเข้าเป็นชื่อแยกและรายงานชื่อที่เปลี่ยนเป็น `preservedConversations`
+
+เรียก `v.ai({op:"delete", conversation:"name"})` เพื่อลบบทสนทนาร่วมอย่างชัดเจน; คำตอบมาเป็น `ai` event หากมีการเรียกชื่อเดียวกันที่ยังทำงาน จะได้ `ai-conversation-busy`; ลองใหม่หลังได้รับคำตอบ ความผิดพลาดของ storage จะแจ้ง error แทนการทำคำตอบสำเร็จหายไปโดยไม่บอก ข้อความสนทนาไม่ถูกเพิ่มใน rule state ปกติโดยอัตโนมัติ
+
+`v.ai({ model, reasoningEffort?, conversation?, prompt, input? })` คืน request ID ทันที เรียกใน handler ไม่ใช่ตอนลงทะเบียนกฎ `model` คือ model ID ที่ใช้ได้; effort เป็น `default` หากละไว้ หรือ `low`, `medium`, `high` เมื่อรองรับ `input` เป็น JSON ค่าใดก็ได้; prompt/input จำกัดอย่างละ20KB คำตอบมาเป็น `ai` event: `{requestId, ok, text, citations,
+error, preservedConversations?}` ข้อความที่สำเร็จมีขนาดไม่เกิน48KB; citations อยู่ในรูปแบบ `{url,title}`..
+เมื่อแสดงคำตอบจากการค้นเว็บ ให้คงลิงก์แหล่งข้อมูลที่มองเห็นและคลิกได้ model ค้นหาได้เสมอ ไม่มีเส้นตายของแอปสำหรับการสร้าง หลาย conversation ที่มีชื่อทำงานพร้อมกันได้; ชื่อเดียวกันจะเรียงตามลำดับ เริ่มการเรียกถัดไปจาก `ai` event Vault ยังไม่กำหนดเวลาการเรียกที่หน่วงไว้ ความจุ/โควตาของผู้ให้บริการอาจทำให้คำขอรอหรือถูกปฏิเสธ ไม่มี fallback หรือ retry อัตโนมัติ คำตอบเป็นข้อมูล ไม่ได้ทำงานเป็น JavaScript กฎเลือกการกระทำที่มีอยู่
+
+สำหรับ panel ที่มีปุ่ม `ask` และช่อง `note`:
 
 ```javascript
 (on, v) => {
   let pending = null;
   on("panel", ({ data }) => {
     if (data.controlId !== "ask" || pending) return;
-    pending = v.ai({ prompt: "Summarize this text.", input: data.values?.note ?? "" });
+    pending = v.ai({ model: "chatgpt:MODEL_ID", conversation: "notes", prompt: v.context.ai.prompt || "Summarize this text.", input: {context:v.context.ai.context, note:data.values?.note ?? ""} });
   });
   on("ai", ({ data }) => {
     if (data.requestId !== pending) return;
@@ -190,6 +198,6 @@ Steam ถูกบล็อก ยกเว้นช่วงพักห้า�
 }
 ```
 
-คำขอค้างไม่เล่นซ้ำหลัง restart; Run, disable/re-enable และ delete ทิ้งคำตอบเก่า เบราว์เซอร์ที่ตัดการเชื่อมต่อแจ้ง `ai-unavailable` ข้อผิดพลาดอื่น ได้แก่ `ai-not-configured`, `ai-invalid-input`, `ai-busy`, `ai-daily-limit`, `ai-request-failed`, `ai-usage-storage-unavailable` คำขอที่ล้มเหลวไม่เขียนทับผลเดิมที่ rule เก็บไว้ ขนาด state ยังคงจำกัด64KB
+การเรียกที่ค้างอยู่จะไม่เล่นซ้ำหลังรีสตาร์ต Run, ปิด/เปิดใช้งานใหม่ และลบ จะทิ้งคำตอบเก่า; เบราว์เซอร์ที่ขาดการเชื่อมต่อจะแจ้ง `ai-unavailable` ข้อผิดพลาดอื่นได้แก่ `ai-not-configured`, `ai-invalid-input`, `ai-daily-limit`, `ai-request-failed`, `ai-usage-storage-unavailable` และ `ai-conversation-storage-unavailable` การเรียกที่ล้มเหลวไม่แทนที่ผลลัพธ์เดิมที่กฎเลือกเก็บไว้ Rule state ยังคงจำกัด64KB
 
-ค้นตัวเลือกที่ไม่มี credentials ด้วย `rule_ai_models` บน Mac หรือ `settings-rule-ai-models` ใน browser ตั้ง `ruleAI` ผ่าน set-group path เดิม ฟิลด์คือ `providerModel`, `accountID`, `reasoningEffort` (`default`, `low`, `medium`, `high`) และ `dailyRequestLimit` (null หรือ1–100000) ใช้ตัวเลือกที่คืนมา อย่าใส่ key หรือ provider URL ใน source ของ rule
+เครื่องมือค้นหาตัวเลือกที่ไม่ใช้ข้อมูลรับรองได้ด้วย `rule_ai_models` บน Mac หรือ `settings-rule-ai-models` ในเบราว์เซอร์ และตั้งค่า `ruleAI` ผ่าน set-group path เดิม ฟิลด์คือ `dailyRequestLimit` (null หรือ1–100000), `prompt`, `context` (ข้อความที่เลือกได้ อย่างละไม่เกิน16KB) ระบุ model และ effort ทุกครั้ง; ไม่มีค่าเริ่มต้นของกลุ่มที่บันทึกไว้ ใช้ตัวเลือกที่ส่งกลับมา อย่าใส่ key หรือ provider URL ใน rule source

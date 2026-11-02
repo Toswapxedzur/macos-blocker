@@ -138,8 +138,8 @@ open class BlockerAppDelegate: NSObject, NSApplicationDelegate {
             return quit.request(confirm: {
                 guard ConnectionHub.shared.activeClusterCount() > 0 else { return true }
                 let alert = NSAlert()
-                alert.messageText = VaultNativeLanguage.text("native.quitLinked.title", fallback: "Quit Mac Vault and disconnect linked groups?")
-                alert.informativeText = VaultNativeLanguage.text("native.quitLinked.body", fallback: "You have linked groups. Quitting disconnects Mac Vault, so linked browsers will show this Mac as offline and shared changes won't sync until you reopen the app.")
+                alert.messageText = VaultNativeLanguage.text("native.quitLinked.title", fallback: "Quit Vault and disconnect linked groups?")
+                alert.informativeText = VaultNativeLanguage.text("native.quitLinked.body", fallback: "You have linked groups. Quitting disconnects Vault, so linked browsers will show this Mac as offline and shared changes won't sync until you reopen the app.")
                 alert.addButton(withTitle: VaultNativeLanguage.text("native.quit", fallback: "Quit"))
                 alert.addButton(withTitle: VaultNativeLanguage.text("native.cancel", fallback: "Cancel"))
                 let accepted = alert.runModal() == .alertFirstButtonReturn

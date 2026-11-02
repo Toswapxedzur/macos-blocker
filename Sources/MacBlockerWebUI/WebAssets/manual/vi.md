@@ -1,6 +1,6 @@
-# Hướng dẫn sử dụng Mac Vault
+# Hướng dẫn sử dụng Adamancia Vault cho Mac
 
-Mac Vault có ba trang: **Vault** chặn ứng dụng native, **Gắn thẻ nội dung** gắn thẻ nội dung trình duyệt được hỗ trợ và **Hoạt động** hiển thị hoạt động đã ghi. Tiện ích mở rộng trình duyệt thu thập nội dung hỗ trợ và áp dụng chặn trong trình duyệt. Hãy cài đặt và kết nối tiện ích trong trình duyệt bạn dùng.
+Vault có ba trang: **Vault** chặn ứng dụng native, **Gắn thẻ nội dung** gắn thẻ nội dung trình duyệt được hỗ trợ và **Hoạt động** hiển thị hoạt động đã ghi. Tiện ích mở rộng trình duyệt thu thập nội dung hỗ trợ và áp dụng chặn trong trình duyệt. Hãy cài đặt và kết nối tiện ích trong trình duyệt bạn dùng.
 
 ## Bắt đầu nhanh
 
@@ -28,7 +28,7 @@ Cấu hình snooze cho từng nhóm chặn. **Pause blocking** tạm dừng chí
 
 ### Nhóm liên kết
 
-Dùng **Liên kết** để nối các nhóm được chọn rõ ràng từ chương trình Vault khác. Nhóm chia sẻ tên, cài đặt chính sách được hỗ trợ, mục tiêu, mức dùng và điều kiện freeze. Mỗi chương trình sửa và thực thi loại mục tiêu mà nó hỗ trợ; mục tiêu khác vẫn có sẵn cho chương trình liên kết. **Hủy liên kết** ngắt liên kết nhưng giữ nhóm và cài đặt. Nếu thành viên ngoại tuyến, mở Mac Vault và trình duyệt liên kết để kết nối lại. Chính sách đã lưu cục bộ có thể tiếp tục áp dụng khi thành viên ngoại tuyến.
+Dùng **Liên kết** để nối các nhóm được chọn rõ ràng từ chương trình Vault khác. Nhóm chia sẻ tên, cài đặt chính sách được hỗ trợ, mục tiêu, mức dùng và điều kiện freeze. Mỗi chương trình sửa và thực thi loại mục tiêu mà nó hỗ trợ; mục tiêu khác vẫn có sẵn cho chương trình liên kết. **Hủy liên kết** ngắt liên kết nhưng giữ nhóm và cài đặt. Nếu thành viên ngoại tuyến, mở Vault và trình duyệt liên kết để kết nối lại. Chính sách đã lưu cục bộ có thể tiếp tục áp dụng khi thành viên ngoại tuyến.
 
 ## Trợ giúp
 
@@ -36,7 +36,7 @@ Nhấp **i** nhỏ cạnh trường để xem giải thích; nhấp bên ngoài 
 
 ## Ứng dụng native
 
-Dùng bộ chọn + của mục tiêu Apps để chọn ứng dụng đã cài hoặc đang chạy. Mở lại để làm mới danh sách sau khi chạy ứng dụng từ thư mục khác. **Chặn tất cả ứng dụng ngoại trừ các ứng dụng được liệt kê ở đây** biến danh sách thành allowlist. Mac Vault có thể chặn ứng dụng Apple thông thường và toàn bộ trình duyệt; Mac Vault và ứng dụng dùng chung bundle identifier vẫn được bảo vệ. Ứng dụng bị chặn được yêu cầu thoát; **Yêu cầu ứng dụng bị chặn thoát lại mỗi (phút)** đặt khoảng thời gian yêu cầu lại. Chuyển hướng trang web, tạm dừng trang và ẩn feed do tiện ích mở rộng trình duyệt thực hiện, không phải hành động native.
+Dùng bộ chọn + của mục tiêu Apps để chọn ứng dụng đã cài hoặc đang chạy. Mở lại để làm mới danh sách sau khi chạy ứng dụng từ thư mục khác. **Chặn tất cả ứng dụng ngoại trừ các ứng dụng được liệt kê ở đây** biến danh sách thành allowlist. Vault có thể chặn ứng dụng Apple thông thường và toàn bộ trình duyệt; Vault và ứng dụng dùng chung bundle identifier vẫn được bảo vệ. Ứng dụng bị chặn được yêu cầu thoát; **Yêu cầu ứng dụng bị chặn thoát lại mỗi (phút)** đặt khoảng thời gian yêu cầu lại. Chuyển hướng trang web, tạm dừng trang và ẩn feed do tiện ích mở rộng trình duyệt thực hiện, không phải hành động native.
 
 ## Gắn thẻ nội dung
 

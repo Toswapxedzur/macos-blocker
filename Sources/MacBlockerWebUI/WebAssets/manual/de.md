@@ -1,6 +1,6 @@
-# Mac Vault-Benutzerhandbuch
+# Adamancia Vault für Mac: Benutzerhandbuch
 
-Mac Vault hat drei Seiten: **Vault** blockiert native Apps, **Inhalte taggen** versieht unterstützte Browserinhalte mit Tags und **Aktivität** zeigt aufgezeichnete Nutzung. Die Browsererweiterung sammelt unterstützte Inhalte und setzt Browserblockierungen um. Installieren und verbinden Sie sie in Ihrem Browser.
+Vault hat drei Seiten: **Vault** blockiert native Apps, **Inhalte taggen** versieht unterstützte Browserinhalte mit Tags und **Aktivität** zeigt aufgezeichnete Nutzung. Die Browsererweiterung sammelt unterstützte Inhalte und setzt Browserblockierungen um. Installieren und verbinden Sie sie in Ihrem Browser.
 
 ## Schnellstart
 
@@ -28,7 +28,7 @@ Konfigurieren Sie Snooze pro Blocking-Gruppe. **Pause blocking** setzt die Regel
 
 ### Verknüpfte Gruppen
 
-Mit **Verknüpfen** verbinden Sie ausdrücklich ausgewählte Gruppen anderer Vault-Programme. Name, unterstützte Einstellungen, Ziele, Nutzung und Freeze-Bedingungen werden geteilt. Jedes Programm bearbeitet und erzwingt die Zieltypen, die es unterstützt; andere Zieleinträge bleiben für verknüpfte Programme verfügbar. **Verknüpfung lösen** trennt die Verbindung, behält aber jede Gruppe und ihre Einstellungen bei. Ist ein Mitglied offline, kann die Bearbeitung nicht verfügbar sein. Öffnen Sie Mac Vault und den verknüpften Browser erneut, um die Verbindung wiederherzustellen. Eine lokal gespeicherte Richtlinie kann gelten, während ein Mitglied offline ist.
+Mit **Verknüpfen** verbinden Sie ausdrücklich ausgewählte Gruppen anderer Vault-Programme. Name, unterstützte Einstellungen, Ziele, Nutzung und Freeze-Bedingungen werden geteilt. Jedes Programm bearbeitet und erzwingt die Zieltypen, die es unterstützt; andere Zieleinträge bleiben für verknüpfte Programme verfügbar. **Verknüpfung lösen** trennt die Verbindung, behält aber jede Gruppe und ihre Einstellungen bei. Ist ein Mitglied offline, kann die Bearbeitung nicht verfügbar sein. Öffnen Sie Vault und den verknüpften Browser erneut, um die Verbindung wiederherzustellen. Eine lokal gespeicherte Richtlinie kann gelten, während ein Mitglied offline ist.
 
 ## Hilfe
 
@@ -36,7 +36,7 @@ Klicken Sie auf das kleine **i** neben einem Feld, um die Erklärung zu sehen. K
 
 ## Native Apps
 
-Im + Auswahlfeld eines Apps-Ziels wählen Sie installierte oder laufende Apps; öffnen Sie es erneut, um die Liste nach Start einer App aus einem anderen Ordner zu aktualisieren. **Alle Apps außerhalb dieser Liste blockieren** erstellt eine Zulassungsliste. Mac Vault kann gewöhnliche Apple-Apps und ganze Browser blockieren; Mac Vault und Apps mit derselben Bundle-ID bleiben geschützt. Eine blockierte App wird zum Beenden aufgefordert; **Gesperrte App erneut zum Beenden auffordern alle (Minuten)** steuert Wiederholungen. Weiterleitungen, Seitenpausen und Feed-Ausblendung setzt die Browsererweiterung um.
+Im + Auswahlfeld eines Apps-Ziels wählen Sie installierte oder laufende Apps; öffnen Sie es erneut, um die Liste nach Start einer App aus einem anderen Ordner zu aktualisieren. **Alle Apps außerhalb dieser Liste blockieren** erstellt eine Zulassungsliste. Vault kann gewöhnliche Apple-Apps und ganze Browser blockieren; Vault und Apps mit derselben Bundle-ID bleiben geschützt. Eine blockierte App wird zum Beenden aufgefordert; **Gesperrte App erneut zum Beenden auffordern alle (Minuten)** steuert Wiederholungen. Weiterleitungen, Seitenpausen und Feed-Ausblendung setzt die Browsererweiterung um.
 
 ## Inhaltskennzeichnung
 

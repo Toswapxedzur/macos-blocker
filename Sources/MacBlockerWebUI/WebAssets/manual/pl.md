@@ -1,6 +1,6 @@
-# Podręcznik użytkownika Mac Vault
+# Podręcznik użytkownika Adamancia Vault na Maca
 
-Mac Vault ma trzy strony: **Vault** blokuje natywne aplikacje, **Tagowanie treści** oznacza obsługiwane treści przeglądarki, a **Aktywność** pokazuje zarejestrowane użycie. Rozszerzenie przeglądarki zbiera obsługiwane treści i egzekwuje blokady w przeglądarce. Zainstaluj je i połącz w używanej przeglądarce.
+Vault ma trzy strony: **Vault** blokuje natywne aplikacje, **Tagowanie treści** oznacza obsługiwane treści przeglądarki, a **Aktywność** pokazuje zarejestrowane użycie. Rozszerzenie przeglądarki zbiera obsługiwane treści i egzekwuje blokady w przeglądarce. Zainstaluj je i połącz w używanej przeglądarce.
 
 ## Szybki start
 
@@ -28,7 +28,7 @@ Skonfiguruj snooze w każdej grupa bloków. **Pause blocking** zawiesza polityk�
 
 ### Połączone grupy
 
-**Połącz** łączy jawnie wybrane grupy z innych programów Vault. Wspólne są nazwa, obsługiwane ustawienia polityki, cele, użycie i warunki freeze. Każdy program edytuje i egzekwuje obsługiwane typy celów; pozostałe cele pozostają dostępne połączonym programom. **Rozłącz** rozłącza, zachowując grupy i ustawienia. Jeśli członek jest offline, otwórz Mac Vault i połączoną przeglądarkę, aby się połączyć. Lokalna zapisana polityka może działać offline.
+**Połącz** łączy jawnie wybrane grupy z innych programów Vault. Wspólne są nazwa, obsługiwane ustawienia polityki, cele, użycie i warunki freeze. Każdy program edytuje i egzekwuje obsługiwane typy celów; pozostałe cele pozostają dostępne połączonym programom. **Rozłącz** rozłącza, zachowując grupy i ustawienia. Jeśli członek jest offline, otwórz Vault i połączoną przeglądarkę, aby się połączyć. Lokalna zapisana polityka może działać offline.
 
 ## Pomoc
 
@@ -36,7 +36,7 @@ Kliknij małe **i** przy polu, aby zobaczyć objaśnienie; kliknij poza nim lub 
 
 ## Aplikacje natywne
 
-Użyj selektora + celu Apps, by wybrać zainstalowane lub uruchomione aplikacje. Otwórz selektor ponownie, aby odświeżyć listę po uruchomieniu aplikacji z innego folderu. **Blokuj wszystkie aplikacje poza wymienionymi tutaj** zmienia listę w allowlist. Mac Vault może blokować zwykłe aplikacje Apple i całe przeglądarki; Mac Vault oraz aplikacje z tym samym bundle identifier są chronione. Zablokowana aplikacja otrzymuje prośbę o zamknięcie; **Ponownie proś zablokowaną aplikację o zamknięcie co (minuty)** określa ponowienia. Przekierowania stron, pauzy i ukrywanie feedów egzekwuje rozszerzenie przeglądarki, nie aplikacja natywna.
+Użyj selektora + celu Apps, by wybrać zainstalowane lub uruchomione aplikacje. Otwórz selektor ponownie, aby odświeżyć listę po uruchomieniu aplikacji z innego folderu. **Blokuj wszystkie aplikacje poza wymienionymi tutaj** zmienia listę w allowlist. Vault może blokować zwykłe aplikacje Apple i całe przeglądarki; Vault oraz aplikacje z tym samym bundle identifier są chronione. Zablokowana aplikacja otrzymuje prośbę o zamknięcie; **Ponownie proś zablokowaną aplikację o zamknięcie co (minuty)** określa ponowienia. Przekierowania stron, pauzy i ukrywanie feedów egzekwuje rozszerzenie przeglądarki, nie aplikacja natywna.
 
 ## Oznaczanie treści
 

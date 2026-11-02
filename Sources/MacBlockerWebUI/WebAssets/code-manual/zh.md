@@ -1,4 +1,4 @@
-# Mac Vault 代码手册
+# Adamancia Vault — Mac 版代码手册
 
 [用户手册](../manual/zh.md)
 
@@ -58,7 +58,7 @@
 - `v.quit(appId)`：一次正常退出请求，遵循相同的保护和重试策略；不持续屏蔽。
 - `v.open(appId)`：请求 macOS 打开已安装的应用；没有成功回调。
 
-其他调用返回 `undefined`。应用 ID 是事件中提供的 bundle identifier（例如 `com.valvesoftware.steam`）。Block/Quit 可以针对 Apple 应用和整个浏览器生效。它们会忽略 Mac Vault 的 bundle identifier 及其辅助程序，包括使用相同标识的其他应用，以及空 ID。面板 ID 和状态属于一个组，与其显示名称无关。
+其他调用返回 `undefined`。应用 ID 是事件中提供的 bundle identifier（例如 `com.valvesoftware.steam`）。Block/Quit 可以针对 Apple 应用和整个浏览器生效。它们会忽略 Vault 的 bundle identifier 及其辅助程序，包括使用相同标识的其他应用，以及空 ID。面板 ID 和状态属于一个组，与其显示名称无关。
 
 ## 事件
 
@@ -168,18 +168,26 @@ file.data = { requestId: string, op: string, path: string, ok: boolean,
 
 ## 运行中规则的 AI 调用
 
-每个 custom group 在 **AI calls** 中选择一个 connection/model 和 reasoning effort。Mac 与浏览器规则使用同一 API；浏览器请求需要连接 Mac Vault，提供商凭据保存在那里。链接组共享选择和可选的每日请求上限。留空表示组级不限额，账户限制仍适用。上限按 UTC 日计算，重启后保留，并统计已提交的尝试（包括失败）。Link 合并现有用量；unlink 保留之前的用量。
+每次 `v.ai` 调用都指定连接和模型；组没有默认值。从 **AI calls** 复制模型 ID，或通过 Vault 的规则 AI 模型工具查看无需凭据的目录。每次调用单独选择推理强度。浏览器请求需要桌面 Vault 已连接；提供商凭据保存在那里。链接组共享可选的每日请求上限。留空表示没有组级上限，账户限制仍适用。上限按 UTC 日计算，重启后保留，并统计所有已提交尝试，包括失败的尝试。Link 合并已有用量；unlink 保留原用量。
 
-`v.ai({ prompt, input? })` 立即返回 request ID。请在 handler 中调用，不要在注册规则时调用。`input` 可以是任意 JSON 值；prompt/input 各限20KB。回复通过 `ai` 事件到达：`{requestId, ok, text, citations, error}`。成功文本最多48KB；citations 是 `{url,title}`。展示网页搜索答案时保留可见、可点击的来源链接。模型始终可以使用搜索。没有固定的 app 截止时间，并发数受限；不会回退到其他提供商或自动重试。回复是数据，不会作为 JavaScript 执行；规则决定采取哪些现有操作。
+可选保存的 prompt 和 context 在链接组间共享，并在重启后保留。处理器可通过 `v.context.ai.prompt` 和 `v.context.ai.context` 使用它们；Vault 不会自动发送。每次 `v.ai` 调用包含什么由规则决定。编辑任一值都会使旧配置的回复失效。
 
-包含 `ask` 按钮和 `note` 字段的面板示例：
+`conversation` 是可选名称。不指定时调用无状态。指定后，桌面 Vault 会在本地保存完整的用户/助手记录，并在下次调用中包含最新消息的最多16KB。同一会话可以切换模型；传给新模型的只有可移植文本。此名称由本设备上的所有规则和组共享。删除或取消链接组不会删除具名会话。本地记录总上限默认为1 GB，可在 Vault 设置中更改。空间不足时，Vault 删除最近最少使用的会话。如果较早的私有版本曾按组保存同名的独立记录，Vault 会用不同名称导入，并通过 `preservedConversations` 报告改名项。
+
+调用 `v.ai({op:"delete", conversation:"name"})` 可明确删除共享会话；回复通过 `ai` 事件返回。同名调用正在执行时会返回 `ai-conversation-busy`；收到它的回复后再试。存储失败会报告错误，而不会悄悄丢弃成功回复。会话文本不会自动加入普通规则状态。
+
+`v.ai({ model, reasoningEffort?, conversation?, prompt, input? })` 会立即返回请求 ID。在处理器中调用它，不要在注册规则时调用。`model` 是可用模型 ID；省略 effort 时为 `default`，也可在支持时使用 `low`、`medium` 或 `high`。`input` 可为任意 JSON 值；prompt/input 各限20KB。回复通过 `ai` 事件返回：`{requestId, ok, text, citations,
+error, preservedConversations?}` 成功文本最多48KB；引用格式为`{url,title}`。
+显示基于网页搜索的回答时，保留可见且可点击的来源链接。模型始终可以搜索。生成请求没有固定的应用截止时间。多个具名会话可以并行运行；同名调用按顺序执行。通过 `ai` 事件启动下一次调用。Vault 目前不会调度延迟调用。提供商容量和配额可能让请求排队或被拒绝；没有提供商回退或自动重试。回复是数据，不会作为 JavaScript 执行。采取哪些现有操作由规则决定。
+
+对于包含 `ask` 按钮和 `note` 字段的面板：
 
 ```javascript
 (on, v) => {
   let pending = null;
   on("panel", ({ data }) => {
     if (data.controlId !== "ask" || pending) return;
-    pending = v.ai({ prompt: "Summarize this text.", input: data.values?.note ?? "" });
+    pending = v.ai({ model: "chatgpt:MODEL_ID", conversation: "notes", prompt: v.context.ai.prompt || "Summarize this text.", input: {context:v.context.ai.context, note:data.values?.note ?? ""} });
   });
   on("ai", ({ data }) => {
     if (data.requestId !== pending) return;
@@ -190,6 +198,6 @@ file.data = { requestId: string, op: string, path: string, ok: boolean,
 }
 ```
 
-未完成的调用不会在重启后重放。Run、禁用/重新启用和删除会丢弃过时回复；断开的浏览器会报告 `ai-unavailable`。其他错误包括 `ai-not-configured`、`ai-invalid-input`、`ai-busy`、`ai-daily-limit`、`ai-request-failed` 和 `ai-usage-storage-unavailable`。失败调用不会覆盖规则选择保留的旧结果。规则 state 仍受64KB限制。
+未完成的调用不会在重启后重放。Run、禁用/重新启用和删除会丢弃过时回复；断开的浏览器报告 `ai-unavailable`。其他错误包括 `ai-not-configured`、`ai-invalid-input`、`ai-daily-limit`、`ai-request-failed`、`ai-usage-storage-unavailable` 和 `ai-conversation-storage-unavailable`。失败调用不会覆盖规则选择保留的先前结果。规则状态仍限64KB。
 
-可在 Mac 使用 `rule_ai_models`，或在浏览器使用 `settings-rule-ai-models` 查找无需凭据的选项；通过现有 set-group 路径配置 `ruleAI`。字段为 `providerModel`、`accountID`、`reasoningEffort`（`default`、`low`、`medium`、`high`）和 `dailyRequestLimit`（null 或1–100000）。使用返回的选项；不要把 key 或 provider URL 写进规则源码。
+工具可在 Mac 上通过 `rule_ai_models`、或在浏览器中通过 `settings-rule-ai-models` 查找无需凭据的选项，并通过现有 set-group 路径配置 `ruleAI`。字段为 `dailyRequestLimit`（null 或1–100000）、`prompt` 和 `context`（可选字符串，各最多16KB）。每次调用都指定模型和 effort；组没有保存的默认值。使用返回的选项；不要把密钥或提供商 URL 写进规则源码。

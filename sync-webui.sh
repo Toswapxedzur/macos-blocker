@@ -67,8 +67,21 @@ insert('    <script src="popup.js"></script>\n',
 open(dest, "w", encoding="utf-8").write(html)
 PY
 
-rm -rf "$DEST/translation"
-cp -R "$SRC/translation" "$DEST/translation"
+python3 - "$SRC/translation" "$DEST/translation" <<'PYTRANSLATIONS'
+import json
+import sys
+from pathlib import Path
+
+source, target = map(Path, sys.argv[1:])
+target.mkdir(parents=True, exist_ok=True)
+for catalog in source.glob("*.json"):
+    shared = json.loads(catalog.read_text(encoding="utf-8"))
+    destination = target / catalog.name
+    existing = json.loads(destination.read_text(encoding="utf-8")) if destination.exists() else {}
+    native_only = {key: value for key, value in existing.items() if key not in shared}
+    combined = {**shared, **native_only}
+    destination.write_text(json.dumps(combined, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+PYTRANSLATIONS
 
 python3 - "$ROOT" <<'PYVERSIONS'
 import json, re, sys, xml.etree.ElementTree as ET
@@ -77,7 +90,7 @@ root = Path(sys.argv[1])
 mac = re.search(r'MARKETING_VERSION: "?([0-9.]+)', (root / "XcodeProject/project.yml").read_text()).group(1)
 windows = ET.parse(root / "../windowsBlocker/src/WindowsBlocker/WindowsBlocker.csproj").findtext("PropertyGroup/Version")
 (root / "classifier/Sources/VaultClassifierCore/Resources/storage-product-versions.json").write_text(json.dumps({"mac": mac, "windows": windows}, indent=2) + "\n")
-(root / "Sources/MacBlockerWebUI/WebAssets/desktop-config.js").write_text('window.__CB_DESKTOP_MANIFEST=' + json.dumps({"version": mac, "name": "Mac Vault"}) + ';\n')
+(root / "Sources/MacBlockerWebUI/WebAssets/desktop-config.js").write_text('window.__CB_DESKTOP_MANIFEST=' + json.dumps({"version": mac, "name": "Vault"}) + ';\n')
 PYVERSIONS
 
 echo "[sync-webui] synced ${#SYNCED_FILES[@]} files + popup.html + translation/ from $SRC"

@@ -1,4 +1,4 @@
-# Hướng dẫn mã Mac Vault
+# Adamancia Vault — Hướng dẫn mã cho Mac
 
 [Hướng dẫn sử dụng](../manual/vi.md)
 
@@ -58,7 +58,7 @@ Các ID đối tượng giống nhau trong nhóm tùy chỉnh được liên k�
 - `v.quit(appId)`: gửi một yêu cầu thoát bình thường, theo cùng chính sách bảo vệ/thử lại; không chặn liên tục.
 - `v.open(appId)`: yêu cầu macOS mở ứng dụng đã cài; không có callback thành công.
 
-Các lời gọi khác trả về `undefined`. ID ứng dụng là bundle identifier (ví dụ `com.valvesoftware.steam`), có trong sự kiện. Block/Quit có thể nhắm đến ứng dụng Apple và toàn bộ trình duyệt. Chúng bỏ qua bundle identifier của Mac Vault và các ứng dụng hỗ trợ của nó, bao gồm ứng dụng khác dùng chung danh tính đó, cùng ID trống. ID/state của panel thuộc về một nhóm, không phải tên hiển thị.
+Các lời gọi khác trả về `undefined`. ID ứng dụng là bundle identifier (ví dụ `com.valvesoftware.steam`), có trong sự kiện. Block/Quit có thể nhắm đến ứng dụng Apple và toàn bộ trình duyệt. Chúng bỏ qua bundle identifier của Vault và các ứng dụng hỗ trợ của nó, bao gồm ứng dụng khác dùng chung danh tính đó, cùng ID trống. ID/state của panel thuộc về một nhóm, không phải tên hiển thị.
 
 ## Sự kiện
 
@@ -166,20 +166,28 @@ Steam bị chặn trừ khoảng tạm dừng năm phút được kích hoạt b
 ```
 
 
-## Lời gọi AI từ quy tắc đang chạy
+## Lệnh gọi AI từ quy tắc đang chạy
 
-Mỗi custom group chọn một connection/model và reasoning effort trong **AI calls**. Quy tắc Mac và trình duyệt dùng cùng API; request trình duyệt cần Mac Vault kết nối, thông tin nhà cung cấp được giữ tại đó. Nhóm liên kết chia sẻ lựa chọn và daily cap tùy chọn. Để trống nghĩa là không giới hạn ở nhóm; giới hạn tài khoản vẫn áp dụng. Cap theo ngày UTC, tồn tại qua khởi động lại và đếm mọi lần gửi kể cả lỗi. Link cộng usage hiện có; unlink giữ usage trước đó.
+Mỗi lệnh gọi `v.ai` nêu kết nối và mô hình; nhóm không có mặc định. Sao chép ID mô hình từ **AI calls** hoặc xem danh mục không cần thông tin xác thực qua công cụ mô hình AI quy tắc của Vault. Chọn mức suy luận cho từng lần gọi. Yêu cầu từ trình duyệt cần Vault trên máy tính được kết nối; thông tin nhà cung cấp được giữ ở đó. Nhóm liên kết chia sẻ hạn mức ngày tùy chọn. Để trống nghĩa là nhóm không có hạn mức; giới hạn tài khoản vẫn áp dụng. Hạn mức theo ngày UTC, tồn tại sau khi khởi động lại và tính mọi lần gửi kể cả thất bại. Liên kết gộp mức sử dụng cũ; hủy liên kết vẫn giữ mức đó.
 
-`v.ai({ prompt, input? })` trả request ID ngay. Gọi bên trong handler, không gọi lúc đăng ký quy tắc. `input` nhận mọi giá trị JSON; prompt/input tối đa20KB mỗi phần. Phản hồi đến trong event `ai`: `{requestId, ok, text, citations, error}`. Văn bản thành công tối đa48KB; citation `{url,title}`. Giữ liên kết nguồn hiển thị và có thể nhấp khi trình bày câu trả lời từ web search. Search luôn sẵn có cho mô hình. Không có deadline cố định của app; concurrency có giới hạn; không fallback nhà cung cấp hoặc tự retry. Phản hồi là dữ liệu, không thực thi như JavaScript; quy tắc quyết định có dùng hành động hiện có nào.
+Prompt và context lưu tùy chọn được chia sẻ giữa các nhóm liên kết và tồn tại sau khi khởi động lại. Có thể dùng chúng trong handler qua `v.context.ai.prompt` và `v.context.ai.context`; Vault không tự gửi. Quy tắc chọn nội dung cho mỗi lần gọi `v.ai`. Sửa một trong hai sẽ làm mất hiệu lực phản hồi từ cấu hình cũ.
 
-Ví dụ bảng có nút `ask` và trường `note`:
+`conversation` là tên tùy chọn. Không có tên thì lệnh gọi không giữ trạng thái. Có tên thì Vault trên máy tính lưu cục bộ toàn bộ bản ghi người dùng/trợ lý và đưa tối đa16KB tin nhắn mới nhất vào lần gọi kế tiếp. Cùng một cuộc trò chuyện có thể đổi mô hình; chỉ văn bản có thể chuyển đổi được gửi sang mô hình mới. Tên được chia sẻ bởi mọi quy tắc và nhóm trên thiết bị này. Xóa hoặc hủy liên kết nhóm không xóa cuộc trò chuyện có tên. Giới hạn tổng bản ghi cục bộ mặc định1 GB, có thể đổi trong Cài đặt Vault. Khi đầy, Vault xóa cuộc trò chuyện ít được dùng gần đây nhất. Nếu bản dựng riêng tư cũ lưu lịch sử trùng tên riêng theo từng nhóm, Vault nhập chúng bằng tên khác và báo tên đã đổi qua `preservedConversations`.
+
+Gọi `v.ai({op:"delete", conversation:"name"})` để xóa rõ ràng cuộc trò chuyện dùng chung; phản hồi đến dưới dạng sự kiện `ai`. Lệnh gọi cùng tên đang hoạt động trả về `ai-conversation-busy`; hãy thử lại sau phản hồi. Lỗi lưu trữ sẽ báo lỗi thay vì âm thầm quên phản hồi thành công. Văn bản cuộc trò chuyện không tự thêm vào trạng thái quy tắc thông thường.
+
+`v.ai({ model, reasoningEffort?, conversation?, prompt, input? })` trả ID yêu cầu ngay lập tức. Gọi bên trong handler, không phải khi đăng ký quy tắc. `model` là ID hiện có; effort là `default` nếu bỏ trống, hoặc `low`, `medium`, `high` nếu được hỗ trợ. `input` có thể là bất kỳ giá trị JSON nào; mỗi prompt/input tối đa20KB. Phản hồi đến qua sự kiện `ai`: `{requestId, ok, text, citations,
+error, preservedConversations?}` Văn bản thành công tối đa48KB; trích dẫn có dạng `{url,title}`..
+Giữ liên kết nguồn hiển thị và có thể nhấp khi trình bày câu trả lời dựa trên tìm kiếm web. Mô hình luôn có thể tìm kiếm. Không có hạn chót cố định của ứng dụng cho việc tạo nội dung. Nhiều cuộc trò chuyện có tên có thể chạy cùng lúc; các lệnh gọi cùng tên chạy lần lượt. Bắt đầu lệnh tiếp theo từ sự kiện `ai`. Vault chưa lập lịch gọi trì hoãn. Năng lực và hạn mức nhà cung cấp có thể khiến yêu cầu phải chờ hoặc bị từ chối; không có chuyển nhà cung cấp hay tự thử lại. Phản hồi là dữ liệu, không bao giờ thực thi như JavaScript. Quy tắc quyết định hành động hiện có.
+
+Với panel có nút `ask` và trường `note`:
 
 ```javascript
 (on, v) => {
   let pending = null;
   on("panel", ({ data }) => {
     if (data.controlId !== "ask" || pending) return;
-    pending = v.ai({ prompt: "Summarize this text.", input: data.values?.note ?? "" });
+    pending = v.ai({ model: "chatgpt:MODEL_ID", conversation: "notes", prompt: v.context.ai.prompt || "Summarize this text.", input: {context:v.context.ai.context, note:data.values?.note ?? ""} });
   });
   on("ai", ({ data }) => {
     if (data.requestId !== pending) return;
@@ -190,6 +198,6 @@ Ví dụ bảng có nút `ask` và trường `note`:
 }
 ```
 
-Lời gọi đang chờ không chạy lại sau khởi động. Run, tắt/bật lại và xóa sẽ loại phản hồi cũ; trình duyệt mất kết nối báo `ai-unavailable`. Lỗi khác: `ai-not-configured`, `ai-invalid-input`, `ai-busy`, `ai-daily-limit`, `ai-request-failed`, `ai-usage-storage-unavailable`. Lời gọi lỗi không thay kết quả trước mà quy tắc muốn giữ. State của quy tắc vẫn giới hạn64KB.
+Lệnh gọi đang chờ không được phát lại sau khi khởi động lại. Run, tắt/bật lại và xóa sẽ loại bỏ phản hồi cũ; trình duyệt mất kết nối báo `ai-unavailable`. Lỗi khác gồm `ai-not-configured`, `ai-invalid-input`, `ai-daily-limit`, `ai-request-failed`, `ai-usage-storage-unavailable` và `ai-conversation-storage-unavailable`. Lệnh gọi thất bại không ghi đè kết quả trước mà quy tắc chọn giữ lại. Trạng thái quy tắc vẫn giới hạn64KB.
 
-Tìm lựa chọn không cần credential bằng `rule_ai_models` trên Mac hoặc `settings-rule-ai-models` trong trình duyệt; cấu hình `ruleAI` qua đường set-group hiện có. Các trường: `providerModel`, `accountID`, `reasoningEffort` (`default`, `low`, `medium`, `high`) và `dailyRequestLimit` (null hoặc1–100000). Dùng lựa chọn được trả về; không đặt key hoặc URL nhà cung cấp trong mã nguồn quy tắc.
+Công cụ có thể tìm lựa chọn không cần thông tin xác thực bằng `rule_ai_models` trên Mac hoặc `settings-rule-ai-models` trong trình duyệt, rồi cấu hình `ruleAI` qua đường set-group hiện có. Trường gồm `dailyRequestLimit` (null hoặc1–100000), `prompt`, `context` (chuỗi tùy chọn, tối đa16KB mỗi trường). Chỉ định mô hình và effort trong mỗi lần gọi; không có mặc định nhóm được lưu. Dùng lựa chọn được trả về; không đưa khóa hay URL nhà cung cấp vào mã quy tắc.

@@ -1,4 +1,4 @@
-# Mac Vault kod kılavuzu
+# Adamancia Vault — Mac için kod kılavuzu
 
 [Kullanıcı kılavuzu](../manual/tr.md)
 
@@ -58,7 +58,7 @@ Adlandırılmış nesneler, ayrılmış `v.state.$vaultTime` alanında Run ve ye
 - `v.quit(appId)`: aynı koruma/yeniden deneme ilkesiyle bir normal kapatma isteği; sürekli engelleme değildir.
 - `v.open(appId)`: macOS'tan yüklü bir uygulamayı açmasını ister; başarı callback'i yoktur.
 
-Diğer çağrılar `undefined` döndürür. App IDs, olaylarda bulunan paket tanımlayıcılarıdır (örneğin `com.valvesoftware.steam`). Block/Quit, Apple uygulamalarını ve tarayıcıların tamamını hedefleyebilir. Mac Vault’un paket tanımlayıcısını ve yardımcılarını, bu kimliği paylaşan diğer uygulamalar dahil olmak üzere, ve boş kimlikleri yok sayarlar. Panel IDs/state gruba aittir, görünen adına değil.
+Diğer çağrılar `undefined` döndürür. App IDs, olaylarda bulunan paket tanımlayıcılarıdır (örneğin `com.valvesoftware.steam`). Block/Quit, Apple uygulamalarını ve tarayıcıların tamamını hedefleyebilir. Vault’un paket tanımlayıcısını ve yardımcılarını, bu kimliği paylaşan diğer uygulamalar dahil olmak üzere, ve boş kimlikleri yok sayarlar. Panel IDs/state gruba aittir, görünen adına değil.
 
 ## Olaylar
 
@@ -166,20 +166,28 @@ Steam, Snooze veya panel düğmesiyle başlatılan beş dakikalık duraklama dı
 ```
 
 
-## Çalışan kuraldan AI çağrıları
+## Çalışan bir kuraldan AI çağrıları
 
-Her custom group **AI calls** içinde bir connection/model ve reasoning effort seçer. Mac ve tarayıcı kuralları aynı API'yi kullanır; tarayıcı istekleri bağlı Mac Vault gerektirir ve provider kimlik bilgileri orada kalır. Bağlı gruplar seçimi ve isteğe bağlı günlük sınırı paylaşır. Boş değer grup sınırı olmadığı anlamına gelir; hesap limitleri geçerlidir. Sınır UTC gününe göre hesaplanır, restart'ta korunur ve başarısızlar dahil gönderilen denemeleri sayar. Link mevcut kullanımı birleştirir; unlink önceki kullanımı saklar.
+Her `v.ai` çağrısı bağlantıyı ve modeli belirtir; grup varsayılanı yoktur. **AI calls** içinden model ID kopyalayın veya Vault kural AI modeli aracıyla kimlik bilgisi gerektirmeyen kataloğu görüntüleyin. Akıl yürütme düzeyi her çağrıda seçilir. Tarayıcı istekleri için masaüstü Vault bağlantısı gerekir; sağlayıcı kimlik bilgileri orada kalır. Bağlı gruplar isteğe bağlı günlük isteği paylaşır. Boş değer grup sınırı olmadığı, hesap sınırlarının geçerli olduğu anlamına gelir. Sınır UTC gününe göre işler, yeniden başlatma sonrası korunur ve başarısızlar dahil gönderilen denemeleri sayar. Bağlama mevcut kullanımı birleştirir; ayırma korur.
 
-`v.ai({ prompt, input? })` hemen request ID döndürür. Kuralı kaydederken değil, handler içinde çağırın. `input` herhangi bir JSON olabilir; prompt/input ayrı ayrı20KB ile sınırlıdır. Yanıtlar `ai` event'leriyle gelir: `{requestId, ok, text, citations, error}`. Başarılı metin en çok48KB; citation `{url,title}`. Web arama yanıtlarında kaynak bağlantılarını görünür ve tıklanabilir tutun. Search modele daima açıktır. Sabit app deadline yoktur, concurrency sınırlıdır; provider fallback veya otomatik retry yoktur. Yanıtlar veridir, JavaScript olarak çalıştırılmaz; mevcut eylemleri kural seçer.
+İsteğe bağlı kaydedilmiş prompt ve context bağlı gruplarda paylaşılır ve yeniden başlatma sonrasında da kalır. Handler içinde `v.context.ai.prompt` ve `v.context.ai.context` olarak kullanılabilir; Vault bunları otomatik göndermez. Her `v.ai` çağrısına ne ekleneceğine kural karar verir. Bunlardan birini düzenlemek eski yapılandırmanın yanıtlarını geçersiz kılar.
 
-`ask` düğmesi ve `note` alanı olan bir panel için:
+`conversation` isteğe bağlı bir addır. Olmadan çağrı durumsuzdur. Ad verilirse masaüstü Vault kullanıcı/asistan dökümünün tamamını yerel kaydeder ve sonraki çağrıya en yeni mesajların16KB kadarını ekler. Aynı konuşma model değiştirebilir; yeni modele yalnızca taşınabilir metin aktarılır. Ad bu cihazdaki tüm kural ve gruplarda ortaktır. Grubu silmek veya ayırmak adlı konuşmaları silmez. Toplam yerel döküm sınırı varsayılan1 GB'dır ve Vault Settings'ten değiştirilebilir. Dolunca Vault en uzun süredir kullanılmayan konuşmaları kaldırır. Eski bir özel derleme grup başına aynı adlı ayrı geçmişler kaydettiyse Vault bunları farklı adlarla içe aktarır ve değişen adları `preservedConversations` olarak bildirir.
+
+Paylaşılan bir konuşmayı açıkça silmek için `v.ai({op:"delete", conversation:"name"})` çağırın; yanıt `ai` olayı olarak gelir. Aynı adlı etkin çağrı `ai-conversation-busy` döndürür; yanıtından sonra yeniden deneyin. Depolama hatası başarılı yanıtı sessizce unutmak yerine hata bildirir. Konuşma metni sıradan kural durumuna otomatik eklenmez.
+
+`v.ai({ model, reasoningEffort?, conversation?, prompt, input? })` hemen istek ID'si döndürür. Kural kaydederken değil, handler içinde çağırın. `model` kullanılabilir bir ID'dir; belirtilmezse effort `default`, destekleniyorsa `low`, `medium` veya `high` olur. `input` herhangi bir JSON değeri olabilir; prompt/input ayrı ayrı20KB ile sınırlıdır. Yanıtlar `ai` olayları olarak gelir: `{requestId, ok, text, citations,
+error, preservedConversations?}` Başarılı metin en fazla48KB olur; alıntılar `{url,title}` biçimindedir..
+Web aramasına dayalı yanıtları gösterirken kaynak bağlantılarını görünür ve tıklanabilir tutun. Model aramayı her zaman kullanabilir. Üretim için sabit uygulama süresi yoktur. Birden çok adlı konuşma aynı anda çalışabilir; aynı adlı çağrılar sırayla yürür. Sonraki çağrıyı `ai` olayından başlatın. Vault henüz gecikmeli çağrıları zamanlamaz. Sağlayıcı kapasitesi ve kotası isteği bekletebilir veya reddedebilir; sağlayıcı yedeği ya da otomatik yeniden deneme yoktur. Yanıtlar veridir, JavaScript olarak çalıştırılmaz. Mevcut eylemleri kural seçer.
+
+`ask` düğmesi ve `note` alanı olan panel için:
 
 ```javascript
 (on, v) => {
   let pending = null;
   on("panel", ({ data }) => {
     if (data.controlId !== "ask" || pending) return;
-    pending = v.ai({ prompt: "Summarize this text.", input: data.values?.note ?? "" });
+    pending = v.ai({ model: "chatgpt:MODEL_ID", conversation: "notes", prompt: v.context.ai.prompt || "Summarize this text.", input: {context:v.context.ai.context, note:data.values?.note ?? ""} });
   });
   on("ai", ({ data }) => {
     if (data.requestId !== pending) return;
@@ -190,6 +198,6 @@ Her custom group **AI calls** içinde bir connection/model ve reasoning effort s
 }
 ```
 
-Bekleyen çağrılar restart sonrasında yeniden oynatılmaz. Run, devre dışı bırakıp yeniden etkinleştirme ve silme eski yanıtları atar; bağlantısız tarayıcı `ai-unavailable` bildirir. Diğer hatalar: `ai-not-configured`, `ai-invalid-input`, `ai-busy`, `ai-daily-limit`, `ai-request-failed`, `ai-usage-storage-unavailable`. Başarısız çağrı kuralın koruduğu önceki sonucu ezmez. Kural state sınırı64KB olarak kalır.
+Bekleyen çağrılar yeniden başlatma sonrasında tekrarlanmaz. Run, devre dışı bırakıp yeniden etkinleştirme ve silme eski yanıtları atar; bağlantısı kesilen tarayıcı `ai-unavailable` bildirir. Diğer hatalar: `ai-not-configured`, `ai-invalid-input`, `ai-daily-limit`, `ai-request-failed`, `ai-usage-storage-unavailable`, `ai-conversation-storage-unavailable`. Başarısız çağrılar kuralın korumayı seçtiği önceki sonucu değiştirmez. Kural durumu64KB sınırını korur.
 
-Kimlik bilgisi gerektirmeyen seçimleri Mac'te `rule_ai_models`, tarayıcıda `settings-rule-ai-models` ile keşfedin; mevcut set-group yolu üzerinden `ruleAI` yapılandırın. Alanlar: `providerModel`, `accountID`, `reasoningEffort` (`default`, `low`, `medium`, `high`) ve `dailyRequestLimit` (null veya1–100000). Dönen seçimi kullanın; kural kaynağına key ya da provider URL koymayın.
+Araçlar kimlik bilgisi gerektirmeyen seçenekleri Mac'te `rule_ai_models` veya tarayıcıda `settings-rule-ai-models` ile bulabilir ve mevcut set-group yoluyla `ruleAI` yapılandırabilir. Alanlar: `dailyRequestLimit` (null veya1–100000), `prompt`, `context` (isteğe bağlı dizeler, her biri en fazla16KB). Model ve effort her çağrıda belirtilir; kayıtlı grup varsayılanı yoktur. Döndürülen seçeneği kullanın; kural kaynağına anahtar veya sağlayıcı URL'si koymayın.

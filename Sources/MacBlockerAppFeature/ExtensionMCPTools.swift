@@ -37,7 +37,7 @@ public enum ExtensionMCPTools {
     public static func tools(bridge: Bridge = .liveHub) -> [MCPTool] {
         let browserProperty: [String: Any] = ["type": "string", "description": "Which connected browser, by program name (chrome, edge, safari); needed only when more than one browser is connected."]
         return [
-            MCPTool(name: "extension_rule_ai_models", description: "Available custom-rule AI connections/models and supported reasoning efforts, through the connected Mac Vault. Credentials are never returned. Every v.ai call chooses its model; linked groups share the optional UTC daily request allowance and saved prompt/context.", inputSchema: ["type":"object","properties":["browser":browserProperty]]) { args in
+            MCPTool(name: "extension_rule_ai_models", description: "Available custom-rule AI connections/models and supported reasoning efforts, through the connected Vault on Mac. Credentials are never returned. Every v.ai call chooses its model; linked groups share the optional UTC daily request allowance and saved prompt/context.", inputSchema: ["type":"object","properties":["browser":browserProperty]]) { args in
                 relay(bridge,"settings-rule-ai-models",[:],args)
             },
             MCPTool(
@@ -49,7 +49,7 @@ public enum ExtensionMCPTools {
             },
             MCPTool(
                 name: "extension_create_group",
-                description: "Create an extension block group of a type (youtube, tiktok, facebook, instagram, twitch, reddit, discord, twitter, bilibili, …, site, custom) with the popup's defaults, then apply an optional patch of group fields (e.g. name, platformTagMode 'include'|'exclude', platformTags [{name, confidence?, also?, except?}], platformTagBlockPage, platformTagCoverUntilTagged, platformTagEffect 'dim'|'block', sourceMode 'all'|'include'|'exclude'|'nobody' with sources [creators, accounts or subreddits], discordMode with discordTargets, surfaceHides, blockHomePage, sites/allowlist — or, instead of those flat fields, scopes: [{entryID (stable platform:id, shared by all lines of one Applied Website entry), surface 'site'|'items'|'pages'|'home'|'shelf', platform, sites/sitesExcept, form, sourceMode/sources, tagFilter, shelf, action 'block'|'pause'|'hide'|'dim' — 'pause' (site and untagged pages lines) covers the page with a countdown before letting it through; pauseSeconds is a group field}]; stored groups are returned as policy fields + scopes; mode, allowedMinutes, snoozeKind (time | budget: a time-limit group's snooze pauses it, or adds the snooze minutes to its allowance until the next reset), activeDays, timeWindowsText, sites, blockingRulesText). A group may carry lines for several platforms and a site list at once (it applies to their union, one policy): flat fields describe ONE Applied Website entry; when the same website appears more than once, patch.entryID is required and only that entry's lines change. Creator and tag modes are alternatives: choosing platformTagMode include/exclude selects tags instead of sources; choosing sources/sourceMode selects creators instead of tags, so patching groupType plus flat fields adds or edits that platform; a scopes patch replaces every browser line (the Apps lines are Mac Vault's: a browser never edits them — the scope line). A value the editor refuses is refused; a free numbered name is given unless patch.name is set.",
+                description: "Create an extension block group of a type (youtube, tiktok, facebook, instagram, twitch, reddit, discord, twitter, bilibili, …, site, custom) with the popup's defaults, then apply an optional patch of group fields (e.g. name, platformTagMode 'include'|'exclude', platformTags [{name, confidence?, also?, except?}], platformTagBlockPage, platformTagCoverUntilTagged, platformTagEffect 'dim'|'block', sourceMode 'all'|'include'|'exclude'|'nobody' with sources [creators, accounts or subreddits], discordMode with discordTargets, surfaceHides, blockHomePage, sites/allowlist — or, instead of those flat fields, scopes: [{entryID (stable platform:id, shared by all lines of one Applied Website entry), surface 'site'|'items'|'pages'|'home'|'shelf', platform, sites/sitesExcept, form, sourceMode/sources, tagFilter, shelf, action 'block'|'pause'|'hide'|'dim' — 'pause' (site and untagged pages lines) covers the page with a countdown before letting it through; pauseSeconds is a group field}]; stored groups are returned as policy fields + scopes; mode, allowedMinutes, snoozeKind (time | budget: a time-limit group's snooze pauses it, or adds the snooze minutes to its allowance until the next reset), activeDays, timeWindowsText, sites, blockingRulesText). A group may carry lines for several platforms and a site list at once (it applies to their union, one policy): flat fields describe ONE Applied Website entry; when the same website appears more than once, patch.entryID is required and only that entry's lines change. Creator and tag modes are alternatives: choosing platformTagMode include/exclude selects tags instead of sources; choosing sources/sourceMode selects creators instead of tags, so patching groupType plus flat fields adds or edits that platform; a scopes patch replaces every browser line (the Apps lines are the Mac app's: a browser never edits them — the scope line). A value the editor refuses is refused; a free numbered name is given unless patch.name is set.",
                 inputSchema: [
                     "type": "object",
                     "properties": [
@@ -67,7 +67,7 @@ public enum ExtensionMCPTools {
             },
             MCPTool(
                 name: "extension_set_group",
-                description: "Patch fields of an existing extension block group by id (see extension_create_group for the fields). The id and the freeze (its wait and PIN) are never patchable; a frozen group is refused, exactly as in the popup. An invalid value is refused (invalid-<field>), never replaced by a default; a group never turns custom or back and a custom group stays instant; activeDays needs at least one day; the Apps lines are Mac Vault's and a change to them is refused (desktop-lines). Returns the group.",
+                description: "Patch fields of an existing extension block group by id (see extension_create_group for the fields). The id and the freeze (its wait and PIN) are never patchable; a frozen group is refused, exactly as in the popup. An invalid value is refused (invalid-<field>), never replaced by a default; a group never turns custom or back and a custom group stays instant; activeDays needs at least one day; the Apps lines are the Mac app's and a change to them is refused (desktop-lines). Returns the group.",
                 inputSchema: [
                     "type": "object",
                     "properties": [
@@ -280,10 +280,10 @@ public enum ExtensionMCPTools {
             return "more than one browser is connected; pass 'browser' as one of: \(choices)."
         }
         switch reason {
-        case "browser-unavailable": return "no browser with the Vault extension is connected to Mac Vault."
+        case "browser-unavailable": return "no browser with the Vault extension is connected to Vault on Mac."
         case "browser-ambiguous": return "more than one browser is connected; pass 'browser'."
         case "browser-timeout": return "the browser did not answer."
-        case "browser-relay-requires-host": return "Mac Vault is not hosting the local hub."
+        case "browser-relay-requires-host": return "Vault on Mac is not hosting the local hub."
         default: return ToolRefusals.explain(reason)
         }
     }
