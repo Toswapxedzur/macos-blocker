@@ -9,7 +9,7 @@ worker explicitly. A test runner's bundle version is never a product version.
 
 | Family | Current format | Migration |
 | --- | --- | --- |
-| Rules/editor/usage | `vault.web-store`, flat schema 6 | Compatible raw alpha dictionary preserves opaque keys; canonical browser sanitizer converts flat scopes. Native writes remain field-surgical. |
+| Rules/editor/usage | `vault.web-store`, flat schema 7 | Compatible raw alpha dictionary preserves opaque keys; canonical browser sanitizer converts flat scopes and retires the saved rule AI model selection. Native writes remain field-surgical. |
 | Classifier | `classifier.state`, flat schema 8 | Older compatible alpha states reconcile cloud groups and archive retired Knowledge/dictionary fields before dropping them from active state. |
 | Collected entries | `classifier.collected`, envelope schema 1 | Compatible day arrays wrap; dataset/platform/day partitioning remains. |
 | Activity | `activity.settings`, `web-icons`, `colors`, `groups`, `watched-facts`, `records.<category>`, envelope schema 1 | Decode compatible alpha settings/maps/arrays fully before atomic wrapping. |
@@ -56,7 +56,7 @@ or relabeled beta by this source implementation.
 
 Schema 8 makes official dictionaries, personal Knowledge and their separate research lane dormant. Before rewriting an older state, `LocalStateFile.load` preserves only retired fields in a private content-addressed `dormant/knowledge-<sha256>.json` sidecar. Archive failure aborts loading/migration with the original state intact. Current state never decodes those fields. Existing packs/pictures are retained on disk and never read by the classifier. Automatic cache currency advances to prompt p5; human corrections remain authoritative.
 
-Custom groups may store credential-free `ruleAI` connection/model, account identity, reasoning effort and optional daily cap. Compatible older web stores retain groups/state/usage and initialize AI as unconfigured. The separate `rule-ai-usage.json` ledger is schema 1, UTC-day scoped; atomic private reservations contain linked member IDs only. Link/unlink and restart do not reset counted requests. Corrupt/newer ledgers refuse calls without resetting usage. Pending AI requests and responses are not persisted or replayed.
+Schema 7 removes the retired one-model-per-group `ruleAI` selection. Custom groups retain the optional daily cap, saved prompt and saved context; every `v.ai` call names its model and reasoning effort. Compatible older web stores retain groups/state/usage. The separate `rule-ai-usage.json` ledger is schema 1, UTC-day scoped; atomic private reservations contain linked member IDs only. Link/unlink and restart do not reset counted requests. Corrupt/newer ledgers refuse calls without resetting usage. Named conversation transcripts use versioned local files copied to linked members; unlinked members keep their copy. Pending AI requests and responses are not replayed.
 
 Web schema6 adds a group-owned `cbRuleRecords` version1 document. Mac Vault
 transacts it under the existing web-store lock using the canonical browser

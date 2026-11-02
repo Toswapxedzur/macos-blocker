@@ -7,7 +7,7 @@ import FoundationNetworking
 
 final class RuleAIGenerationTests: XCTestCase {
     func testRealAPIClientUsesSavedCredentialsAndReturnsGenericResultsForThreeProviders() async throws {
-        let input=try RuleAIInput(payload:#"{"prompt":"Summarize","input":{"text":"fixture"}}"#)
+        let input=try RuleAIInput(payload:#"{"model":"chatgpt:fixture","prompt":"Summarize","input":{"text":"fixture"}}"#)
         for (provider,model,host,header) in [(APIKeyProviderType.openAI,"gpt-5","api.openai.com","Authorization"),(.gemini,"gemini-3-flash-preview","generativelanguage.googleapis.com","x-goog-api-key"),(.xAI,"grok-4.6-fixture","api.x.ai","Authorization")] {
             let profile=APIKeyProviderProfile(id:"fixture",type:provider,credential:"fixture-only-key")
             let response: [String:Any] = provider == .gemini ? ["candidates":[["finishReason":"STOP","content":["parts":[["text":"A summary"]]]]]] : ["status":"completed","output":[["type":"message","content":[["type":"output_text","text":"A summary"]]]]]
@@ -29,7 +29,7 @@ final class RuleAIGenerationTests: XCTestCase {
         }
     }
     func testPromptIsGenericAndAllConnectionsEnableSearchAndEffort() throws {
-        let input = try RuleAIInput(payload: #"{"prompt":"Summarize input","input":{"text":"example"}}"#)
+        let input = try RuleAIInput(payload: #"{"model":"chatgpt:fixture","prompt":"Summarize input","input":{"text":"example"}}"#)
         for (provider, model) in [(APIKeyProviderType.openAI,"gpt-5"),(.gemini,"gemini-3-flash-preview"),(.xAI,"grok-4.6-fixture")] {
             let profile = APIKeyProviderProfile(name: "Fixture", type: provider, credential: "fixture-only-key")
             let request = try RuleAIGeneration.apiKey(profile: profile, model: model, effort: .low, input: input)
@@ -47,7 +47,7 @@ final class RuleAIGenerationTests: XCTestCase {
         for payload in [#"{"prompt":"x","model":"override"}"#, #"{"prompt":"x","maxOutputTokens":true}"#, #"{"prompt":"x","maxOutputTokens":1.2}"#, #"{"prompt":"x","maxOutputTokens":4097}"#, #"{"prompt":""}"#] {
             XCTAssertThrowsError(try RuleAIInput(payload: payload))
         }
-        let raw = try JSONSerialization.data(withJSONObject: ["prompt":String(repeating:"x",count:20001)])
+        let raw = try JSONSerialization.data(withJSONObject: ["model":"chatgpt:fixture","prompt":String(repeating:"x",count:40001)])
         XCTAssertThrowsError(try RuleAIInput(payload:String(decoding:raw,as:UTF8.self)))
     }
     func testGenericResponseAndCitationParsingRejectsIncompleteResults() throws {

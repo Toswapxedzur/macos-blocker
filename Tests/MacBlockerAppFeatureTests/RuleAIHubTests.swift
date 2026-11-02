@@ -6,8 +6,7 @@ import MacBlockerCore
 @MainActor
 final class RuleAIHubTests: XCTestCase {
     func testSharedRulePromptAndContextValidateInNativeJavaScriptCore() {
-        let selection: [String:Any] = ["providerModel":"api:key:model","accountID":"","reasoningEffort":"medium",
-                                       "dailyRequestLimit":NSNull(),"prompt":"标签说明 🎮","context":"背景材料"]
+        let selection: [String:Any] = ["dailyRequestLimit":NSNull(),"prompt":"标签说明 🎮","context":"背景材料"]
         let saved = GroupActionsRuntime.shared.call("normalizeRuleAI",[selection]) as? [String:Any]
         XCTAssertEqual(saved?["prompt"] as? String,"标签说明 🎮")
         XCTAssertEqual(saved?["context"] as? String,"背景材料")
@@ -65,20 +64,20 @@ final class RuleAIHubTests: XCTestCase {
         let suite = "rule-ai-"+UUID().uuidString, defaults = try XCTUnwrap(UserDefaults(suiteName:suite))
         defer { defaults.removePersistentDomain(forName:suite) }
         let hub = ConnectionHub(registryDefaults:defaults)
-        let local: [String:Any] = ["id":"m","groupType":"custom","enabled":true,"ruleAI":["providerModel":"api:old:model","accountID":"","reasoningEffort":"default"]]
-        let browser: [String:Any] = ["id":"b","groupType":"custom","enabled":true,"ruleAI":["providerModel":"api:new:model","accountID":"","reasoningEffort":"default"]]
+        let local: [String:Any] = ["id":"m","groupType":"custom","enabled":true,"ruleAI":["dailyRequestLimit":NSNull()]]
+        let browser: [String:Any] = ["id":"b","groupType":"custom","enabled":true,"ruleAI":["dailyRequestLimit":NSNull()]]
         XCTAssertNil(hub.setRoster(program:"macapp",groups:[local]));XCTAssertNil(hub.setRoster(program:"chrome",groups:[browser]))
         XCTAssertNil(hub.linkGroups(program:"chrome",groupId:"b",targetProgram:"macapp",targetGroupId:"m"))
-        hub.applySync(program:"chrome",groupId:"b",contribution:["scalars":["groupType":"custom","enabled":true,"ruleAI":["providerModel":"api:new:model","accountID":"","reasoningEffort":"default","dailyRequestLimit":7]]],ts:100)
+        hub.applySync(program:"chrome",groupId:"b",contribution:["scalars":["groupType":"custom","enabled":true,"ruleAI":["dailyRequestLimit":7]]],ts:100)
         let native = try XCTUnwrap(hub.ruleAIContext(program:"macapp",groupID:"m"))
         let web = try XCTUnwrap(hub.ruleAIContext(program:"chrome",groupID:"b"))
-        XCTAssertEqual(native.configuration,web.configuration);XCTAssertEqual(native.configuration.dailyRequestLimit,7)
+        XCTAssertEqual(native.dailyRequestLimit,web.dailyRequestLimit);XCTAssertEqual(native.dailyRequestLimit,7)
         XCTAssertEqual(native.members,["chrome:b","macapp:m"])
         hub.applySync(program:"chrome",groupId:"b",contribution:["scalars":["ruleAI":NSNull()]],ts:200)
-        XCTAssertNil(hub.ruleAIContext(program:"macapp",groupID:"m"));XCTAssertNil(hub.ruleAIContext(program:"chrome",groupID:"b"))
-        hub.applySync(program:"chrome",groupId:"b",contribution:["scalars":["groupType":"custom","enabled":true,"ruleAI":["providerModel":"api:new:model","accountID":"","reasoningEffort":"default","dailyRequestLimit":7]]],ts:300)
+        XCTAssertNil(hub.ruleAIContext(program:"macapp",groupID:"m")?.dailyRequestLimit);XCTAssertNil(hub.ruleAIContext(program:"chrome",groupID:"b")?.dailyRequestLimit)
+        hub.applySync(program:"chrome",groupId:"b",contribution:["scalars":["groupType":"custom","enabled":true,"ruleAI":["dailyRequestLimit":7]]],ts:300)
         let restored = try XCTUnwrap(hub.ruleAIContext(program:"macapp",groupID:"m"))
-        XCTAssertEqual(restored.configuration,native.configuration)
+        XCTAssertEqual(restored.dailyRequestLimit,native.dailyRequestLimit)
         XCTAssertNotEqual(restored.revision,native.revision,"restoring the same settings cannot revive a pending response")
     }
 }

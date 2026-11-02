@@ -1556,14 +1556,14 @@ final class ConnectionHub: ObservableObject {
         let raw: [String: Any]?
         if let shared = cluster?.sharedScalars["ruleAI"] { raw = shared as? [String: Any] }
         else { raw = info.ruleAI }
-        guard let raw, let data = try? JSONSerialization.data(withJSONObject: raw),
-              let configuration = try? JSONDecoder().decode(RuleAIConfiguration.self, from: data) else { return nil }
+        let limit = raw?["dailyRequestLimit"] as? Int
+        guard limit == nil || (1...100_000).contains(limit!) else { return nil }
         let members = cluster.map { value in value.memberGroupIds.map { $0.key + ":" + $0.value }.sorted() } ?? [program + ":" + groupID]
         // A browser reconnect creates a new response destination even if the
         // group's settings are byte-for-byte unchanged.
         let peerRevision = Self.browserPrograms.contains(program)
             ? (peers.values.first { $0.connected && $0.program == program }?.id ?? "offline") : "local"
-        return RuleAIContext(configuration: configuration, members: members,
+        return RuleAIContext(dailyRequestLimit: limit, members: members,
                              revision: info.aiEpoch + ":" + (cluster.map { $0.id + ":" + $0.aiEpoch } ?? "unlinked") + ":" + peerRevision)
     }
 
@@ -1582,6 +1582,9 @@ final class ConnectionHub: ObservableObject {
         }
         for cluster in affected {
             if let refusal = browserIdentityUnlinkRefusalLocked(cluster) { throw GroupStoreError.invalidInput(refusal) }
+            do {
+                try RuleAIConversations.copyAllBeforeUnlink(members: cluster.memberGroupIds.map { $0.key + ":" + $0.value }.sorted())
+            } catch { throw GroupStoreError.invalidInput("ai-conversation-storage-unavailable") }
         }
         try preserveDetachedLocalLocked(affected, removing: program, document: document, save: save)
         rosters[program] = infos.map { info in
@@ -1988,6 +1991,9 @@ final class ConnectionHub: ObservableObject {
                    let native = (document?["blockedGroups"] as? [[String: Any]])?.first(where: { ($0["id"] as? String) == pinned }),
                    ((native["lockVersion"] as? NSNumber)?.intValue ?? 0) > ((cluster.sharedLock["lockVersion"] as? NSNumber)?.intValue ?? 0),
                    WebStoreDocument.isLocked(native) { return "group-locked" }
+                do {
+                    try RuleAIConversations.copyAllBeforeUnlink(members: cluster.memberGroupIds.map { $0.key + ":" + $0.value }.sorted())
+                } catch { return "ai-conversation-storage-unavailable" }
                 let before = self.clusters.mapValues { $0.editorCopy() }
                 let oldUnlinked = self.unlinkedLocal, oldSeen = self.localDefinitionSeen
                 do {
