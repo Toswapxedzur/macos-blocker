@@ -76,6 +76,8 @@ Create tags, describe their meanings, and set or remove their parents in the tag
 
 Routine Content tagging edits save automatically. Each group uses one explicitly selected connection, model and reasoning effort.
 
+In **Settings → Content tagging**, **Maximum simultaneous tagging requests** starts at 16. Set a larger positive number if you want more videos tagged at once; there is no fixed setting maximum. Each request handles one video, and the AI provider may impose its own rate or usage limits.
+
 ### AI connections
 
 Settings has four choices: **ChatGPT subscription**, **OpenAI API**, **Gemini API**, and **Grok API**. ChatGPT subscription uses Vault’s own sign-in and your eligible plan. API keys use the selected provider’s API billing and limits. Select the provider and enter its key directly below the shared dropdown. Key edits save automatically; clearing the field clears the key. Then choose **Fetch model list**, and select the model in your Content tagging or custom-rule group. Fetching models does not choose one for you.
@@ -103,6 +105,8 @@ Platform feeds collect content shown on supported platform pages, whether opened
 ## Settings
 
 Choose the interface language in Settings. Field explanations are available through the small Info buttons in the selected interface language.
+
+Under **Updates**, choose **Check for updates** to check manually. **Auto install updates** starts off; turn it on if you want Vault to install available app updates automatically. If you opened Vault directly from a downloaded DMG or another read-only location, move it to **Applications** and reopen it there before installing an update. An older Mac Vault without these controls needs a fresh download of the current installer once.
 
 ## Saving and troubleshooting
 
