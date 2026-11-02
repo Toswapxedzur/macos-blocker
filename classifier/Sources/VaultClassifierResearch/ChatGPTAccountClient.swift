@@ -80,7 +80,7 @@ public actor ChatGPTAccountClient: CloudClassificationEngineResolving {
     private var signInGeneration = UUID()
     private var dataRequests: [UUID: Task<Data, Error>] = [:]
     private var isShuttingDown = false
-    static let maximumConcurrentClassifications = 2
+    private var maximumConcurrentClassifications: Int
     private var modelRefreshBusy = false
     private var credentialBusy = false
     private var classificationsInFlight = 0
@@ -94,11 +94,12 @@ public actor ChatGPTAccountClient: CloudClassificationEngineResolving {
     private var welcomeAccounts: Set<String>
     private struct Welcome: Codable { let schemaVersion: Int; let accounts: Set<String> }
 
-    public init(directory: URL, dailyRequestLimit: Int? = nil, taggingRetryPolicy: TaggingRetryPolicy = .init(), http: ChatGPTHTTPClient = .init(), onChange: @escaping @Sendable () -> Void = {}) throws {
+    public init(directory: URL, dailyRequestLimit: Int? = nil, taggingRetryPolicy: TaggingRetryPolicy = .init(), maximumConcurrentClassifications: Int = ClassifierSettings.defaultMaximumConcurrentTaggingRequests, http: ChatGPTHTTPClient = .init(), onChange: @escaping @Sendable () -> Void = {}) throws {
         let store = ChatGPTAccountStore(directory: directory)
         self.store = store; self.http = http; self.onChange = onChange
         self.dailyRequestLimit = dailyRequestLimit
         self.taggingRetryPolicy = taggingRetryPolicy.isValid ? taggingRetryPolicy : .init()
+        self.maximumConcurrentClassifications = max(1, maximumConcurrentClassifications)
         if let data = try store.read("host.json") {
             let id = try JSONDecoder().decode(String.self, from: data)
             guard id.hasPrefix("urn:uuid:"), UUID(uuidString: String(id.dropFirst(9))) != nil else { throw ChatGPTPlanError.invalidAuthorization }
@@ -245,6 +246,8 @@ public actor ChatGPTAccountClient: CloudClassificationEngineResolving {
     }
     public func setDailyRequestLimit(_ value: Int?) { dailyRequestLimit = value }
     public func setTaggingRetryPolicy(_ value: TaggingRetryPolicy) { if value.isValid { taggingRetryPolicy = value } }
+    public func setMaximumConcurrentClassifications(_ value: Int) { maximumConcurrentClassifications = max(1, value) }
+    func classificationConcurrencyLimit() -> Int { maximumConcurrentClassifications }
 
     private func accessToken() async throws -> String {
         while credentialBusy { try await Task.sleep(nanoseconds: 25_000_000) }
@@ -284,7 +287,7 @@ public actor ChatGPTAccountClient: CloudClassificationEngineResolving {
     }
 
     private func acquireClassification() async throws {
-        while classificationsInFlight >= Self.maximumConcurrentClassifications {
+        while classificationsInFlight >= maximumConcurrentClassifications {
             try await Task.sleep(nanoseconds: 25_000_000)
         }
         try Task.checkCancellation()

@@ -13,6 +13,12 @@ window.runTaggingControlTests = async () => {
   q('[data-action="openUtilityPanel"]').click();
   let toggle = q('[data-form-id="classification-settings-form"] [data-field="classificationEnabled"]');
   check(toggle?.checked === true, 'Classifier Settings contains the enabled global tagging switch');
+  const concurrency = q('[data-form-id="classification-settings-form"] [data-field="maximumConcurrentTaggingRequests"]');
+  check(concurrency?.value === '16' && !concurrency.hasAttribute('max'), 'tagging request limit defaults to 16 without a fixed maximum');
+  concurrency.value = '48'; concurrency.dispatchEvent(new Event('input', {bubbles:true})); await tick();
+  concurrency.dispatchEvent(new Event('change', {bubbles:true})); await tick();
+  check(testState.settings.maximumConcurrentTaggingRequests === 48, 'tagging request limit autosaves above 32');
+  toggle = q('[data-form-id="classification-settings-form"] [data-field="classificationEnabled"]');
   toggle.click(); await tick();
   check(commands.at(-1).action === 'saveClassificationSettings' && testState.settings.classificationEnabled === false, 'global tagging disable autosaves natively');
   check(testState.assets.classifierTypes[0].isPaused === false, 'global disable preserves independent group pause state');

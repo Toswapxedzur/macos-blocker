@@ -42,7 +42,7 @@ window.webkit={messageHandlers:{vaultClassifier:{postMessage(message){
   const {action,data}=message, type=testState.assets.classifierTypes.find(t=>t.id===data.typeID);
   switch(action){
     case 'setClassifierTypePaused':type.isPaused=data.paused;break;
-    case 'saveClassificationSettings':testState.settings.classificationEnabled=data.classificationEnabled;break;
+    case 'saveClassificationSettings':testState.settings.classificationEnabled=data.classificationEnabled;testState.settings.maximumConcurrentTaggingRequests=Number(data.maximumConcurrentTaggingRequests);break;
     case 'saveClassificationProvider':if(data.providerModel.startsWith('api:')){const parts=data.providerModel.slice(4).split(':');type.classificationProvider='apiKey';type.apiKey={profileID:parts.shift(),model:parts.join(':'),reasoningEffort:data.reasoningEffort};}else{type.classificationProvider='chatGPT';type.chatGPT={accountID:testState.assets.chatGPT?.accountID||'',model:data.providerModel.startsWith('chatgpt:')?data.providerModel.slice(8):type.chatGPT?.model||'',reasoningEffort:data.reasoningEffort};}break;
     case 'saveChatGPTUsageLimit':testState.assets.chatGPT.dailyRequestLimit=data.dailyRequestLimit===''?null:Number(data.dailyRequestLimit);break;
     case 'saveChatGPTRetryPolicy':testState.assets.chatGPT.retryIntervalSeconds=Number(data.retryIntervalSeconds);testState.assets.chatGPT.retryMaximumAttempts=Number(data.retryMaximumAttempts);break;

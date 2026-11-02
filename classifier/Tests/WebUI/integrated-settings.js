@@ -2,10 +2,10 @@ async function runIntegratedSettingsTests() {
   const results=[],check=(ok,label)=>{if(!ok)throw Error(label);results.push('PASS '+label)};
   const until=async fn=>{const end=performance.now()+5000;while(!fn()){if(performance.now()>end)throw Error('Timed out');await new Promise(r=>setTimeout(r,20))}};
   const scene=VaultScenes.scope('classifier'),settings=VaultSettings.scope,tagging=VaultSettings.taggingScope;
-  const snapshot={presentationRevision:8000,workspace:'knowledge',settings:{classificationEnabled:true,research:{enabled:true},dictionaries:{contributionEnabled:true}},assets:{classifierTypes:[],trees:[],datasets:[],bindings:[],collectionPlatforms:[],knowledge:{creators:[],terms:[]},providerProfiles:[],providerProtocols:{},providerModelCatalogs:{}},notices:{}};
+  const snapshot={presentationRevision:8000,workspace:'knowledge',settings:{classificationEnabled:true,maximumConcurrentTaggingRequests:16,research:{enabled:true},dictionaries:{contributionEnabled:true}},assets:{classifierTypes:[],trees:[],datasets:[],bindings:[],collectionPlatforms:[],knowledge:{creators:[],terms:[]},providerProfiles:[],providerProtocols:{},providerModelCatalogs:{}},notices:{}};
   const commands=[];window.webkit ||= {messageHandlers:{}};window.webkit.messageHandlers.vaultClassifier ||= {postMessage(){}};
   const send=webkit.messageHandlers.vaultClassifier.postMessage;
-  webkit.messageHandlers.vaultClassifier.postMessage=message=>{commands.push(structuredClone(message));if(message.action==='saveClassificationSettings')snapshot.settings.classificationEnabled=message.data.classificationEnabled;snapshot.presentationRevision++;VaultClassifier.receive(structuredClone(snapshot))};
+  webkit.messageHandlers.vaultClassifier.postMessage=message=>{commands.push(structuredClone(message));if(message.action==='saveClassificationSettings'){snapshot.settings.classificationEnabled=message.data.classificationEnabled;snapshot.settings.maximumConcurrentTaggingRequests=Number(message.data.maximumConcurrentTaggingRequests)}snapshot.presentationRevision++;VaultClassifier.receive(structuredClone(snapshot))};
   try {
     VaultClassifier.receive(structuredClone(snapshot));
     check(!scene.querySelector('[data-workspace="knowledge"]'),'stale Knowledge snapshots fall back to groups');

@@ -26,6 +26,28 @@ private struct CloudQueueResolver: CloudClassificationEngineResolving {
     func resolveCloudEngine(for type: ClassifierTypeAsset) async throws -> any ClassificationEngine { engine }
 }
 
+private actor PeakQueueEngine: BatchClassificationEngine {
+    nonisolated let modelVersion: String
+    private var active = 0
+    private(set) var peak = 0
+    init(version: String) { self.modelVersion = version }
+    func classify(_ request: LLMClassificationRequest) async throws -> LLMClassificationResult {
+        try await classifyBatch([request])[0]
+    }
+    func classifyBatch(_ requests: [LLMClassificationRequest]) async throws -> [LLMClassificationResult] {
+        active += 1
+        peak = max(peak, active)
+        try? await Task.sleep(nanoseconds: 100_000_000)
+        active -= 1
+        return requests.map { _ in .init(tags: []) }
+    }
+}
+
+private struct PeakQueueResolver: CloudClassificationEngineResolving {
+    let engine: PeakQueueEngine
+    func resolveCloudEngine(for type: ClassifierTypeAsset) async throws -> any ClassificationEngine { engine }
+}
+
 @MainActor
 private final class CloudQueueHub: SharedHubConnection {
     var onRequest: ((SharedHubClient.Request) -> SharedHubClient.Reply)?
@@ -39,6 +61,37 @@ private final class CloudQueueHub: SharedHubConnection {
 
 @MainActor
 final class ChatGPTQueueTests: XCTestCase {
+    func testSavedConcurrencyControlsActualPerVideoRequests() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("cloud-concurrency-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { LocalStateFile.flushAllPendingWrites(); try? FileManager.default.removeItem(at: directory) }
+        let vm = try VaultClassifierViewModel(headlessVaultDirectory: directory)
+        let coordinator = try XCTUnwrap(vm.coordinator)
+        var catalog = coordinator.snapshot().workspaceCatalog
+        let tree = TagTreeAsset(id: "tree", name: "Topics", nodes: [.init(id: "tag", name: "Tag")])
+        catalog.trees.append(tree)
+        let dataset = try XCTUnwrap(catalog.datasets.first)
+        catalog.classifierTypes.append(.init(id: "cloud", name: "Cloud", treeID: tree.id, treeRevision: tree.revision,
+            datasetID: dataset.id, datasetRevision: dataset.revision, applicablePlatformIDs: ["youtube"],
+            classificationProvider: .chatGPT, chatGPT: .init(accountID: "fixture", model: "fixture")))
+        try coordinator.updateWorkspaceCatalog(catalog)
+        let engine = PeakQueueEngine(version: catalog.classifierTypes.last!.cloudModelVersion)
+        coordinator.setCloudEngineResolver(PeakQueueResolver(engine: engine))
+        let items = (0..<20).map { NativeVideoTagsBatchItem(entryID: "video-\($0)", creatorID: "creator", title: "Video \($0)") }
+        await vm.classifyChunk(platformID: "youtube", items)
+        let firstPeak = await engine.peak
+        XCTAssertEqual(firstPeak, 16)
+        var settings = coordinator.snapshot().settings
+        settings.maximumConcurrentTaggingRequests = 3
+        try coordinator.updateSettings(settings)
+        let second = (20..<29).map { NativeVideoTagsBatchItem(entryID: "video-\($0)", creatorID: "creator", title: "Video \($0)") }
+        let secondEngine = PeakQueueEngine(version: catalog.classifierTypes.last!.cloudModelVersion)
+        coordinator.setCloudEngineResolver(PeakQueueResolver(engine: secondEngine))
+        await vm.classifyChunk(platformID: "youtube", second)
+        let secondPeak = await secondEngine.peak
+        XCTAssertEqual(secondPeak, 3)
+    }
+
     func testChangedInFlightEvidenceRunsOnceMoreAndOnlyBroadcastsLatestResult() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("cloud-queue-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -54,7 +107,7 @@ final class ChatGPTQueueTests: XCTestCase {
             classificationProvider: .chatGPT, chatGPT: .init(accountID: "fixture", model: "fixture"))
         catalog.classifierTypes.append(type)
         try coordinator.updateWorkspaceCatalog(catalog)
-        XCTAssertEqual(VaultClassifierViewModel.classificationChunkSize, 32)
+        XCTAssertEqual(coordinator.snapshot().settings.maximumConcurrentTaggingRequests, 16)
         let entered = expectation(description: "First inference entered")
         let idle = expectation(description: "Latest evidence delivered")
         let engine = CloudQueueEngine(version: type.cloudModelVersion, entered: entered)

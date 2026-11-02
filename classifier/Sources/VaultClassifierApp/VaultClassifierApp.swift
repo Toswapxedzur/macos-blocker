@@ -152,13 +152,13 @@ final class VaultClassifierViewModel: ObservableObject {
     var latestCloudClassificationInputs: [String: NativeVideoTagsBatchItem] = [:]
 
     /// The coalescing queue at the engine boundary (see ClassificationCoalescer):
-    /// requests that arrive while the engine is busy wait in chunks. Each
-    /// chunk runs bounded concurrent item requests and publishes their results
+    /// requests that arrive while the engine is busy wait in the queue. Each
+    /// drain pass runs bounded concurrent item requests and publishes their results
     /// independently. When idle, the first arrival waits a short window so
     /// the rest of the screen can join the queue before work starts.
     lazy var classificationCoalescer: ClassificationCoalescer<NativeVideoTagsBatchItem> = {
         let coalescer = ClassificationCoalescer<NativeVideoTagsBatchItem>(
-            chunkSize: Self.classificationChunkSize,
+            chunkSize: Int.max,
             arrivalWindowNanoseconds: Self.classificationArrivalWindowNanoseconds
         ) { [weak self] platformID, chunk in
             await self?.classifyChunk(platformID: platformID, chunk)
@@ -171,9 +171,6 @@ final class VaultClassifierViewModel: ObservableObject {
     /// skipping any already in flight. Each completed video is broadcast through
     /// the hub so provisional pills resolve the moment the result exists,
     /// instead of waiting for the extension's next poll.
-    /// Maximum videos admitted to one queue-drain pass.
-    static let classificationChunkSize = 32
-
     /// How long an idle engine waits for the rest of a screenful before it
     /// starts (a lone video pays this in full). `VAULT_ARRIVAL_WINDOW_MS`
     /// overrides it for latency measurements.

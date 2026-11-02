@@ -73,7 +73,7 @@ extension VaultClassifierViewModel {
         classificationCoalescer.enqueue(platformID: platformID, items: fresh)
     }
 
-    /// Run up to two item requests at once and publish each result as it settles.
+    /// Run up to the saved request limit and publish each result as it settles.
     /// A slow or failed item cannot hold back another item's pill.
     func classifyChunk(platformID: String, _ chunk: [NativeVideoTagsBatchItem]) async {
         await withTaskGroup(of: (NativeVideoTagsBatchItem, VideoTagsProjection?).self) { group in
@@ -87,8 +87,11 @@ extension VaultClassifierViewModel {
                     return (item, result?[item.entryID])
                 }
             }
-            for _ in 0..<min(2, chunk.count) { enqueue() }
+            let limit = coordinator?.snapshot().settings.maximumConcurrentTaggingRequests ?? ClassifierSettings.defaultMaximumConcurrentTaggingRequests
+            for _ in 0..<min(limit, chunk.count) { enqueue() }
+            var active = min(limit, chunk.count)
             while let (item, projection) = await group.next() {
+                active -= 1
                 let key = Self.inFlightKey(platformID, item.entryID)
                 inFlightVideoClassifications.remove(key)
                 if isShuttingDown || Task.isCancelled {
@@ -102,7 +105,8 @@ extension VaultClassifierViewModel {
                         broadcastResolvedVideoTags(platformID: platformID, entryID: item.entryID, projection: projection)
                     }
                 }
-                enqueue()
+                let currentLimit = coordinator?.snapshot().settings.maximumConcurrentTaggingRequests ?? limit
+                if next < chunk.count && active < currentLimit { enqueue(); active += 1 }
             }
         }
         await refreshChatGPTStatus()

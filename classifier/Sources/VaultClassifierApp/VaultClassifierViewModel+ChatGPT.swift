@@ -11,15 +11,17 @@ import WinSDK
 @MainActor
 extension VaultClassifierViewModel {
     func installChatGPT(directory: URL, coordinator: LocalClassifierCoordinator) {
+        let limit = coordinator.snapshot().settings.maximumConcurrentTaggingRequests
         let apiKeys = APIKeyClassificationClient(profiles: { [weak coordinator] id in
             coordinator?.snapshot().workspaceCatalog.providerProfiles.first { $0.id == id }
-        })
+        }, maximumConcurrentClassifications: limit)
         apiKeyClassificationClient = apiKeys
         coordinator.setCloudEngineResolver(apiKeys)
         do {
             let client = try ChatGPTAccountClient(directory: directory.appendingPathComponent("ChatGPT", isDirectory: true),
                 dailyRequestLimit: coordinator.snapshot().settings.chatGPTDailyRequestLimit,
-                taggingRetryPolicy: coordinator.snapshot().settings.chatGPTRetryPolicy) { [weak self] in
+                taggingRetryPolicy: coordinator.snapshot().settings.chatGPTRetryPolicy,
+                maximumConcurrentClassifications: limit) { [weak self] in
                 Task { @MainActor [weak self] in await self?.refreshChatGPTStatus() }
             }
             chatGPTClient = client

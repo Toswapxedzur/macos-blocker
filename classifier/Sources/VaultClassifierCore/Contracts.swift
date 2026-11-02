@@ -228,22 +228,26 @@ public struct TaggingRetryPolicy: Codable, Equatable, Sendable {
 }
 
 public struct ClassifierSettings: Codable, Equatable, Sendable {
+    public static let defaultMaximumConcurrentTaggingRequests = 16
+    public var maximumConcurrentTaggingRequests: Int
     public var chatGPTDailyRequestLimit: Int?
     public var chatGPTRetryPolicy: TaggingRetryPolicy
     public var classificationEnabled: Bool
 
     public init(
         classificationEnabled: Bool = true,
+        maximumConcurrentTaggingRequests: Int = Self.defaultMaximumConcurrentTaggingRequests,
         chatGPTDailyRequestLimit: Int? = nil,
         chatGPTRetryPolicy: TaggingRetryPolicy = .init()
     ) {
         self.classificationEnabled = classificationEnabled
+        self.maximumConcurrentTaggingRequests = max(1, maximumConcurrentTaggingRequests)
         self.chatGPTDailyRequestLimit = chatGPTDailyRequestLimit
         self.chatGPTRetryPolicy = chatGPTRetryPolicy
     }
 
     private enum CodingKeys: String, CodingKey {
-        case classificationEnabled, chatGPTDailyRequestLimit, chatGPTRetryPolicy
+        case classificationEnabled, maximumConcurrentTaggingRequests, chatGPTDailyRequestLimit, chatGPTRetryPolicy
     }
 
 
@@ -252,6 +256,7 @@ public struct ClassifierSettings: Codable, Equatable, Sendable {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         self.init(
             classificationEnabled: (try? container.decodeIfPresent(Bool.self, forKey: .classificationEnabled)) ?? true,
+            maximumConcurrentTaggingRequests: (try? container.decodeIfPresent(Int.self, forKey: .maximumConcurrentTaggingRequests)) ?? Self.defaultMaximumConcurrentTaggingRequests,
             chatGPTDailyRequestLimit: try container.decodeIfPresent(Int.self, forKey: .chatGPTDailyRequestLimit),
             chatGPTRetryPolicy: (try? container.decodeIfPresent(TaggingRetryPolicy.self, forKey: .chatGPTRetryPolicy)) ?? .init()
         )

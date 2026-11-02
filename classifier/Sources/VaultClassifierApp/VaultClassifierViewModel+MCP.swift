@@ -48,7 +48,7 @@ public enum ClassifierWebActionCatalog {
         .init(name: "connectTag", keys: ["treeID", "nodeID", "parentID"], summary: "Make a tag a child of another."),
         .init(name: "disconnectTag", keys: ["treeID", "nodeID"], summary: "Detach a tag from its parent."),
         .init(name: "deleteTag", keys: ["treeID", "nodeID"], summary: "Delete a tag."),
-        .init(name: "saveClassificationSettings", keys: ["classificationEnabled"], summary: "Enable or disable automatic tagging globally in the Classifier."),
+        .init(name: "saveClassificationSettings", keys: ["classificationEnabled", "maximumConcurrentTaggingRequests"], summary: "Enable or disable automatic tagging and set the maximum simultaneous tagging requests."),
         .init(name: "connectChatGPT", keys: [], summary: "Open Vault's supported ChatGPT sign-in and plan-usage consent flow in the default browser."),
         .init(name: "openChatGPTUsage", keys: [], summary: "Open ChatGPT's usage settings in the default browser."),
         .init(name: "acknowledgeChatGPTPlan", keys: [], summary: "Dismiss the first-connection explanation of ChatGPT plan usage."),

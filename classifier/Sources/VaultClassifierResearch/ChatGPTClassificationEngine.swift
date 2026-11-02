@@ -19,7 +19,7 @@ struct ChatGPTClassificationEngine: BatchClassificationEngine {
             func enqueue(_ index: Int) {
                 group.addTask { (index, try await classifyProviderBatch(batches[index])) }
             }
-            var next = min(batches.count, ChatGPTAccountClient.maximumConcurrentClassifications)
+            var next = min(batches.count, await client.classificationConcurrencyLimit())
             for index in 0..<next { enqueue(index) }
             var ordered = Array(repeating: [LLMClassificationResult](), count: batches.count)
             while let (index, results) = try await group.next() {

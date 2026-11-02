@@ -32,9 +32,13 @@ public actor APIKeyClassificationClient: CloudClassificationEngineResolving {
     private var stopped = false
     private var today = ""
     private var requests = 0
-    public init(profiles: @escaping ProfileLookup, http: any ProviderHTTPClient = URLSessionProviderHTTPClient()) {
+    private var maximumConcurrentClassifications: Int
+    public init(profiles: @escaping ProfileLookup, maximumConcurrentClassifications: Int = ClassifierSettings.defaultMaximumConcurrentTaggingRequests, http: any ProviderHTTPClient = URLSessionProviderHTTPClient()) {
         self.profiles = profiles; self.http = http
+        self.maximumConcurrentClassifications = max(1, maximumConcurrentClassifications)
     }
+    public func setMaximumConcurrentClassifications(_ value: Int) { maximumConcurrentClassifications = max(1, value) }
+    func classificationConcurrencyLimit() -> Int { maximumConcurrentClassifications }
     public static func supports(_ type: APIKeyProviderType) -> Bool { [.openAI, .gemini, .xAI].contains(type) }
     public func status() -> APIKeyClassificationStatus { resetDay(); return .init(failedProfileIDs: failed, requestsToday: requests) }
     public func retryFailedRequests() { failed.removeAll() }
@@ -80,7 +84,7 @@ public actor APIKeyClassificationClient: CloudClassificationEngineResolving {
             || (error as? CloudClassificationError) == .usageLimit
     }
     func classify(profileID: String, configuration: APIKeyClassificationSettings, requests batch: [LLMClassificationRequest]) async throws -> [LLMClassificationResult] {
-        while active.count + generationActive.count >= 2 { try Task.checkCancellation(); try await Task.sleep(nanoseconds: 20_000_000) }
+        while active.count + generationActive.count >= maximumConcurrentClassifications { try Task.checkCancellation(); try await Task.sleep(nanoseconds: 20_000_000) }
         try Task.checkCancellation()
         guard !stopped else { throw CancellationError() }
         guard !failed.contains(profileID), let profile = profiles(profileID), Self.supports(profile.type) else { throw CloudClassificationError.notConfigured }
@@ -140,7 +144,7 @@ struct APIKeyClassificationEngine: BatchClassificationEngine {
         let chunks = stride(from: 0, to: requests.count, by: 16).map { Array(requests[$0..<min(requests.count, $0 + 16)]) }
         return try await withThrowingTaskGroup(of: (Int, [LLMClassificationResult]).self) { group in
             func enqueue(_ index: Int) { group.addTask { (index, try await client.classify(profileID: profileID, configuration: configuration, requests: chunks[index])) } }
-            var next = min(2, chunks.count)
+            var next = min(chunks.count, await client.classificationConcurrencyLimit())
             for index in 0..<next { enqueue(index) }
             var ordered = Array(repeating: [LLMClassificationResult](), count: chunks.count)
             while let (index, result) = try await group.next() {

@@ -15,14 +15,20 @@ extension VaultClassifierViewModel {
         return Int(raw)
     }
 
-    func saveClassificationSettings(enabled: Bool) {
+    func saveClassificationSettings(enabled: Bool, maximumConcurrentTaggingRequests: Int) {
         do {
+            guard maximumConcurrentTaggingRequests > 0 else { throw WebBridgeInputError.invalidChoice("maximum simultaneous tagging requests") }
             guard let coordinator else { return }
             var settings = coordinator.snapshot().settings
             settings.classificationEnabled = enabled
+            settings.maximumConcurrentTaggingRequests = maximumConcurrentTaggingRequests
             try coordinator.updateSettings(settings)
             refreshLocalState()
             issue = nil
+            Task {
+                await chatGPTClient?.setMaximumConcurrentClassifications(maximumConcurrentTaggingRequests)
+                await apiKeyClassificationClient?.setMaximumConcurrentClassifications(maximumConcurrentTaggingRequests)
+            }
         } catch { issue = error.localizedDescription }
     }
 

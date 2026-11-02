@@ -273,6 +273,8 @@ window.VaultClassifierStrings = Object.freeze({
   "bridge.deleteType": "Delete group",
   "classification.title": "Content tagging",
   "classification.enabled": "Enable tagging",
+  "classification.concurrency": "Maximum simultaneous tagging requests",
+  "classification.concurrencyHint": "Starts at 16. Applies across AI connections; higher values may increase API usage.",
   "classification.copy": "Tag content on platforms assigned to active Content tagging groups. Blocking filters and their schedules do not control tagging.",
   "classification.pause": "Pause tagging",
   "classification.resume": "Resume tagging",

@@ -20,6 +20,7 @@ extension VaultClassifierViewModel {
         let catalog = state?.workspaceCatalog ?? .starter()
         let settingsPayload: [String: Any] = [
             "classificationEnabled": state?.settings.classificationEnabled ?? true,
+            "maximumConcurrentTaggingRequests": state?.settings.maximumConcurrentTaggingRequests ?? ClassifierSettings.defaultMaximumConcurrentTaggingRequests,
         ]
         let backupPayload: [String: Any] = [
             "hasOwnerCode": hasBackupOwnerCode,
@@ -306,7 +307,10 @@ extension VaultClassifierViewModel {
             case "deleteTag":
                 deleteTag(treeID: try webString(data, key: "treeID", limit: 256), nodeID: try webString(data, key: "nodeID", limit: 256))
             case "saveClassificationSettings":
-                saveClassificationSettings(enabled: try webBool(data, key: "classificationEnabled"))
+                guard let maximum = Self.optionalWebInteger(data["maximumConcurrentTaggingRequests"]), maximum > 0 else {
+                    throw WebBridgeInputError.invalidChoice("maximum simultaneous tagging requests")
+                }
+                saveClassificationSettings(enabled: try webBool(data, key: "classificationEnabled"), maximumConcurrentTaggingRequests: maximum)
             case "connectChatGPT": connectChatGPT()
             case "openChatGPTUsage": try Self.openChatGPTURL(URL(string: "https://chatgpt.com/settings/usage")!)
             case "acknowledgeChatGPTPlan":

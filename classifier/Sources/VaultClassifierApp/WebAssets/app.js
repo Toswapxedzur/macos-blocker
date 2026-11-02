@@ -526,7 +526,7 @@
   function nativeTaggingContent() {
     if (utilityPanel !== "settings" || !state) return "";
     const settings = state.settings;
-    return `<section class="utility-settings-section" data-form-id="classification-settings-form" data-autosave-action="saveClassificationSettings"><h3 class="utility-settings-section-title">${tx("classification.title")}</h3><div class="utility-toggles">${toggle("classification.enabled", "classificationEnabled", settings.classificationEnabled !== false)}</div><p class="section-copy" data-info>${tx("classification.copy")}</p></section>`;
+    return `<section class="utility-settings-section" data-form-id="classification-settings-form" data-autosave-action="saveClassificationSettings"><h3 class="utility-settings-section-title">${tx("classification.title")}</h3><div class="utility-toggles">${toggle("classification.enabled", "classificationEnabled", settings.classificationEnabled !== false)}</div>${field("classification.concurrency", "classification.concurrencyHint", "maximumConcurrentTaggingRequests", settings.maximumConcurrentTaggingRequests ?? 16, "number", 'min="1" step="1"')}<p class="section-copy" data-info>${tx("classification.copy")}</p></section>`;
   }
 
   function nativeConnectionsContent() {
