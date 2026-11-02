@@ -2,7 +2,7 @@
 
 `autosave.mjs` serves the production assets in owned, isolated headless Playwright
 sessions and closes its browser/context in a guaranteed cleanup path. Run on the
-owner-selected Mini2 account for the current campaign; no laptop execution.
+Mini1 for product checks; no laptop test execution.
 `UI_PLAYWRIGHT_MODULE`, `UI_BROWSER_EXECUTABLE`, `UI_WIDTH`, `UI_HEIGHT`, optional
 `UI_TEST_SCRIPT` and `UI_TEST_EXPRESSION` select the existing runtime and case.
 
@@ -18,6 +18,8 @@ owner-selected Mini2 account for the current campaign; no laptop execution.
   native-key drafts and independent application preferences.
 - `tagging-controls.js`, `group-dials.js`, `confidence-levels.js`, `tag-create-drafts.js`:
   current group activation, rules, confidence cutoff and explicit tag creation.
+- `tag-parent-actions.js`: Set parent, Remove parent and confirmed tag deletion
+  through the actual Classifier click handlers and native command bridge.
 - `info-popovers.js`, `language-manuals.js`, `native-notice-language.mjs`: contextual
   help, current user/code guides and native notice localization.
 - `activity.html`: independent Activity renderer, retention/group drafts and paging.

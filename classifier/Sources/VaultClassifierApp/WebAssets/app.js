@@ -1275,7 +1275,6 @@
       if (connectionSource) {
         if (button.dataset.treeId !== connectionSource.treeID || button.dataset.nodeId === connectionSource.nodeID) return;
         const source = connectionSource;
-        flushLiveTagRename(source.treeID, source.nodeID);
         connectionSource = null;
         selectedTagNode = source;
         activeTagPanel = null;
@@ -1288,7 +1287,6 @@
       return;
     }
     if (action === "beginConnection") {
-      flushLiveTagRename(button.dataset.treeId, button.dataset.nodeId);
       selectedTagNode = { treeID: button.dataset.treeId, nodeID: button.dataset.nodeId };
       connectionSource = { treeID: button.dataset.treeId, nodeID: button.dataset.nodeId };
       activeTagPanel = null;
@@ -1296,7 +1294,6 @@
       return;
     }
     if (action === "disconnectTag") {
-      flushLiveTagRename(button.dataset.treeId, button.dataset.nodeId);
       connectionSource = null;
       selectedTagNode = { treeID: button.dataset.treeId, nodeID: button.dataset.nodeId };
       activeTagPanel = null;
@@ -1306,7 +1303,6 @@
     }
     if (action === "deleteTag") {
       // Confirmed above (click again); its child tags move up to its parent.
-      flushLiveTagRename(button.dataset.treeId, button.dataset.nodeId);
       connectionSource = null;
       selectedTagNode = null;
       activeTagPanel = null;
