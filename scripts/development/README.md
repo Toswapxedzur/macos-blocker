@@ -1,38 +1,32 @@
-# Shared Mac Vault delivery
+# Shared Mac Vault source integration and Mini2 verification
 
 Task branches/worktrees remain independent while work is in progress. The
-owner's laptop app is always delivered from `integration/local-delivery` in
-the checkout registered by the repository's shared `vault.deliveryCheckout`
-Git setting. Never choose a branch by timestamp or launch a task build on the
-laptop.
+shared source integration branch remains `integration/local-delivery` in the
+checkout registered by `vault.deliveryCheckout`. All development builds and
+tests run on Mini2. Laptop development launch is retired; both launch scripts
+refuse it when the laptop checkout has that Git setting.
 
-The stable laptop command is `~/Desktop/agentic/tooling/bin/vault-delivery`:
+The source integration command is `~/Desktop/agentic/tooling/bin/vault-delivery`:
 
 1. Commit and push the completed task; keep unfinished work separate.
 2. `vault-delivery integrate --source /absolute/path/to/task/macosBlocker`
 3. Resolve any merge conflicts in the delivery checkout. Inspect the combined
-   diff; run any additional relevant tests on mini1.
+   diff; run any additional relevant tests on Mini2.
 4. `vault-delivery verify` exports only the committed combined tree to a
-   dedicated mini1 copy and runs the Mac build, autosave/disclosure and
+   dedicated Mini2 copy and runs the Mac build, autosave/disclosure and
    dropdown/model-picker suites. No tests run on the laptop.
 5. Push `integration/local-delivery` normally to its upstream.
-6. `vault-delivery launch` closes every old laptop Mac Vault/standalone
-   Classifier instance and runs the supported build launcher from the shared
-   checkout. This is delivery only; do not verify laptop UI/behavior.
 
-`status` reports the checkout, HEAD, mini1 verification and delivery receipts.
-`launch --check` checks readiness without closing/building/launching anything.
-All commands share a nonblocking lock in the common Git directory. Launch
-requires a clean integration checkout, a mini1 receipt for the exact HEAD,
-matching upstream and inclusion of the previously delivered commit. A new
-merge invalidates the old verification automatically. Do not edit the receipt
-to bypass these gates.
+`status` reports the checkout, HEAD, verification and historical delivery
+receipts. `launch` and `launch --check` both refuse laptop development. All
+commands share a nonblocking lock in the common Git directory. A new merge
+invalidates the old verification automatically. Do not edit old receipts.
 
 ## Explicit supported history reconciliation
 
 An owner-approved rewrite can have equal source trees while changing Git
 ancestry. The controller supports only its pinned, reviewed old/new mapping;
-ordinary integration and launch never infer equivalence from timestamps or
+ordinary integration never infers equivalence from timestamps or
 arbitrary equal trees. `reconcile-history --source <absolute worktree>
 --old-base <exact old SHA> --new-base <exact new SHA>` is an explicit adoption
 operation requiring owner approval of that mapping. Its source must be a clean
@@ -43,9 +37,9 @@ Reconciliation preserves the original receipt bytes and five exact refs,
 retains the original delivered record, and invalidates verification. It does
 not verify, push, launch, publish, or relabel historical evidence. After
 adoption, integrate subsequent verified work through ordinary merges, run
-normal verification for the exact combined commit, push normally, then launch.
+normal Mini2 verification for the exact combined commit, then push normally.
 The original archive/ref and rewritten-lineage guards remain active after
-later deliveries; launch also checks the actual remote integration ref.
+later integrations; the preserved remote integration ref remains checked.
 
 Existing preparation/adoption records and preservation collisions prevent
 replay. If a partial operation fails, preserve its archive, refs and receipt
@@ -83,7 +77,7 @@ remain unchanged. It records the explicit adoption through the controller, drops
 old verification and ordinarily merges the reviewed task. It never resets a branch,
 force-pushes, relabels test evidence or launches an app. Normal exact-commit remote
 verification and a normal integration push are required afterward. Future integrate,
-verify and launch operations validate this preserved evidence and mapped ancestry.
+verify operations validate this preserved evidence and mapped ancestry.
 The original five audit refs are kept at their reviewed rewritten objects; new refs
 preserve every original object independently. Do not edit either receipt by hand.
 
@@ -92,11 +86,11 @@ selected test host. It checks preservation, fresh verification/push requirements
 wrong trees, changed receipts/remotes/source, dirty worktrees, partial recovery and
 audit tampering. It is included in normal controller verification.
 
-When the owner explicitly selects mini2 for a run, use `verify --host mini2`.
+Verification defaults to Mini2; `verify --host mini2` is equivalent.
 If that host uses a pinned source runtime instead of Homebrew, also pass
 `--runtime-prefix /absolute/remote/runtime/install`. All checks still run on
 the selected host, and the receipt records that host, prefix and exact commit.
-The default remains mini1; host selection does not relax the delivery gates.
+Mini1 is no longer a development test host.
 
 When the authorized Mini2 test account differs from its SSH login, use
 `verify --host mini2 --account john.zhu.alt1`. Every preflight, committed source
@@ -114,7 +108,7 @@ If its UI tools are installed at different existing locations, pass absolute
 The controller checks readability/executability as the selected account and
 passes the module/browser through the UI harness's existing supported variables.
 It does not install dependencies, download a browser or launch a visible browser.
-Without overrides, the existing home-based Mini1 runtime paths remain the default.
+Without overrides, home-based runtime paths are used on Mini2.
 Successful receipts record host, effective account/UID/home, export directory,
 UI runtime paths, optional llama runtime prefix and exact tested commit. A failed
 identity/runtime check cannot write a new verification receipt. These checks do
@@ -128,14 +122,11 @@ parallelism on a constrained host. It must be a positive integer; omission
 preserves the existing Swift default. Only the build command receives this limit,
 and the successful receipt records the actual checks and selected job count. Explicit owner host selections take precedence for a run.
 
-`run-mac-vault.sh` in each local worktree dispatches to this shared controller
-when the Git setting exists. The lower-level build script accepts a laptop
-delivery only from that checkout with the controller's exact commit token.
-Mini1 source exports have no laptop Git setting and can use the build script
-for testing normally. Never use the lower-level script to bypass laptop
-delivery.
+`run-mac-vault.sh` and the lower-level build script refuse to run when the
+laptop Git setting exists. Mini2 source exports have no laptop Git setting
+and can use the build script for testing.
 
-Regression checks (mini1 by default, or the explicitly owner-selected host):
+Regression checks (Mini2 only):
 `python3 scripts/development/test-vault-delivery.py`,
 `python3 scripts/development/test-history-reconciliation.py`,
 `python3 scripts/development/test-metadata-recovery.py`, and
@@ -148,15 +139,14 @@ Safari pairing additionally requires a current Apple profile selected with
 sign Safari Vault. With that explicit profile, the supported launcher wraps
 the built executable in `.build/.../Mac Vault Development.app`, embeds the
 profile, and signs the outer app with its shared group entitlement. It still
-executes `MacBlockerPanel` inside the verified checkout, preserving the delivery
-controller's process and provenance checks. Mac Vault remains unsandboxed for
+executes `MacBlockerPanel` in the Mini2 test checkout. Mac Vault remains unsandboxed for
 its application controls.
 
 Without a selected profile, the launcher retains its ordinary signed
 development binary and reports Safari pairing unavailable. It does not invent
 an App Group location or publish a secret outside the authorized container.
 Production signing accepts a production profile through the same environment
-variable; see [App Group signing](../signing/README.md). On mini1, metadata and
+variable; see [App Group signing](../signing/README.md). On Mini2, metadata and
 launcher fixtures are testable without credentials. Apple-authorized App Group
 execution and live Safari acceptance require valid installed signing material
 and remain separate verification steps.

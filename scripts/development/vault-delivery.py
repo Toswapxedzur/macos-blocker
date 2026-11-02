@@ -8,7 +8,6 @@ import json
 import os
 import re
 from pathlib import Path
-import signal
 import shlex
 import subprocess
 import sys
@@ -359,7 +358,7 @@ def reconcile_history(common, source, old, new):
         raise RuntimeError("Remote base changed during reconciliation; no adoption receipt written.")
     record["stage"] = "adopted"
     write_state(common, state)
-    print(f"Reconciled {old} -> {new}; integrated {candidate}. Original receipt and old refs preserved. Run normal mini1 verify, normal push, then controller launch.")
+    print(f"Reconciled {old} -> {new}; integrated {candidate}. Original receipt and old refs preserved. Verify on Mini2, then push normally.")
 
 
 def git(root, *args):
@@ -433,17 +432,17 @@ def integrate(common, source):
         if old_exclusive.intersection(git(ROOT, "rev-list", sha, "^" + base).splitlines()):
             raise RuntimeError("Integration would bring discarded old history into the rewritten lineage.")
     subprocess.run(["git", "-C", str(ROOT), "merge", "--no-edit", sha], check=True)
-    print(f"Integrated {sha}; verify the combined delivery commit on mini1 before launch.")
+    print(f"Integrated {sha}; verify the combined commit on Mini2 before pushing.")
 
 
 def remote_command(host, account, script):
-    if host not in ("mini1", "mini2"):
-        raise RuntimeError("Unsupported verification host.")
+    if host != "mini2":
+        raise RuntimeError("Vault development verification is restricted to Mini2.")
     if account is not None:
-        if host != "mini2" or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_.-]*", account) or account == "root":
+        if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_.-]*", account) or account == "root":
             raise RuntimeError("Selected account must be a nonroot Mini2 account name.")
         script = shlex.join(["/usr/bin/sudo", "-n", "-H", "-u", account, "/bin/sh", "-c", script])
-    return ["ssh", "mini" if host == "mini1" else host, script]
+    return ["ssh", "mini2", script]
 
 
 def guarded_remote_script(guard, operation):
@@ -506,8 +505,10 @@ def export_archive(sha):
     return subprocess.Popen(["git", "-C", str(ROOT), "archive", sha], stdout=subprocess.PIPE)
 
 
-def verify(common, host="mini1", runtime_prefix=None, account=None, node_executable=None,
+def verify(common, host="mini2", runtime_prefix=None, account=None, node_executable=None,
            playwright_module=None, browser_executable=None, jobs=None):
+    if host != "mini2":
+        raise RuntimeError("Vault development verification is restricted to Mini2.")
     if jobs is not None and (type(jobs) is not int or jobs < 1):
         raise RuntimeError("Verification jobs must be a positive integer.")
     clean(ROOT)
@@ -577,52 +578,8 @@ def verify(common, host="mini1", runtime_prefix=None, account=None, node_executa
     print(f"Verified {sha} on {host} as {identity['account']} (UID {identity['uid']}).")
 
 
-def app_processes():
-    found = []
-    for row in subprocess.check_output(["ps", "-axo", "pid=,comm="], text=True).splitlines():
-        parts = row.strip().split(None, 1)
-        if len(parts) == 2 and Path(parts[1]).name in {"MacBlockerPanel", "VaultClassifier", "VaultClassifierApp"}:
-            found.append(int(parts[0]))
-    return found
-
-
 def launch(common, check_only):
-    sha, state = check_launch(common)
-    if check_only:
-        print(f"Ready to deliver {sha} from {ROOT}")
-        return
-    previous = app_processes()
-    for pid in previous:
-        try:
-            os.kill(pid, signal.SIGTERM)
-        except ProcessLookupError:
-            pass
-    for _ in range(50):
-        if not set(previous).intersection(app_processes()):
-            break
-        time.sleep(0.1)
-    else:
-        raise RuntimeError("An old Mac Vault instance did not close; delivery stopped.")
-    # This is delivery on the laptop, not UI/behavior verification.
-    output = Path.home() / "Desktop/agentic/captures/vault-delivery"
-    output.mkdir(parents=True, exist_ok=True)
-    (output / "package-info.md").write_text("# Shared Mac Vault delivery\n\n- `launch.log`: latest supported launcher output; laptop delivery only.\n")
-    log_path = output / "launch.log"
-    with log_path.open("w") as log:
-        environment = {**os.environ, "VAULT_DELIVERY_COMMIT": sha}
-        process = subprocess.Popen(["bash", str(ROOT / "scripts/development/launch-mac-vault-build.sh")], env=environment, stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
-    binary_dir = ROOT / ".build"
-    for _ in range(120):
-        if process.poll() is not None:
-            raise RuntimeError(f"Launcher exited; inspect {log_path}")
-        command = subprocess.check_output(["ps", "-p", str(process.pid), "-o", "comm="], text=True).strip()
-        if Path(command).name == "MacBlockerPanel" and Path(command).is_relative_to(binary_dir):
-            state["delivered"] = {"commit": sha, "pid": process.pid, "checkout": str(ROOT), "at": time.time()}
-            write_state(common, state)
-            print(f"Delivered {sha}; Mac Vault PID {process.pid}, checkout {ROOT}.")
-            return
-        time.sleep(1)
-    raise RuntimeError(f"Launcher is still building; inspect {log_path}. No delivery receipt was written.")
+    raise RuntimeError("Laptop Mac Vault development launch is retired. Build and test on Mini2.")
 
 
 def main():
@@ -632,7 +589,7 @@ def main():
     merge = commands.add_parser("integrate")
     merge.add_argument("--source", required=True)
     verification = commands.add_parser("verify")
-    verification.add_argument("--host", choices=["mini1", "mini2"], default="mini1")
+    verification.add_argument("--host", choices=["mini2"], default="mini2")
     verification.add_argument("--runtime-prefix", help="Absolute pinned llama runtime prefix on the selected test host")
     verification.add_argument("--jobs", type=int, help="Optional positive Swift build job count; default retains Swift's existing behavior")
     verification.add_argument("--account", help="Optional Mini2 account selected through existing SSH and noninteractive sudo")

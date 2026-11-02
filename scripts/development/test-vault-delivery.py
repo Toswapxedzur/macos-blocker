@@ -51,11 +51,11 @@ class DeliveryTests(unittest.TestCase):
     def verified(self):
         delivery.write_state(self.common, {"verified": {"commit": delivery.git(self.repo, "rev-parse", "HEAD")}})
 
-    def test_unverified_delivery_is_refused_before_process_changes(self):
-        with patch.object(delivery, "app_processes") as processes:
-            with self.assertRaisesRegex(RuntimeError, "remote verification"):
+    def test_laptop_delivery_is_retired(self):
+        with patch.object(delivery.subprocess, "Popen") as process:
+            with self.assertRaisesRegex(RuntimeError, "retired"):
                 delivery.launch(self.common, False)
-            processes.assert_not_called()
+            process.assert_not_called()
 
     def test_dirty_delivery_is_refused(self):
         self.verified()
@@ -146,8 +146,8 @@ class DeliveryTests(unittest.TestCase):
         self.assertIn(" -j 2",verified["checks"][2])
         self.assertTrue(all(" -j " not in command for index,command in enumerate(verified["checks"]) if index != 2))
 
-    def test_default_mini1_preserves_direct_alias_and_home_runtime_defaults(self):
-        identity = self.remote_fixture("johnzhualt", 501, "/Users/johnzhualt")
+    def test_default_mini2_preserves_home_runtime_defaults(self):
+        identity = self.remote_fixture("john.zhu", 501, "/Users/john.zhu")
         original_run = subprocess.run
         remote = []
         def run(command, **kwargs):
@@ -161,7 +161,7 @@ class DeliveryTests(unittest.TestCase):
             delivery.verify(self.common)
         self.assertEqual(len(remote), 7)
         for command in remote:
-            self.assertEqual(command[:2], ["ssh", "mini"])
+            self.assertEqual(command[:2], ["ssh", "mini2"])
             self.assertNotIn('/usr/bin/sudo', command[2])
         options = json.loads(shlex.split(remote[0][2])[3])
         self.assertIsNone(options["account"])
@@ -169,7 +169,7 @@ class DeliveryTests(unittest.TestCase):
         self.assertIsNone(options["playwrightModule"])
         self.assertIsNone(options["browser"])
         verified = delivery.read_state(self.common)["verified"]
-        self.assertEqual(verified["host"], "mini1")
+        self.assertEqual(verified["host"], "mini2")
         self.assertNotIn('jobs',verified)
         self.assertTrue(all(' -j ' not in command for command in verified['checks']))
 
@@ -188,7 +188,7 @@ class DeliveryTests(unittest.TestCase):
         for host, account in [("mini1","john.zhu.alt1"),("mini2","root"),("mini2","-u root"),
                               ("mini2","john;echo x"),("unreviewed-host",None)]:
             with self.subTest(host=host,account=account), patch.object(delivery.subprocess,"run") as remote:
-                with self.assertRaisesRegex(RuntimeError, "account|host"):
+                with self.assertRaisesRegex(RuntimeError, "account|host|Mini2"):
                     delivery.remote_command(host,account,"true")
                 remote.assert_not_called()
 
@@ -342,12 +342,9 @@ class DeliveryTests(unittest.TestCase):
                 self.assertIn('unavailable to selected account',result.stderr)
                 self.assertEqual(result.stdout,'')
 
-    def test_check_only_never_closes_or_launches_apps(self):
-        self.verified()
-        with patch.object(delivery, "check_launch", return_value=(self.first, {})), patch.object(delivery, "app_processes") as processes, patch.object(delivery.subprocess, "Popen") as launch:
+    def test_check_only_is_also_retired(self):
+        with self.assertRaisesRegex(RuntimeError, "retired"):
             delivery.launch(self.common, True)
-            processes.assert_not_called()
-            launch.assert_not_called()
 
     def test_concurrent_delivery_is_refused(self):
         with (self.common / "vault-delivery.lock").open("a") as lock:
@@ -356,7 +353,7 @@ class DeliveryTests(unittest.TestCase):
                 with self.assertRaisesRegex(RuntimeError, "Another integration"):
                     delivery.main()
 
-    def test_task_launcher_routes_to_shared_controller(self):
+    def test_task_launcher_refuses_laptop_development(self):
         source = self.base / "task"
         self.run_git(self.repo, "worktree", "add", "-b", "feature/launcher", str(source))
         production = Path(__file__).resolve().parents[2]
@@ -364,8 +361,9 @@ class DeliveryTests(unittest.TestCase):
         controller = self.repo / "scripts/development/vault-delivery.py"
         controller.parent.mkdir(parents=True)
         controller.write_text('import sys; print("shared-controller:" + sys.argv[1])\n')
-        result = subprocess.run(["bash", str(source / "run-mac-vault.sh")], text=True, capture_output=True, check=True)
-        self.assertEqual(result.stdout.strip(), "shared-controller:launch")
+        result = subprocess.run(["bash", str(source / "run-mac-vault.sh")], text=True, capture_output=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("retired", result.stderr)
 
     def test_direct_task_build_is_refused_before_signing_or_building(self):
         source = self.base / "task"
@@ -375,7 +373,7 @@ class DeliveryTests(unittest.TestCase):
         script.write_text(Path(__file__).with_name("launch-mac-vault-build.sh").read_text())
         result = subprocess.run(["bash", str(script)], text=True, capture_output=True)
         self.assertEqual(result.returncode, 1)
-        self.assertIn("verified shared checkout", result.stderr)
+        self.assertIn("retired", result.stderr)
 
 
 if __name__ == "__main__":

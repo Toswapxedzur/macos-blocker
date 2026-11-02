@@ -6,10 +6,8 @@ cd "$script_dir"
 
 delivery_checkout="$(git config --get vault.deliveryCheckout 2>/dev/null || true)"
 if [[ -n "$delivery_checkout" ]]; then
-  if [[ "$script_dir" != "$delivery_checkout" || "${VAULT_DELIVERY_COMMIT:-}" != "$(git rev-parse HEAD)" ]]; then
-    echo "Laptop app delivery must use vault-delivery launch from the verified shared checkout." >&2
-    exit 1
-  fi
+  echo "Laptop Mac Vault development launch is retired. Build and test on Mini2." >&2
+  exit 1
 fi
 
 signing_identity="${MAC_VAULT_SIGNING_IDENTITY:-}"
