@@ -402,6 +402,12 @@ public struct BlockerWebView: NSViewRepresentable {
             }
 
             switch kind {
+            case "conversation-settings":
+                guard Self.isTrustedEditorFrame(isMainFrame: message.frameInfo.isMainFrame,
+                                                url: message.frameInfo.request.url) else { return }
+                let payload = body["message"] as? [String: Any] ?? [:]
+                nativeReply(body, VaultConversationBridge.handle?(payload["action"] as? String ?? "status",
+                    payload["limitMB"] as? Int) ?? ["ok": false])
             case "updater":
                 guard Self.isTrustedEditorFrame(isMainFrame: message.frameInfo.isMainFrame,
                                                 url: message.frameInfo.request.url) else { return }

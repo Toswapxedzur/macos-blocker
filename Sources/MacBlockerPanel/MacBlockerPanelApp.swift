@@ -16,6 +16,10 @@ import AppKit
 final class PanelAppDelegate: BlockerAppDelegate {
     override func applicationDidFinishLaunching(_ notification: Notification) {
         MacVaultUpdates.shared.startIfBundled()
+        VaultConversationBridge.handle = { action, mb in
+            do { return ["ok": true, "limitMB": try RuleAIConversations.settingSync(action: action, mb: mb)] }
+            catch { return ["ok": false, "error": "ai-conversation-storage-unavailable"] }
+        }
         VaultUpdaterBridge.handle = { action, enabled in
             let updates = MacVaultUpdates.shared
             switch action {

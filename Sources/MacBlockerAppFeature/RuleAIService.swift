@@ -52,6 +52,18 @@ final class RuleAIService {
     func request(program: String, groupID: String, payload: String) async -> [String: Any] {
         do {
             guard !stopped else { throw RuleAIError.unavailable }
+            if let object = try? JSONSerialization.jsonObject(with: Data(payload.utf8)) as? [String: Any],
+               object["op"] as? String == "delete" {
+                guard Set(object.keys) == Set(["op", "conversation"]),
+                      let name = object["conversation"] as? String,
+                      !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                      name.utf8.count <= 128,
+                      !name.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) }),
+                      context(program, groupID) != nil else { throw RuleAIError.invalidInput }
+                guard conversationTails[name] == nil else { return ["ok": false, "error": "ai-conversation-busy", "text": NSNull(), "citations": []] }
+                try await conversations.delete(name: name)
+                return ["ok": true, "error": "", "text": NSNull(), "citations": []]
+            }
             let input = try RuleAIInput(payload: payload)
             guard let captured = context(program, groupID),
                   let choice = models().first(where: { $0["value"] as? String == input.model &&
@@ -61,7 +73,7 @@ final class RuleAIService {
                 dailyRequestLimit: captured.dailyRequestLimit)
             guard validate(configuration) else { throw RuleAIError.invalidConfiguration }
             let id = UUID(), generate = self.generate
-            let key = input.conversation.map { captured.members.sorted().joined(separator: "|") + "\u{0}" + $0 }
+            let key = input.conversation
             let previous = key.flatMap { conversationTails[$0]?.1 }
             let work = Task { @MainActor [self] in
                 if let previous { _ = try? await previous.value }
