@@ -797,6 +797,8 @@
   "classifier.bridge.deleteType": "Grubu sil",
   "classifier.classification.title": "İçerik etiketleme",
   "classifier.classification.enabled": "Etiketlemeyi etkinleştir",
+  "classifier.classification.concurrency": "En fazla eşzamanlı etiketleme isteği",
+  "classifier.classification.concurrencyHint": "Varsayılan 16. Tüm yapay zekâ bağlantıları için geçerlidir; daha yüksek değerler API kullanımını artırabilir.",
   "classifier.classification.copy": "Etkin Sınıflandırıcı gruplarına atanmış platformlardaki içeriği etiketleyin. Engelleme filtreleri ve zamanlamaları etiketlemeyi yönetmez.",
   "classifier.classification.pause": "Etiketlemeyi duraklat",
   "classifier.classification.resume": "Etiketlemeyi sürdür",

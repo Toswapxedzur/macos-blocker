@@ -797,6 +797,8 @@
   "classifier.bridge.deleteType": "Hapus grup",
   "classifier.classification.title": "Penandaan konten",
   "classifier.classification.enabled": "Aktifkan penandaan",
+  "classifier.classification.concurrency": "Maksimum permintaan penandaan serentak",
+  "classifier.classification.concurrencyHint": "Bawaan 16. Berlaku untuk semua koneksi AI; nilai lebih tinggi dapat meningkatkan penggunaan API.",
   "classifier.classification.copy": "Beri tag pada konten di platform yang ditetapkan ke grup pengklasifikasi aktif. Filter pemblokiran dan jadwalnya tidak mengatur penandaan.",
   "classifier.classification.pause": "Jeda penandaan",
   "classifier.classification.resume": "Lanjutkan penandaan",

@@ -797,6 +797,8 @@
   "classifier.bridge.deleteType": "গ্রুপ মুছুন",
   "classifier.classification.title": "কনটেন্টে ট্যাগ দেওয়া",
   "classifier.classification.enabled": "ট্যাগ দেওয়া চালু করুন",
+  "classifier.classification.concurrency": "একসঙ্গে চলা ট্যাগিং অনুরোধের সর্বোচ্চ সংখ্যা",
+  "classifier.classification.concurrencyHint": "ডিফল্ট ১৬। সব AI সংযোগে প্রযোজ্য; বেশি মানে API ব্যবহার বাড়তে পারে।",
   "classifier.classification.copy": "সক্রিয় শ্রেণিবিন্যাসকারী গ্রুপে বরাদ্দ প্ল্যাটফর্মের কনটেন্টে ট্যাগ দিন। ব্লকিং ফিল্টার বা সময়সূচি ট্যাগ দেওয়া নিয়ন্ত্রণ করে না।",
   "classifier.classification.pause": "ট্যাগ দেওয়া বিরতি দিন",
   "classifier.classification.resume": "ট্যাগ দেওয়া আবার শুরু করুন",

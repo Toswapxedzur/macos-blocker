@@ -797,6 +797,8 @@
   "classifier.bridge.deleteType": "समूह हटाएँ",
   "classifier.classification.title": "कंटेंट टैगिंग",
   "classifier.classification.enabled": "टैगिंग चालू करें",
+  "classifier.classification.concurrency": "एक साथ टैगिंग अनुरोधों की अधिकतम संख्या",
+  "classifier.classification.concurrencyHint": "डिफ़ॉल्ट 16। सभी AI कनेक्शन पर लागू; अधिक मान से API उपयोग बढ़ सकता है।",
   "classifier.classification.copy": "सक्रिय क्लासिफ़ायर समूहों को दिए प्लेटफ़ॉर्म पर कंटेंट टैग करें। ब्लॉकिंग फ़िल्टर और समय-सारणी टैगिंग नियंत्रित नहीं करते।",
   "classifier.classification.pause": "टैगिंग रोकें",
   "classifier.classification.resume": "टैगिंग फिर शुरू करें",

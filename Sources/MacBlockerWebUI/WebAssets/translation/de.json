@@ -797,6 +797,8 @@
   "classifier.bridge.deleteType": "Gruppe löschen",
   "classifier.classification.title": "Inhalte taggen",
   "classifier.classification.enabled": "Taggen aktivieren",
+  "classifier.classification.concurrency": "Maximale gleichzeitige Tagging-Anfragen",
+  "classifier.classification.concurrencyHint": "Standardwert 16. Gilt für alle KI-Verbindungen; höhere Werte können die API-Nutzung erhöhen.",
   "classifier.classification.copy": "Tagge Inhalte auf Plattformen, die aktiven Klassifizierungsgruppen zugewiesen sind. Blockierfilter und deren Zeitpläne steuern das Taggen nicht.",
   "classifier.classification.pause": "Taggen pausieren",
   "classifier.classification.resume": "Taggen fortsetzen",

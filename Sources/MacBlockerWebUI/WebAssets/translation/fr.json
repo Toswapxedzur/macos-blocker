@@ -797,6 +797,8 @@
   "classifier.bridge.deleteType": "Supprimer le groupe",
   "classifier.classification.title": "Étiquetage du contenu",
   "classifier.classification.enabled": "Activer l’étiquetage",
+  "classifier.classification.concurrency": "Nombre maximal de demandes d’étiquetage simultanées",
+  "classifier.classification.concurrencyHint": "Valeur par défaut : 16. S’applique à toutes les connexions IA ; une valeur plus élevée peut augmenter l’utilisation de l’API.",
   "classifier.classification.copy": "Étiquettez le contenu des plateformes attribuées aux groupes actifs du Classificateur. Les filtres et horaires de blocage ne contrôlent pas l’étiquetage.",
   "classifier.classification.pause": "Mettre l’étiquetage en pause",
   "classifier.classification.resume": "Reprendre l’étiquetage",

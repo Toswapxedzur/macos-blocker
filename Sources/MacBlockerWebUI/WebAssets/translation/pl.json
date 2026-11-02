@@ -797,6 +797,8 @@
   "classifier.bridge.deleteType": "Usuń grupę",
   "classifier.classification.title": "Tagowanie treści",
   "classifier.classification.enabled": "Włącz tagowanie",
+  "classifier.classification.concurrency": "Maksymalna liczba jednoczesnych żądań tagowania",
+  "classifier.classification.concurrencyHint": "Domyślnie 16. Dotyczy wszystkich połączeń AI; wyższe wartości mogą zwiększyć użycie API.",
   "classifier.classification.copy": "Taguj treści na platformach przypisanych do aktywnych grup Klasyfikator. Filtry blokowania i harmonogramy nie sterują tagowaniem.",
   "classifier.classification.pause": "Wstrzymaj tagowanie",
   "classifier.classification.resume": "Wznów tagowanie",

@@ -797,6 +797,8 @@
   "classifier.bridge.deleteType": "Groep verwijderen",
   "classifier.classification.title": "Inhoud taggen",
   "classifier.classification.enabled": "Taggen inschakelen",
+  "classifier.classification.concurrency": "Maximum aantal gelijktijdige tagverzoeken",
+  "classifier.classification.concurrencyHint": "Standaard 16. Geldt voor alle AI-verbindingen; hogere waarden kunnen het API-gebruik verhogen.",
   "classifier.classification.copy": "Tag inhoud op platforms die aan actieve Classificatie-groepen zijn toegewezen. Blokkeerfilters en hun schema’s bepalen het taggen niet.",
   "classifier.classification.pause": "Taggen pauzeren",
   "classifier.classification.resume": "Taggen hervatten",

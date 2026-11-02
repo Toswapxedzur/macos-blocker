@@ -797,6 +797,8 @@
   "classifier.bridge.deleteType": "Xóa nhóm",
   "classifier.classification.title": "Gắn thẻ nội dung",
   "classifier.classification.enabled": "Bật gắn thẻ",
+  "classifier.classification.concurrency": "Số yêu cầu gắn thẻ đồng thời tối đa",
+  "classifier.classification.concurrencyHint": "Mặc định là 16. Áp dụng cho mọi kết nối AI; giá trị cao hơn có thể làm tăng mức sử dụng API.",
   "classifier.classification.copy": "Gắn thẻ nội dung trên nền tảng được gán cho nhóm Bộ phân loại đang hoạt động. Bộ lọc chặn và lịch của chúng không điều khiển việc gắn thẻ.",
   "classifier.classification.pause": "Tạm dừng gắn thẻ",
   "classifier.classification.resume": "Tiếp tục gắn thẻ",

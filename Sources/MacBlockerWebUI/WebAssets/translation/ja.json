@@ -797,6 +797,8 @@
   "classifier.bridge.deleteType": "グループを削除",
   "classifier.classification.title": "コンテンツのタグ付け",
   "classifier.classification.enabled": "タグ付けを有効化",
+  "classifier.classification.concurrency": "同時に実行するタグ付けリクエストの最大数",
+  "classifier.classification.concurrencyHint": "初期値は16です。すべてのAI接続に適用され、値を増やすとAPI使用量が増える場合があります。",
   "classifier.classification.copy": "有効な分類器グループに割り当てたプラットフォームのコンテンツにタグを付けます。ブロックフィルターやスケジュールはタグ付けを制御しません。",
   "classifier.classification.pause": "タグ付けを一時停止",
   "classifier.classification.resume": "タグ付けを再開",

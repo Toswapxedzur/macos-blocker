@@ -797,6 +797,8 @@
   "classifier.bridge.deleteType": "Elimina gruppo",
   "classifier.classification.title": "Tag dei contenuti",
   "classifier.classification.enabled": "Attiva tag",
+  "classifier.classification.concurrency": "Numero massimo di richieste di tagging simultanee",
+  "classifier.classification.concurrencyHint": "Valore predefinito: 16. Vale per tutte le connessioni IA; valori più alti possono aumentare l’uso dell’API.",
   "classifier.classification.copy": "Assegna tag ai contenuti sulle piattaforme associate ai gruppi Classificatore attivi. I filtri e gli orari di blocco non controllano i tag.",
   "classifier.classification.pause": "Sospendi i tag",
   "classifier.classification.resume": "Riprendi i tag",

@@ -797,6 +797,8 @@
   "classifier.bridge.deleteType": "ਗਰੁੱਪ ਮਿਟਾਓ",
   "classifier.classification.title": "ਸਮੱਗਰੀ ਟੈਗ ਕਰਨਾ",
   "classifier.classification.enabled": "ਟੈਗਿੰਗ ਚਾਲੂ ਕਰੋ",
+  "classifier.classification.concurrency": "ਇੱਕੋ ਸਮੇਂ ਟੈਗਿੰਗ ਬੇਨਤੀਆਂ ਦੀ ਵੱਧ ਤੋਂ ਵੱਧ ਗਿਣਤੀ",
+  "classifier.classification.concurrencyHint": "ਮੂਲ ਮੁੱਲ 16 ਹੈ। ਸਾਰੇ AI ਕਨੈਕਸ਼ਨਾਂ ਉੱਤੇ ਲਾਗੂ; ਵੱਧ ਮੁੱਲ API ਵਰਤੋਂ ਵਧਾ ਸਕਦੇ ਹਨ।",
   "classifier.classification.copy": "ਸਰਗਰਮ ਵਰਗੀਕਰਤਾ ਗਰੁੱਪਾਂ ਨੂੰ ਦਿੱਤੇ ਪਲੇਟਫਾਰਮਾਂ ਉੱਤੇ ਸਮੱਗਰੀ ਟੈਗ ਕਰੋ। ਬਲਾਕਿੰਗ ਫਿਲਟਰ ਅਤੇ ਸਮਾਂ-ਸੂਚੀਆਂ ਟੈਗਿੰਗ ਨੂੰ ਕੰਟਰੋਲ ਨਹੀਂ ਕਰਦੀਆਂ।",
   "classifier.classification.pause": "ਟੈਗਿੰਗ ਰੋਕੋ",
   "classifier.classification.resume": "ਟੈਗਿੰਗ ਮੁੜ ਸ਼ੁਰੂ ਕਰੋ",

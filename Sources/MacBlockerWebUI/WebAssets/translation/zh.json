@@ -797,6 +797,8 @@
   "classifier.bridge.deleteType": "删除组",
   "classifier.classification.title": "内容标记",
   "classifier.classification.enabled": "启用标记",
+  "classifier.classification.concurrency": "同时进行的标记请求上限",
+  "classifier.classification.concurrencyHint": "默认值为 16。适用于所有 AI 连接；数值越高，API 用量可能越大。",
   "classifier.classification.copy": "为分配给活动分类器组的平台内容添加标签。屏蔽筛选器及其时间表不会控制标记。",
   "classifier.classification.pause": "暂停标记",
   "classifier.classification.resume": "继续标记",

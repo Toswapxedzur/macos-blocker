@@ -797,6 +797,8 @@
   "classifier.bridge.deleteType": "Excluir grupo",
   "classifier.classification.title": "Classificação de conteúdo",
   "classifier.classification.enabled": "Ativar classificação",
+  "classifier.classification.concurrency": "Máximo de pedidos de etiquetagem simultâneos",
+  "classifier.classification.concurrencyHint": "Padrão: 16. Aplica-se a todas as ligações de IA; valores mais altos podem aumentar o uso da API.",
   "classifier.classification.copy": "Classifique conteúdo nas plataformas atribuídas a grupos ativos do Classificador. Filtros e horários de bloqueio não controlam a classificação.",
   "classifier.classification.pause": "Pausar classificação",
   "classifier.classification.resume": "Retomar classificação",

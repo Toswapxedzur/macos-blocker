@@ -797,6 +797,8 @@
   "classifier.bridge.deleteType": "Удалить группу",
   "classifier.classification.title": "Тегирование контента",
   "classifier.classification.enabled": "Включить тегирование",
+  "classifier.classification.concurrency": "Максимум одновременных запросов на присвоение тегов",
+  "classifier.classification.concurrencyHint": "По умолчанию 16. Применяется ко всем подключениям ИИ; большие значения могут увеличить использование API.",
   "classifier.classification.copy": "Назначайте теги контенту на платформах активных групп классификатор. Фильтры блокировки и расписания не влияют на тегирование.",
   "classifier.classification.pause": "Приостановить тегирование",
   "classifier.classification.resume": "Возобновить тегирование",

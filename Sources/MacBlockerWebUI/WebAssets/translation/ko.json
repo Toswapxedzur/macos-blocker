@@ -797,6 +797,8 @@
   "classifier.bridge.deleteType": "그룹 삭제",
   "classifier.classification.title": "콘텐츠 태그 지정",
   "classifier.classification.enabled": "태그 지정 켜기",
+  "classifier.classification.concurrency": "동시 태그 지정 요청 최대 수",
+  "classifier.classification.concurrencyHint": "기본값은 16입니다. 모든 AI 연결에 적용되며 값이 높을수록 API 사용량이 늘 수 있습니다.",
   "classifier.classification.copy": "활성 분류기 그룹에 할당된 플랫폼의 콘텐츠에 태그를 지정합니다. 차단 필터와 일정은 태그 지정을 제어하지 않습니다.",
   "classifier.classification.pause": "태그 지정 일시 중지",
   "classifier.classification.resume": "태그 지정 다시 시작",

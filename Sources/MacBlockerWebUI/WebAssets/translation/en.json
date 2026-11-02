@@ -797,6 +797,8 @@
   "classifier.bridge.deleteType": "Delete group",
   "classifier.classification.title": "Content tagging",
   "classifier.classification.enabled": "Enable tagging",
+  "classifier.classification.concurrency": "Maximum simultaneous tagging requests",
+  "classifier.classification.concurrencyHint": "Default 16. Applies across AI connections; higher values may increase API usage.",
   "classifier.classification.copy": "Tag content on platforms assigned to active Content tagging groups. Blocking filters and their schedules do not control tagging.",
   "classifier.classification.pause": "Pause tagging",
   "classifier.classification.resume": "Resume tagging",

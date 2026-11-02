@@ -797,6 +797,8 @@
   "classifier.bridge.deleteType": "حذف المجموعة",
   "classifier.classification.title": "وضع وسوم على المحتوى",
   "classifier.classification.enabled": "تفعيل وضع الوسوم",
+  "classifier.classification.concurrency": "الحد الأقصى لطلبات الوسم المتزامنة",
+  "classifier.classification.concurrencyHint": "الافتراضي 16. ينطبق على جميع اتصالات الذكاء الاصطناعي؛ قد تزيد القيم الأعلى استخدام واجهة API.",
   "classifier.classification.copy": "ضع وسومًا على محتوى المنصات المعيّنة لمجموعات المصنّف النشطة. لا تتحكم عوامل الحظر وجداولها في وضع الوسوم.",
   "classifier.classification.pause": "إيقاف وضع الوسوم مؤقتًا",
   "classifier.classification.resume": "استئناف وضع الوسوم",

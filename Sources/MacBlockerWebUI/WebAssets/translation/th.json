@@ -797,6 +797,8 @@
   "classifier.bridge.deleteType": "ลบกลุ่ม",
   "classifier.classification.title": "การติดแท็กเนื้อหา",
   "classifier.classification.enabled": "เปิดใช้การติดแท็ก",
+  "classifier.classification.concurrency": "จำนวนคำขอติดแท็กพร้อมกันสูงสุด",
+  "classifier.classification.concurrencyHint": "ค่าเริ่มต้นคือ 16 ใช้กับการเชื่อมต่อ AI ทั้งหมด; ค่าที่สูงขึ้นอาจเพิ่มการใช้ API",
   "classifier.classification.copy": "ติดแท็กเนื้อหาบนแพลตฟอร์มที่กำหนดให้กลุ่ม ตัวจัดประเภท ที่ใช้งานอยู่ ตัวกรองบล็อกและกำหนดเวลาไม่มีผลต่อการติดแท็ก",
   "classifier.classification.pause": "พักการติดแท็ก",
   "classifier.classification.resume": "เริ่มติดแท็กอีกครั้ง",
