@@ -70,6 +70,13 @@ final class BrowserApplicationIdentityTests: XCTestCase {
     }
 
     #if os(macOS)
+    func testBrowserUpdateBundleIsConsideredAnApplication() {
+        XCTAssertTrue(NativeBrowserParentIdentity.isApplicationBundleCandidate(URL(fileURLWithPath: "/Applications/Google Chrome.app")))
+        XCTAssertTrue(NativeBrowserParentIdentity.isApplicationBundleCandidate(URL(fileURLWithPath: "/Applications/Google Chrome.app.bundle")))
+        XCTAssertFalse(NativeBrowserParentIdentity.isApplicationBundleCandidate(URL(fileURLWithPath: "/Applications/Google Chrome Framework.framework")))
+        XCTAssertFalse(NativeBrowserParentIdentity.isApplicationBundleCandidate(URL(fileURLWithPath: "/Applications/Google Chrome Helper.app.backup")))
+    }
+
     private func evidence(parentID: String = "com.google.Chrome.helper", appID: String = "com.google.Chrome", bundleID: String = "com.google.Chrome", parentUID: uid_t = 503, parentBirth: UInt64 = 10, parentPID: pid_t = 100, path: String = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome", hash: Data = Data([1])) -> BrowserParentEvidence {
         BrowserParentEvidence(
             host: BrowserParentProcess(pid: 101, parentPID: 100, uid: 503, seconds: 20, microseconds: 0, path: "/owned/NativeHost"),

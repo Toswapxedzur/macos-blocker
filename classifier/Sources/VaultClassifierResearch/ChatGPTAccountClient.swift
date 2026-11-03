@@ -223,8 +223,12 @@ public actor ChatGPTAccountClient: CloudClassificationEngineResolving {
         generation = UUID(); credentialRevision = UUID(); signInGeneration = UUID(); signInTask?.cancel(); signInTask = nil
         activeRequests.values.forEach { $0.cancel() }
         retryWaits.values.forEach { $0.cancel() }
-        try store.delete("account.json"); try store.delete("registration.json")
-        credential = nil; registration = nil; models = []; issue = nil; failureHold = false; onChange()
+        // The dynamic OAuth client ID is public registration metadata, not a
+        // credential. Reuse it after disconnect so signing back in to the same
+        // verified subject preserves the account ID saved by classifier groups.
+        // Tokens are still removed, and a different subject gets a different ID.
+        try store.delete("account.json")
+        credential = nil; models = []; issue = nil; failureHold = false; onChange()
     }
 
     public func cancelSignIn() {

@@ -82,6 +82,11 @@ public final class NativeBrowserParentIdentity {
         identifier.hasSuffix(".helper") || identifier == "Chromium Helper"
     }
 
+    static func isApplicationBundleCandidate(_ url: URL) -> Bool {
+        let name = url.lastPathComponent.lowercased()
+        return name.hasSuffix(".app") || name.hasSuffix(".app.bundle")
+    }
+
     private static func process(_ pid: pid_t) -> BrowserParentProcess? {
         func bsd() -> proc_bsdinfo? {
             var value = proc_bsdinfo()
@@ -136,7 +141,7 @@ public final class NativeBrowserParentIdentity {
         var cursor = URL(fileURLWithPath: parent.path).deletingLastPathComponent()
         var application: (URL, String, Data, String)?
         while cursor.path != "/" {
-            if cursor.pathExtension == "app", let code = staticCode(cursor, environment: environment),
+            if isApplicationBundleCandidate(cursor), let code = staticCode(cursor, environment: environment),
                let info = signingInformation(code),
                let identifier = info[kSecCodeInfoIdentifier as String] as? String,
                let hash = info[kSecCodeInfoUnique as String] as? Data,

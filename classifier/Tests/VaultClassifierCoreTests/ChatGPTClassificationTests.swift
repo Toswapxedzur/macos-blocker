@@ -379,6 +379,28 @@ final class ChatGPTClassificationTests: XCTestCase {
         await client.shutdown()
     }
 
+    func testDisconnectRetainsRegistrationButRemovesCredentials() async throws {
+        let directory = try root(); defer { try? FileManager.default.removeItem(at: directory) }
+        try credentialFixture(directory)
+        let registration = "oaiapp_test_fixture"
+        try JSONEncoder().encode(registration).write(to: directory.appendingPathComponent("registration.json"))
+        let client = try ChatGPTAccountClient(directory: directory)
+        let originalAccountID = await client.status().accountID
+        try await client.disconnect()
+        XCTAssertFalse(FileManager.default.fileExists(atPath: directory.appendingPathComponent("account.json").path))
+        XCTAssertEqual(try JSONDecoder().decode(String.self, from: Data(contentsOf: directory.appendingPathComponent("registration.json"))), registration)
+        let signInURL = try await client.beginSignIn()
+        let query = URLComponents(url: signInURL, resolvingAgainstBaseURL: false)?.queryItems
+        XCTAssertEqual(query?.first(where: { $0.name == "client_id" })?.value, registration)
+        await client.cancelSignIn()
+        await client.shutdown()
+        try credentialFixture(directory)
+        let reconnected = try ChatGPTAccountClient(directory: directory)
+        let reconnectedAccountID = await reconnected.status().accountID
+        XCTAssertEqual(reconnectedAccountID, originalAccountID)
+        await reconnected.shutdown()
+    }
+
     func testShutdownCancelsAnActiveCloudRequestPromptly() async throws {
         let root = try root(); defer { try? FileManager.default.removeItem(at: root) }
         try credentialFixture(root)
