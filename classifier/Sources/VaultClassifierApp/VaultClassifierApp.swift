@@ -187,11 +187,8 @@ final class VaultClassifierViewModel: ObservableObject {
     static let creatorEchoTestMode = VaultRuntimeEnvironment.current == .development
         && ProcessInfo.processInfo.environment["ADAMANCIA_VAULT_TAG_TEST"] == "creator-echo"
 
-    /// `acceptedTags` silently drops any tag whose colors fail the OKLab
-    /// theme-pair validation, so hardcoded hexes would render as a "None" pill.
-    /// Search neutral greys with the real validator instead: near-achromatic
-    /// pairs skip the hue check, so a grey pair inside the lightness-inversion
-    /// window is guaranteed to survive `acceptedTags`. Computed once, lazily.
+    /// `acceptedTags` drops pairs without readable light and dark variants.
+    /// Find a neutral test pair with the same validator. Computed once, lazily.
     static let creatorEchoColors: (light: String, dark: String) = {
         for dark in stride(from: 20, through: 140, by: 2) {
             let darkHex = String(format: "#%02X%02X%02X", dark, dark, dark)

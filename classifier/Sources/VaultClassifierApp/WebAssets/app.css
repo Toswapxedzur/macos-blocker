@@ -707,7 +707,7 @@ textarea:focus {
 .empty { padding: 14px; border-radius: 12px; color: var(--muted); background: rgba(238, 242, 255, 0.62); }
 .spacer { flex: 1; }
 
-/* Persisted hierarchy colors are the single visual identity for every tag. */
+/* Persisted hue-wheel colors are the single visual identity for every tag. */
 .tag-pill {
   box-sizing: border-box;
   display: inline-flex;

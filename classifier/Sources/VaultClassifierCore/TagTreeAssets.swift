@@ -31,8 +31,8 @@ public struct TagTreeNode: Codable, Equatable, Sendable, Identifiable {
     public var description: String?
     public var parentID: String?
     public var isRetired: Bool
-    /// Algorithmically paired display colors. Both are persisted after their
-    /// first assignment so later tree edits never recolor an existing tag.
+    /// Algorithmically paired display colors. A structural edit can recolor
+    /// the tree so every tag keeps an equal interval on the hue wheel.
     public var lightColorHex: String?
     public var darkColorHex: String?
     /// A node's local canvas coordinates are presentation data, separate from

@@ -180,10 +180,6 @@ extension VaultClassifierViewModel {
                 throw WebBridgeInputError.invalidChoice("tag parent")
             }
             catalog.trees[treeIndex].nodes[nodeIndex].parentID = parentID
-            TagColorAssignment.invalidateSubtree(
-                rootID: nodeID,
-                in: &catalog.trees[treeIndex]
-            )
             advanceTreeRevision(in: &catalog, treeIndex: treeIndex)
             try coordinator?.updateWorkspaceCatalog(catalog)
             refreshLocalState()
@@ -199,10 +195,6 @@ extension VaultClassifierViewModel {
             }
             guard catalog.trees[treeIndex].nodes[nodeIndex].parentID != nil else { return }
             catalog.trees[treeIndex].nodes[nodeIndex].parentID = nil
-            TagColorAssignment.invalidateSubtree(
-                rootID: nodeID,
-                in: &catalog.trees[treeIndex]
-            )
             advanceTreeRevision(in: &catalog, treeIndex: treeIndex)
             try coordinator?.updateWorkspaceCatalog(catalog)
             refreshLocalState()
@@ -217,18 +209,9 @@ extension VaultClassifierViewModel {
                 throw WebBridgeInputError.invalidChoice("tag")
             }
             let replacementParentID = catalog.trees[treeIndex].nodes[nodeIndex].parentID
-            let reparentedNodeIDs = catalog.trees[treeIndex].nodes.compactMap { node in
-                node.parentID == nodeID ? node.id : nil
-            }
             catalog.trees[treeIndex].nodes.remove(at: nodeIndex)
             for index in catalog.trees[treeIndex].nodes.indices where catalog.trees[treeIndex].nodes[index].parentID == nodeID {
                 catalog.trees[treeIndex].nodes[index].parentID = replacementParentID
-            }
-            for reparentedNodeID in reparentedNodeIDs {
-                TagColorAssignment.invalidateSubtree(
-                    rootID: reparentedNodeID,
-                    in: &catalog.trees[treeIndex]
-                )
             }
             advanceTreeRevision(in: &catalog, treeIndex: treeIndex)
             try coordinator?.updateWorkspaceCatalog(catalog)
