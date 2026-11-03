@@ -2,6 +2,10 @@
 
 > 🤖 **AI protocol:** Read `../package-info.md` (group), the group `AGENTS.md`, and `../misc/project-memory/PROJECT-MEMORY.md` before working here. Update this file when the folder changes. Never delete without owner consent; keep secrets out of git.
 
+- **Icon palette:** `Assets/Branding/mac-vault.svg` and its rendered master are
+  the bright app icon; `mac-vault-dark.svg` is retained for the website. Native
+  app packaging uses the bright master. See `Assets/Branding/package-info.md`.
+
 - **Independent Classifier dials (owner 2026-10-01):** each group owns its model tier, strictness and house rules. Core tier/download cards and strictness choices stay visible; More contains optional tag-count bounds; global dials and inheritance are retired. Existing effective values reconcile once into concrete group settings.
 
 - **Growing lists (owner 2026-10-01):** bound accumulating collections inside scroll boxes, including Knowledge, API keys, editor chips and Activity members. `docs/LIST-CONTAINMENT.md` records the full UI inventory and mini1 regression fixtures. Short lists fit their contents; item counts are not truncated.
