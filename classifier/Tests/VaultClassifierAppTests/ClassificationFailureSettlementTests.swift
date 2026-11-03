@@ -92,6 +92,10 @@ final class ClassificationFailureSettlementTests: XCTestCase {
         XCTAssertTrue(resolved.isEmpty)
         assertFailed(model, resolved[failed.entryID], entryID: failed.entryID)
         assertFailed(model, resolved[good.entryID], entryID: good.entryID)
+        LocalStateFile.flushAllPendingWrites()
+        let reopened = try VaultClassifierViewModel(headlessVaultDirectory: directory)
+        XCTAssertEqual(reopened.failedCloudClassifications[VaultClassifierViewModel.inFlightKey("youtube", failed.entryID)]?.code,
+                       .taggingFailed, "failed status survives an ordinary restart")
         let batches = await engine.batchSizes, singles = await engine.singleTitles
         XCTAssertEqual(batches, [2]); XCTAssertTrue(singles.isEmpty, "failed cloud batches require Retry")
         try assertNoFailedDecision(model)
@@ -107,6 +111,9 @@ final class ClassificationFailureSettlementTests: XCTestCase {
         let next = await model.resolveClassificationChunk(platformID: "youtube", [failed])
         XCTAssertEqual(next[failed.entryID]?.tags.map(\.id), ["games"])
         XCTAssertNil(model.failedCloudClassifications[VaultClassifierViewModel.inFlightKey("youtube", failed.entryID)])
+        LocalStateFile.flushAllPendingWrites()
+        let reopened = try VaultClassifierViewModel(headlessVaultDirectory: directory)
+        XCTAssertNil(reopened.failedCloudClassifications[VaultClassifierViewModel.inFlightKey("youtube", failed.entryID)])
         XCTAssertEqual(next[failed.entryID], model.coordinator?.cachedVideoTags(platformID: "youtube", entryID: failed.entryID))
         XCTAssertEqual(model.coordinator?.snapshot().workspaceCatalog.videoClassifications.count, 1)
     }

@@ -137,7 +137,7 @@ extension VaultClassifierViewModel {
                 } else {
                     latestCloudClassificationInputs[key] = nil
                     if let projection {
-                        failedCloudClassifications.removeValue(forKey: key)
+                        if failedCloudClassifications.removeValue(forKey: key) != nil { persistFailedClassifications() }
                         broadcastResolvedVideoTags(platformID: platformID, entryID: item.entryID, projection: projection)
                     } else if let failure = failedCloudClassifications[key] {
                         broadcastFailedVideoTags(platformID: platformID, entryID: item.entryID, code: failure.code)
@@ -172,14 +172,19 @@ extension VaultClassifierViewModel {
                         entryID: item.entryID, creatorID: item.creatorID, entryType: item.entryType)) {
                     projections[item.entryID] = saved
                 } else {
-                    failedCloudClassifications[Self.inFlightKey(platformID, item.entryID)] = (platformID, item, code)
+                    failedCloudClassifications[Self.inFlightKey(platformID, item.entryID)] = .init(platform: platformID, item: item, code: code)
                 }
             }
+            persistFailedClassifications()
             onWebStateChange?()
         }
         guard !isShuttingDown, !Task.isCancelled else { return [:] }
         guard !isShuttingDown, !Task.isCancelled, coordinator.enabledClassificationPlatformIDs().contains(platformID) else { return [:] }
-        for entryID in projections.keys { failedCloudClassifications.removeValue(forKey: Self.inFlightKey(platformID, entryID)) }
+        var removedFailure = false
+        for entryID in projections.keys {
+            removedFailure = failedCloudClassifications.removeValue(forKey: Self.inFlightKey(platformID, entryID)) != nil || removedFailure
+        }
+        if removedFailure { persistFailedClassifications() }
         return projections
     }
 
@@ -397,7 +402,9 @@ extension VaultClassifierViewModel {
                     entryID: correction.entryID,
                     correctTagIDs: correction.correctTagIDs
                 )
-                failedCloudClassifications.removeValue(forKey: Self.inFlightKey(correction.platformID, correction.entryID))
+                if failedCloudClassifications.removeValue(forKey: Self.inFlightKey(correction.platformID, correction.entryID)) != nil {
+                    persistFailedClassifications()
+                }
                 devLog("submit-correction", ["platform": correction.platformID, "entry": correction.entryID, "type": correction.typeID, "tags": "\(correction.correctTagIDs.count)"])
                 refreshLocalState()
                 onWebStateChange?()

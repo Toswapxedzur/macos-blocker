@@ -147,6 +147,10 @@ extension VaultClassifierViewModel {
         }.flatMap(\.applicablePlatformIDs))
         let matching = failedCloudClassifications.filter { matchingPlatforms.contains($0.value.platform) }
         for key in matching.keys { failedCloudClassifications.removeValue(forKey: key) }
+        if !matching.isEmpty && !persistFailedClassifications() {
+            for (key, value) in matching { failedCloudClassifications[key] = value }
+            return
+        }
         issue = nil
         // Also re-observe browser-side transport failures, which never reached
         // the native failure queue. This runs only after a user action.

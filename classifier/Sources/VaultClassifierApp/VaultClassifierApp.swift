@@ -9,6 +9,64 @@ import VaultClassifierCore
 import VaultClassifierResearch
 import VaultClassifierBridge
 
+struct FailedCloudClassification: Codable {
+    var platform: String
+    var item: NativeVideoTagsBatchItem
+    var code: NativeVideoTagsFailureCode
+}
+
+/// Keeps failed decisions distinct from a valid empty model answer after an
+/// ordinary restart. The file contains bounded public-entry evidence, never
+/// credentials or provider response bodies.
+@MainActor
+final class ClassificationFailureStore {
+    private struct Snapshot: Codable {
+        var version: Int
+        var failures: [FailedCloudClassification]
+    }
+    private let fileURL: URL
+    private let schema = StorageSchemaPolicy(format: "classifier.tagging-failures")
+    private let maximumBytes = 256 * 1024 * 1024
+
+    init(fileURL: URL) { self.fileURL = fileURL }
+
+    func load(coordinator: LocalClassifierCoordinator) -> [String: FailedCloudClassification] {
+        guard let size = (try? FileManager.default.attributesOfItem(atPath: fileURL.path)[.size]) as? NSNumber,
+              size.intValue <= maximumBytes,
+              let data = try? Data(contentsOf: fileURL),
+              let payload = try? schema.payload(from: data),
+              let snapshot = try? JSONDecoder().decode(Snapshot.self, from: payload),
+              snapshot.version == 1 else { return [:] }
+        var result: [String: FailedCloudClassification] = [:]
+        for failure in snapshot.failures {
+            let request = NativeVideoTagsBatchRequest(platformID: failure.platform, items: [failure.item])
+            guard (try? request.validate()) != nil else { continue }
+            guard coordinator.hasClassifierTypes(platformID: failure.platform) else { continue }
+            let item = failure.item
+            let input = VideoClassificationPipeline.Input(title: item.title, summary: item.summary,
+                text: item.text, entryID: item.entryID, creatorID: item.creatorID, entryType: item.entryType)
+            guard coordinator.cachedVideoTags(platformID: failure.platform, entryID: item.entryID,
+                input: input) == nil else { continue }
+            result[VaultClassifierViewModel.inFlightKey(failure.platform, failure.item.entryID)] = failure
+        }
+        if result.count != snapshot.failures.count { try? save(result) }
+        return result
+    }
+
+    func save(_ failures: [String: FailedCloudClassification]) throws {
+        let snapshot = Snapshot(version: 1, failures: failures.values.sorted {
+            VaultClassifierViewModel.inFlightKey($0.platform, $0.item.entryID)
+                < VaultClassifierViewModel.inFlightKey($1.platform, $1.item.entryID)
+        })
+        let data = try schema.wrap(JSONEncoder().encode(snapshot))
+        guard data.count <= maximumBytes else { throw StorageSchemaError.unsupported("tagging failure file is too large") }
+        try VaultPrivateFile.createDirectory(at: fileURL.deletingLastPathComponent())
+        try schema.checkDestination(fileURL)
+        try data.write(to: fileURL, options: .atomic)
+        try VaultPrivateFile.restrict(fileURL)
+    }
+}
+
 @MainActor
 final class VaultClassifierViewModel: ObservableObject {
     /// A group's concrete dial positions and house rules from the web form.
@@ -40,7 +98,8 @@ final class VaultClassifierViewModel: ObservableObject {
     var apiKeyClassificationClient: APIKeyClassificationClient?
     var apiKeyClassificationStatus: APIKeyClassificationStatus?
     @Published var chatGPTStatus = ChatGPTAccountStatus()
-    var failedCloudClassifications: [String: (platform: String, item: NativeVideoTagsBatchItem, code: NativeVideoTagsFailureCode)] = [:]
+    var failedCloudClassifications: [String: FailedCloudClassification] = [:]
+    var classificationFailureStore: ClassificationFailureStore?
     private var shutdownTask: Task<Void, Never>?
 
     func shutdown() async {
@@ -93,6 +152,9 @@ final class VaultClassifierViewModel: ObservableObject {
             let providerModelCatalogStore = ProviderModelCatalogStore(fileURL: vaultDirectory.appendingPathComponent("provider-model-catalogs.json"))
             self.providerModelCatalogStore = providerModelCatalogStore
             self.providerModelCatalogs = providerModelCatalogStore.load(allowedProfileIDs: llmProviderProfileIDs())
+            let failureStore = ClassificationFailureStore(fileURL: vaultDirectory.appendingPathComponent("classification-failures.json"))
+            self.classificationFailureStore = failureStore
+            self.failedCloudClassifications = failureStore.load(coordinator: coordinator)
             loadBackupConfiguration(from: coordinator.snapshot().backupConfiguration)
             self.hasBackupOwnerCode = LocalBackupOwnerCodeStore.hasOwnerCode
             let sharedHubClient = SharedHubClient()
@@ -139,7 +201,16 @@ final class VaultClassifierViewModel: ObservableObject {
         let providerModelCatalogStore = ProviderModelCatalogStore(fileURL: vaultDirectory.appendingPathComponent("provider-model-catalogs.json"))
         self.providerModelCatalogStore = providerModelCatalogStore
         self.providerModelCatalogs = providerModelCatalogStore.load(allowedProfileIDs: llmProviderProfileIDs())
+        let failureStore = ClassificationFailureStore(fileURL: vaultDirectory.appendingPathComponent("classification-failures.json"))
+        self.classificationFailureStore = failureStore
+        self.failedCloudClassifications = failureStore.load(coordinator: coordinator)
         loadBackupConfiguration(from: coordinator.snapshot().backupConfiguration)
+    }
+
+    @discardableResult
+    func persistFailedClassifications() -> Bool {
+        do { try classificationFailureStore?.save(failedCloudClassifications); return true }
+        catch { issue = error.localizedDescription; onWebStateChange?(); return false }
     }
 
     // Dev-only instrumentation, routed into the unified VaultDevLog file.
