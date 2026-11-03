@@ -76,7 +76,10 @@ extension VaultClassifierViewModel {
     func refreshChatGPTModels() {
         guard let client = chatGPTClient else { return }
         Task { [weak self] in
-            do { try await client.refreshModels() }
+            do {
+                try await client.refreshModels()
+                await self?.retryFailedClassifications(chatGPTOnly: true)
+            }
             catch { self?.issue = error.localizedDescription }
             await self?.refreshChatGPTStatus()
         }
@@ -126,17 +129,34 @@ extension VaultClassifierViewModel {
 
     func retryChatGPTClassifications() {
         Task { [weak self] in
-            await self?.chatGPTClient?.retryFailedRequests()
-            await self?.apiKeyClassificationClient?.retryFailedRequests()
-            guard let self, !self.isShuttingDown else { return }
-            let failed = self.failedCloudClassifications
-            self.failedCloudClassifications.removeAll(); self.issue = nil
-            for (platform, items) in Dictionary(grouping: failed.values, by: { $0.platform }) {
-                for row in items { self.inFlightVideoClassifications.insert(Self.inFlightKey(platform, row.item.entryID)) }
-                self.classificationCoalescer.enqueue(platformID: platform, items: items.map(\.item))
-            }
-            await self.refreshChatGPTStatus()
+            await self?.retryFailedClassifications()
         }
+    }
+
+    /// Only a deliberate model-refresh (or the explicit Retry action) releases
+    /// failed entries. A background account/status refresh never invokes this.
+    func retryFailedClassifications(chatGPTOnly: Bool = false, profileID: String? = nil) async {
+        guard !isShuttingDown, let coordinator else { return }
+        if profileID == nil { await chatGPTClient?.retryFailedRequests() }
+        if !chatGPTOnly { await apiKeyClassificationClient?.retryFailedRequests(profileID: profileID) }
+        let types = coordinator.snapshot().workspaceCatalog.classifierTypes
+        let matchingPlatforms = Set(types.filter { type in
+            if chatGPTOnly { return type.classificationProvider == .chatGPT }
+            if let profileID { return type.classificationProvider == .apiKey && type.apiKey.profileID == profileID }
+            return true
+        }.flatMap(\.applicablePlatformIDs))
+        let matching = failedCloudClassifications.filter { matchingPlatforms.contains($0.value.platform) }
+        for key in matching.keys { failedCloudClassifications.removeValue(forKey: key) }
+        issue = nil
+        // Also re-observe browser-side transport failures, which never reached
+        // the native failure queue. This runs only after a user action.
+        sharedHubClient?.broadcast(operation: SharedBrowserBridgeOperation.classifierStateUpdatedBroadcast,
+            body: [:] as [String: String])
+        for (platform, items) in Dictionary(grouping: matching.values, by: { $0.platform }) {
+            broadcastRetryingVideoTags(platformID: platform, entryIDs: items.map { $0.item.entryID })
+            queueVideoClassification(platformID: platform, items: items.map(\.item))
+        }
+        await refreshChatGPTStatus()
     }
 
 }

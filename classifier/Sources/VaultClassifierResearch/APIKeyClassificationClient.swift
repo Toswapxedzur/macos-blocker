@@ -41,7 +41,9 @@ public actor APIKeyClassificationClient: CloudClassificationEngineResolving {
     func classificationConcurrencyLimit() -> Int { maximumConcurrentClassifications }
     public static func supports(_ type: APIKeyProviderType) -> Bool { [.openAI, .gemini, .xAI].contains(type) }
     public func status() -> APIKeyClassificationStatus { resetDay(); return .init(failedProfileIDs: failed, requestsToday: requests) }
-    public func retryFailedRequests() { failed.removeAll() }
+    public func retryFailedRequests(profileID: String? = nil) {
+        if let profileID { failed.remove(profileID) } else { failed.removeAll() }
+    }
     public func shutdown() async { stopped = true; let generations = Array(generationActive.values); generations.forEach { $0.cancel() }; for job in generations { _ = try? await job.value }; let jobs = Array(active.values); jobs.forEach { $0.cancel() }; for job in jobs { _ = try? await job.value } }
     public func resolveCloudEngine(for type: ClassifierTypeAsset) async throws -> any ClassificationEngine {
         guard type.classificationProvider == .apiKey else { throw CloudClassificationError.notConfigured }

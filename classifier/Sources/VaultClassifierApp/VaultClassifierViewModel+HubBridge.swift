@@ -4,6 +4,7 @@ import AppKit
 import Foundation
 import VaultClassifierCore
 import VaultClassifierBridge
+import VaultClassifierResearch
 
 // The local-hub request path: decoding browser operations, the per-video classification queue and in-flight de-duplication, resolved-tag broadcasts and source-icon caching.
 // Split out of VaultClassifierApp.swift (CLASSIFIER-INDEPENDENCE §7, Phase 5):
@@ -58,6 +59,40 @@ extension VaultClassifierViewModel {
         "\(platformID)\u{1F}\(entryID)"
     }
 
+    static func taggingFailureCode(_ error: Error) -> NativeVideoTagsFailureCode {
+        if let failure = error as? CloudClassificationError {
+            switch failure {
+            case .usageLimit: return .limitReached
+            case .signInRequired: return .signInRequired
+            case .notConfigured, .searchUnavailable, .reasoningUnavailable: return .modelUnavailable
+            case .invalidOutput: return .invalidResponse
+            }
+        }
+        if let failure = error as? ChatGPTPlanError {
+            switch failure {
+            case .usageUnavailable: return .limitReached
+            case .invalidAuthorization, .authorizationDeclined: return .signInRequired
+            case .accountUnavailable: return .accessDenied
+            case .invalidResponse, .incompleteStream, .responseTooLarge: return .invalidResponse
+            case .transientResponse, .failedResponse: return .serviceUnavailable
+            case .invalidRequest, .rejectedRequest: return .requestRejected
+            }
+        }
+        if let providerFailure = error as? ProviderTestHTTPError,
+           case let .status(status) = providerFailure {
+            switch status {
+            case 401, 402, 403: return .accessDenied
+            case 429: return .rateLimited
+            case 408: return .connectionIssue
+            case 400..<500: return .requestRejected
+            case 500..<600: return .serviceUnavailable
+            default: return .taggingFailed
+            }
+        }
+        if error is URLError { return .connectionIssue }
+        return .taggingFailed
+    }
+
     func queueVideoClassification(platformID: String, items: [NativeVideoTagsBatchItem]) {
         guard !isShuttingDown else { return }
         if coordinator?.snapshot().workspaceCatalog.classifierTypes.contains(where: { $0.applicablePlatformIDs.contains(platformID) }) == true {
@@ -102,7 +137,10 @@ extension VaultClassifierViewModel {
                 } else {
                     latestCloudClassificationInputs[key] = nil
                     if let projection {
+                        failedCloudClassifications.removeValue(forKey: key)
                         broadcastResolvedVideoTags(platformID: platformID, entryID: item.entryID, projection: projection)
+                    } else if let failure = failedCloudClassifications[key] {
+                        broadcastFailedVideoTags(platformID: platformID, entryID: item.entryID, code: failure.code)
                     }
                 }
                 let currentLimit = coordinator?.snapshot().settings.maximumConcurrentTaggingRequests ?? limit
@@ -122,31 +160,26 @@ extension VaultClassifierViewModel {
                 entryType: $0.entryType)
         }
         var projections: [String: VideoTagsProjection]
-        let cloud = coordinator.snapshot().workspaceCatalog.classifierTypes.contains { $0.applicablePlatformIDs.contains(platformID) }
         do { projections = try await coordinator.classifyVideos(platformID: platformID, items: inputs) }
         catch {
             if error is CancellationError || isShuttingDown || Task.isCancelled { return [:] }
             projections = [:]
-            if cloud {
-                issue = error.localizedDescription
-                for item in chunk {
-                    if failedCloudClassifications.count < 1024 {
-                        failedCloudClassifications[Self.inFlightKey(platformID, item.entryID)] = (platformID, item)
-                    }
+            issue = error.localizedDescription
+            let code = Self.taggingFailureCode(error)
+            for item in chunk {
+                if let saved = coordinator.cachedVideoTags(platformID: platformID, entryID: item.entryID,
+                    input: .init(title: item.title, summary: item.summary, text: item.text,
+                        entryID: item.entryID, creatorID: item.creatorID, entryType: item.entryType)) {
+                    projections[item.entryID] = saved
+                } else {
+                    failedCloudClassifications[Self.inFlightKey(platformID, item.entryID)] = (platformID, item, code)
                 }
-                onWebStateChange?()
             }
+            onWebStateChange?()
         }
         guard !isShuttingDown, !Task.isCancelled else { return [:] }
         guard !isShuttingDown, !Task.isCancelled, coordinator.enabledClassificationPlatformIDs().contains(platformID) else { return [:] }
-        // A terminal failure must clear the browser's pending state as Untagged.
-        // This is only a delivery result: do not save a fabricated model decision,
-        // so later requests can retry and replace it with real tags.
-        for item in chunk where projections[item.entryID] == nil {
-            projections[item.entryID] = coordinator.cachedVideoTags(platformID: platformID, entryID: item.entryID,
-                input: .init(title: item.title, summary: item.summary, text: item.text, entryID: item.entryID, creatorID: item.creatorID))
-                ?? VideoTagsProjection(tags: [], predicted: false)
-        }
+        for entryID in projections.keys { failedCloudClassifications.removeValue(forKey: Self.inFlightKey(platformID, entryID)) }
         return projections
     }
 
@@ -162,6 +195,29 @@ extension VaultClassifierViewModel {
               let object = try? JSONSerialization.jsonObject(with: encoded) as? [String: Any] else { return }
         sharedHubClient?.broadcast(operation: SharedBrowserBridgeOperation.videoTagsUpdatedBroadcast, body: object)
         devLog("video-tags-updated", ["platform": platformID, "entry": entryID, "tags": "\(projection.tags.count)"])
+    }
+
+    func broadcastFailedVideoTags(platformID: String, entryID: String, code: NativeVideoTagsFailureCode) {
+        guard !isShuttingDown, coordinator?.enabledClassificationPlatformIDs().contains(platformID) == true else { return }
+        let broadcast = NativeVideoTagsBroadcast(platformID: platformID, items: [NativeVideoTagsBatchResponseItem(
+            entryID: entryID, tags: [], failureCode: code)])
+        guard let encoded = try? JSONEncoder().encode(broadcast),
+              let object = try? JSONSerialization.jsonObject(with: encoded) as? [String: Any] else { return }
+        sharedHubClient?.broadcast(operation: SharedBrowserBridgeOperation.videoTagsUpdatedBroadcast, body: object)
+        devLog("video-tags-failed", ["platform": platformID, "entry": entryID, "reason": code.rawValue])
+    }
+
+    func broadcastRetryingVideoTags(platformID: String, entryIDs: [String]) {
+        guard !isShuttingDown, coordinator?.enabledClassificationPlatformIDs().contains(platformID) == true else { return }
+        for start in stride(from: 0, to: entryIDs.count, by: 32) {
+            let broadcast = NativeVideoTagsBroadcast(platformID: platformID,
+                items: entryIDs[start..<min(start + 32, entryIDs.count)].map {
+                    NativeVideoTagsBatchResponseItem(entryID: $0, tags: [], pending: true)
+                })
+            guard let encoded = try? JSONEncoder().encode(broadcast),
+                  let object = try? JSONSerialization.jsonObject(with: encoded) as? [String: Any] else { continue }
+            sharedHubClient?.broadcast(operation: SharedBrowserBridgeOperation.videoTagsUpdatedBroadcast, body: object)
+        }
     }
 
     static func creatorEchoTag(creatorID: String) -> NativeVideoTag {
@@ -248,6 +304,10 @@ extension VaultClassifierViewModel {
                         entryID: videoTags.entryID, tags: saved.map { Self.nativeVideoTags(from: $0) } ?? [],
                         predicted: saved?.predicted ?? false, pending: false, skipped: saved == nil))
                 }
+                if let failure = failedCloudClassifications[Self.inFlightKey(videoTags.platformID, videoTags.entryID)] {
+                    return try sharedHubReply(NativeVideoTagsResponse(platformID: videoTags.platformID,
+                        entryID: videoTags.entryID, tags: [], failureCode: failure.code))
+                }
                 if let cached = coordinator.cachedVideoTags(platformID: videoTags.platformID, entryID: videoTags.entryID,
                     input: .init(title: videoTags.title, summary: videoTags.summary, text: videoTags.text, entryID: videoTags.entryID, creatorID: videoTags.creatorID, entryType: videoTags.entryType)) {
                     devLog("video-tags", ["platform": videoTags.platformID, "entry": videoTags.entryID, "outcome": "cached", "tags": "\(cached.tags.count)"])
@@ -301,6 +361,9 @@ extension VaultClassifierViewModel {
                         responses.append(NativeVideoTagsBatchResponseItem(entryID: item.entryID,
                             tags: saved.map { Self.nativeVideoTags(from: $0) } ?? [], predicted: saved?.predicted ?? false,
                             pending: false, skipped: saved == nil))
+                    } else if let failure = failedCloudClassifications[Self.inFlightKey(batch.platformID, item.entryID)] {
+                        responses.append(NativeVideoTagsBatchResponseItem(entryID: item.entryID,
+                            tags: [], failureCode: failure.code))
                     } else if let cached = coordinator.cachedVideoTags(platformID: batch.platformID, entryID: item.entryID,
                         input: .init(title: item.title, summary: item.summary, text: item.text, entryID: item.entryID, creatorID: item.creatorID, entryType: item.entryType)) {
                         cachedCount += 1
@@ -334,6 +397,7 @@ extension VaultClassifierViewModel {
                     entryID: correction.entryID,
                     correctTagIDs: correction.correctTagIDs
                 )
+                failedCloudClassifications.removeValue(forKey: Self.inFlightKey(correction.platformID, correction.entryID))
                 devLog("submit-correction", ["platform": correction.platformID, "entry": correction.entryID, "type": correction.typeID, "tags": "\(correction.correctTagIDs.count)"])
                 refreshLocalState()
                 onWebStateChange?()

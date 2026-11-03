@@ -191,7 +191,7 @@ extension APIKeyClassificationTests {
     func testParallelAPIBatchesKeepOrderAndGlobalConcurrencyAcrossCallers() async throws {
         let transport = APIBatchTransport()
         let profile = APIKeyProviderProfile(id: "p", type: .openAI, credential: "fixture-not-real")
-        let client = APIKeyClassificationClient(profiles: { _ in profile }, http: transport)
+        let client = APIKeyClassificationClient(profiles: { _ in profile }, maximumConcurrentClassifications: 2, http: transport)
         let type = ClassifierTypeAsset(name: "Fixture", treeID: "t", treeRevision: 1, datasetID: "d", datasetRevision: 1,
             classificationProvider: .apiKey, apiKey: .init(profileID: "p", model: "gpt-5-fixture"))
         let engine = try await client.resolveCloudEngine(for: type)

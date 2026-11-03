@@ -40,7 +40,7 @@ final class VaultClassifierViewModel: ObservableObject {
     var apiKeyClassificationClient: APIKeyClassificationClient?
     var apiKeyClassificationStatus: APIKeyClassificationStatus?
     @Published var chatGPTStatus = ChatGPTAccountStatus()
-    var failedCloudClassifications: [String: (platform: String, item: NativeVideoTagsBatchItem)] = [:]
+    var failedCloudClassifications: [String: (platform: String, item: NativeVideoTagsBatchItem, code: NativeVideoTagsFailureCode)] = [:]
     private var shutdownTask: Task<Void, Never>?
 
     func shutdown() async {

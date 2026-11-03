@@ -166,17 +166,20 @@ public struct NativeVideoTagsResponse: Codable, Equatable, Sendable {
     public var pending: Bool
     /// No saved decision and this kind is switched off; the browser shows no pill.
     public var skipped: Bool
+    /// A bounded, presentation-safe reason for a failed classification.
+    public var failureCode: NativeVideoTagsFailureCode?
 
-    public init(platformID: String, entryID: String, tags: [NativeVideoTag], predicted: Bool = false, pending: Bool = false, skipped: Bool = false) {
+    public init(platformID: String, entryID: String, tags: [NativeVideoTag], predicted: Bool = false, pending: Bool = false, skipped: Bool = false, failureCode: NativeVideoTagsFailureCode? = nil) {
         self.platformID = platformID
         self.entryID = entryID
         self.tags = NativeVideoTag.accepted(tags)
         self.predicted = predicted
         self.pending = pending
         self.skipped = skipped
+        self.failureCode = failureCode
     }
 
-    private enum CodingKeys: String, CodingKey { case platformID, entryID, tags, predicted, pending, skipped }
+    private enum CodingKeys: String, CodingKey { case platformID, entryID, tags, predicted, pending, skipped, failureCode }
 
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
@@ -186,7 +189,13 @@ public struct NativeVideoTagsResponse: Codable, Equatable, Sendable {
         predicted = try container.decodeIfPresent(Bool.self, forKey: .predicted) ?? false
         pending = try container.decodeIfPresent(Bool.self, forKey: .pending) ?? false
         skipped = try container.decodeIfPresent(Bool.self, forKey: .skipped) ?? false
+        failureCode = try container.decodeIfPresent(NativeVideoTagsFailureCode.self, forKey: .failureCode)
     }
+}
+
+public enum NativeVideoTagsFailureCode: String, Codable, Equatable, Sendable {
+    case limitReached, rateLimited, signInRequired, accessDenied, modelUnavailable
+    case serviceUnavailable, connectionIssue, invalidResponse, requestRejected, taggingFailed
 }
 
 /// Unsolicited push emitted when queued classification completes: the hub
@@ -267,16 +276,18 @@ public struct NativeVideoTagsBatchResponseItem: Codable, Equatable, Sendable {
     public var predicted: Bool
     public var pending: Bool
     public var skipped: Bool
+    public var failureCode: NativeVideoTagsFailureCode?
 
-    public init(entryID: String, tags: [NativeVideoTag], predicted: Bool = false, pending: Bool = false, skipped: Bool = false) {
+    public init(entryID: String, tags: [NativeVideoTag], predicted: Bool = false, pending: Bool = false, skipped: Bool = false, failureCode: NativeVideoTagsFailureCode? = nil) {
         self.entryID = entryID
         self.tags = NativeVideoTag.accepted(tags)
         self.predicted = predicted
         self.pending = pending
         self.skipped = skipped
+        self.failureCode = failureCode
     }
 
-    private enum CodingKeys: String, CodingKey { case entryID, tags, predicted, pending, skipped }
+    private enum CodingKeys: String, CodingKey { case entryID, tags, predicted, pending, skipped, failureCode }
 
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
@@ -285,6 +296,7 @@ public struct NativeVideoTagsBatchResponseItem: Codable, Equatable, Sendable {
         predicted = try container.decodeIfPresent(Bool.self, forKey: .predicted) ?? false
         pending = try container.decodeIfPresent(Bool.self, forKey: .pending) ?? false
         skipped = try container.decodeIfPresent(Bool.self, forKey: .skipped) ?? false
+        failureCode = try container.decodeIfPresent(NativeVideoTagsFailureCode.self, forKey: .failureCode)
     }
 }
 

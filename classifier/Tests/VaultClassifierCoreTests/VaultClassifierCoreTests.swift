@@ -83,6 +83,13 @@ final class VaultClassifierCoreTests: XCTestCase {
         let response = NativeVideoTagsResponse(platformID: "youtube", entryID: "youtube:video:abc", tags: Array(repeating: valid, count: 20) + [invalid])
         XCTAssertEqual(response.tags.count, 16)
         XCTAssertFalse(response.tags.contains(where: { $0.id == "bad" }))
+        let failed = NativeVideoTagsResponse(platformID: "youtube", entryID: "youtube:video:abc",
+            tags: [], failureCode: .limitReached)
+        let decoded = try JSONDecoder().decode(NativeVideoTagsResponse.self, from: JSONEncoder().encode(failed))
+        XCTAssertEqual(decoded.failureCode, .limitReached)
+        let pushed = NativeVideoTagsBatchResponseItem(entryID: "youtube:video:abc", tags: [], failureCode: .rateLimited)
+        XCTAssertEqual(try JSONDecoder().decode(NativeVideoTagsBatchResponseItem.self,
+            from: JSONEncoder().encode(pushed)).failureCode, .rateLimited)
     }
 
     func testCollectionDeduplicatesWithoutChangingDatasetRevision() {

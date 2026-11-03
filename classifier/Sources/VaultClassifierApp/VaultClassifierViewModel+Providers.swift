@@ -256,6 +256,7 @@ extension VaultClassifierViewModel {
                     self.providerModelCatalogs[profileID] = models
                     self.persistProviderModelCatalogs()
                     self.issue = nil
+                    await self.retryFailedClassifications(profileID: profileID)
                 } catch {
                     self.providerModelCatalogErrors[profileID] = error.localizedDescription
                 }

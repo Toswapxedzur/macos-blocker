@@ -2,6 +2,7 @@ import Foundation
 import XCTest
 import VaultClassifierCore
 import VaultClassifierBridge
+import VaultClassifierResearch
 @testable import VaultClassifierApp
 
 private actor SettlementLLM: BatchClassificationEngine {
@@ -69,11 +70,11 @@ final class ClassificationFailureSettlementTests: XCTestCase {
         XCTAssertEqual(coordinator.enabledClassificationPlatformIDs(), ["youtube"])
         return model
     }
-    private func assertTerminal(_ projection: VideoTagsProjection?, file: StaticString = #filePath, line: UInt = #line) throws {
-        let value = try XCTUnwrap(projection, file: file, line: line)
-        XCTAssertTrue(value.tags.isEmpty, file: file, line: line)
-        XCTAssertFalse(value.predicted, file: file, line: line)
-        XCTAssertTrue(value.confidenceByTagID.isEmpty, file: file, line: line)
+    private func assertFailed(_ model: VaultClassifierViewModel, _ projection: VideoTagsProjection?, entryID: String,
+                              file: StaticString = #filePath, line: UInt = #line) {
+        XCTAssertNil(projection, file: file, line: line)
+        XCTAssertEqual(model.failedCloudClassifications[VaultClassifierViewModel.inFlightKey("youtube", entryID)]?.code,
+                       .taggingFailed, file: file, line: line)
     }
     private func assertNoFailedDecision(_ model: VaultClassifierViewModel, file: StaticString = #filePath, line: UInt = #line) throws {
         let coordinator = try XCTUnwrap(model.coordinator)
@@ -84,12 +85,13 @@ final class ClassificationFailureSettlementTests: XCTestCase {
         XCTAssertFalse(reopened.coordinator?.snapshot().workspaceCatalog.videoClassifications.contains { $0.entryID == failed.entryID } == true, file: file, line: line)
     }
 
-    func testAllErrorsSettleEveryOriginalEntryWithoutSavingFalseDecisions() async throws {
+    func testAllErrorsCarryFailureStatusWithoutSavingFalseDecisions() async throws {
         let model = try makeModel(), engine = SettlementLLM(.allFail)
         model.coordinator?.setFixtureEngine(engine)
         let resolved = await model.resolveClassificationChunk(platformID: "youtube", [failed, good])
-        XCTAssertEqual(Set(resolved.keys), Set([failed.entryID, good.entryID]))
-        try assertTerminal(resolved[failed.entryID]); try assertTerminal(resolved[good.entryID])
+        XCTAssertTrue(resolved.isEmpty)
+        assertFailed(model, resolved[failed.entryID], entryID: failed.entryID)
+        assertFailed(model, resolved[good.entryID], entryID: good.entryID)
         let batches = await engine.batchSizes, singles = await engine.singleTitles
         XCTAssertEqual(batches, [2]); XCTAssertTrue(singles.isEmpty, "failed cloud batches require Retry")
         try assertNoFailedDecision(model)
@@ -100,10 +102,11 @@ final class ClassificationFailureSettlementTests: XCTestCase {
         let model = try makeModel(), engine = SettlementLLM(.allFail)
         model.coordinator?.setFixtureEngine(engine)
         let first = await model.resolveClassificationChunk(platformID: "youtube", [failed])
-        try assertTerminal(first[failed.entryID]); try assertNoFailedDecision(model)
+        assertFailed(model, first[failed.entryID], entryID: failed.entryID); try assertNoFailedDecision(model)
         await engine.setMode(.succeed)
         let next = await model.resolveClassificationChunk(platformID: "youtube", [failed])
         XCTAssertEqual(next[failed.entryID]?.tags.map(\.id), ["games"])
+        XCTAssertNil(model.failedCloudClassifications[VaultClassifierViewModel.inFlightKey("youtube", failed.entryID)])
         XCTAssertEqual(next[failed.entryID], model.coordinator?.cachedVideoTags(platformID: "youtube", entryID: failed.entryID))
         XCTAssertEqual(model.coordinator?.snapshot().workspaceCatalog.videoClassifications.count, 1)
     }
@@ -114,7 +117,7 @@ final class ClassificationFailureSettlementTests: XCTestCase {
         coordinator.setFixtureEngine(engine)
         let manual = try coordinator.submitCorrection(classifierTypeID: "settlement-type", platformID: "youtube", entryID: good.entryID, correctTagIDs: ["games"])
         let resolved = await model.resolveClassificationChunk(platformID: "youtube", [failed, good])
-        try assertTerminal(resolved[failed.entryID])
+        assertFailed(model, resolved[failed.entryID], entryID: failed.entryID)
         XCTAssertEqual(resolved[good.entryID], manual)
         XCTAssertFalse(resolved[good.entryID]?.predicted ?? true)
         let titles = await engine.singleTitles
@@ -131,7 +134,7 @@ final class ClassificationFailureSettlementTests: XCTestCase {
         let cached = try XCTUnwrap(coordinator.cachedVideoTags(platformID: "youtube", entryID: good.entryID))
         await engine.setMode(.allFail)
         let resolved = await model.resolveClassificationChunk(platformID: "youtube", [failed, good])
-        try assertTerminal(resolved[failed.entryID])
+        assertFailed(model, resolved[failed.entryID], entryID: failed.entryID)
         XCTAssertEqual(resolved[good.entryID], cached)
         XCTAssertEqual(coordinator.cachedVideoTags(platformID: "youtube", entryID: good.entryID), cached)
         XCTAssertEqual(coordinator.snapshot().workspaceCatalog.videoClassifications.map(\.entryID), [good.entryID])
@@ -182,5 +185,15 @@ final class ClassificationFailureSettlementTests: XCTestCase {
         try assertNoFailedDecision(model)
         let titles = await engine.singleTitles
         XCTAssertEqual(titles.count, 2)
+    }
+
+    func testProviderErrorsMapToPresentationSafeFailureCodes() {
+        XCTAssertEqual(VaultClassifierViewModel.taggingFailureCode(CloudClassificationError.usageLimit), .limitReached)
+        XCTAssertEqual(VaultClassifierViewModel.taggingFailureCode(ChatGPTPlanError.usageUnavailable), .limitReached)
+        XCTAssertEqual(VaultClassifierViewModel.taggingFailureCode(CloudClassificationError.signInRequired), .signInRequired)
+        XCTAssertEqual(VaultClassifierViewModel.taggingFailureCode(ProviderTestHTTPError.status(401)), .accessDenied)
+        XCTAssertEqual(VaultClassifierViewModel.taggingFailureCode(ProviderTestHTTPError.status(429)), .rateLimited)
+        XCTAssertEqual(VaultClassifierViewModel.taggingFailureCode(ProviderTestHTTPError.status(503)), .serviceUnavailable)
+        XCTAssertEqual(VaultClassifierViewModel.taggingFailureCode(URLError(.timedOut)), .connectionIssue)
     }
 }
