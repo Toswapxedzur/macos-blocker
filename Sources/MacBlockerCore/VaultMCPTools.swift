@@ -197,9 +197,24 @@ public enum VaultMCPTools {
                 guard let id = string(args, "id"), let shown = store.load().publicGroup(id: id) else { return refuse("group-not-found") }
                 if shown["groupType"] as? String == "custom" {
                     guard shown["allowSnooze"] as? Bool != false else { return refuse("snooze-disabled") }
-                    guard let press = snoozePress else { return refuse("rules-not-running") }
-                    press(id)
-                    return .ok(jsonText(["snoozePressed": true]))
+                    let count = max(0, (shown["snoozeConfirmations"] as? NSNumber)?.intValue ?? 0)
+                    let tag = "\(count):\(shown["activeEventSource"] as? String ?? ""):"
+                        + "\(shown["enabled"] as? Bool ?? true)"
+                    let step = confirmations.step("snooze:\(id)", tag: tag, count: count,
+                                                  confirm: args["confirm"] as? Bool == true, now: clock()) { (tag, nil) }
+                    switch step {
+                    case .refused(let code): return refuse(code)
+                    case .pending(let left): return pending(left, ["snoozePressed": false])
+                    case .done:
+                        guard let fresh = store.load().publicGroup(id: id),
+                              fresh["groupType"] as? String == "custom",
+                              fresh["allowSnooze"] as? Bool != false,
+                              max(0, (fresh["snoozeConfirmations"] as? NSNumber)?.intValue ?? 0) == count,
+                              fresh["activeEventSource"] as? String == shown["activeEventSource"] as? String,
+                              let press = snoozePress else { return refuse("snooze-settings-changed") }
+                        press(id)
+                        return .ok(jsonText(["snoozePressed": true]))
+                    }
                 }
                 let now = clock()
                 let plan: (confirmations: Int, refusal: String?)

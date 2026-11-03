@@ -433,7 +433,7 @@
         // The rule loads in Mac Vault's own engine; its load result comes back.
         return nativeRequest("run-custom-group", message, { ok: false, error: "rules-not-running" });
       case "fire-snooze-press":
-        return bridgeOrResolve("fire-snooze-press", message, { ok: true });
+        return nativeRequest("fire-snooze-press", message, { ok: false, error: "rules-not-running" });
       case "rule-ai-models":
         return nativeRequest("rule-ai-models", message, {ok:false,models:[],error:"ai-unavailable"});
       case "vault-classifier-tag-names":

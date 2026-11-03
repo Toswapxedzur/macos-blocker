@@ -463,10 +463,21 @@ public struct BlockerWebView: NSViewRepresentable {
                     catch { nativeReply(body, ["ok": false, "error": Self.editorFailureMessage(error)]) }
                 }
             case "fire-snooze-press":
-                if let payload = body["message"] as? [String: Any],
-                   let groupID = payload["groupId"] as? String {
-                    onSnoozePress?(groupID)
+                guard Self.isTrustedEditorFrame(isMainFrame: message.frameInfo.isMainFrame,
+                                                url: message.frameInfo.request.url),
+                      let payload = body["message"] as? [String: Any],
+                      let groupID = payload["groupId"] as? String,
+                      let expected = payload["expectedConfirmations"] as? Int,
+                      let group = store.publicGroup(id: groupID),
+                      group["groupType"] as? String == "custom",
+                      group["allowSnooze"] as? Bool != false,
+                      max(0, (group["snoozeConfirmations"] as? NSNumber)?.intValue ?? 0) == expected,
+                      let onSnoozePress else {
+                    nativeReply(body, ["ok": false, "error": "snooze-settings-changed"])
+                    return
                 }
+                onSnoozePress(groupID)
+                nativeReply(body, ["ok": true])
             case "clusters-status":
                 pushClusters()
             case "group-link", "group-unlink":

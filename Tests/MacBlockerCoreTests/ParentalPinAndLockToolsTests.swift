@@ -154,6 +154,41 @@ final class ParentalPinAndLockToolsTests: XCTestCase {
         XCTAssertNotEqual(ended?["activeMsApplied"] as? Bool, true, "the engine counts it once, as a snooze that ran out")
     }
 
+    func testCustomSnoozeToolWaitsForTheGroupsConfirmations() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("custom-snooze-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let shared = SharedAppGroupStore(baseDirectory: dir)
+        var raw = document().raw
+        var groups = raw["blockedGroups"] as? [[String: Any]] ?? []
+        groups.append(["id": "custom", "name": "Custom", "groupType": "custom",
+                       "enabled": true, "allowSnooze": true, "snoozeConfirmations": 2])
+        raw["blockedGroups"] = groups
+        shared.writeData(try JSONSerialization.data(withJSONObject: raw), to: SharedAppGroupStore.webStoreFileName)
+        var now = Date(timeIntervalSince1970: 1_000_000)
+        let tools = VaultMCPTools.groupTools(store: GroupStore(shared: shared), clock: { now })
+        func call(_ confirm: Bool? = nil) -> MCPToolResult {
+            let args: [String: Any] = confirm.map { ["id": "custom", "confirm": $0] } ?? ["id": "custom"]
+            return tools.first { $0.name == "snooze_group" }!.handler(args)
+        }
+        let previous = VaultMCPTools.snoozePress
+        var presses = 0
+        VaultMCPTools.snoozePress = { _ in presses += 1 }
+        defer { VaultMCPTools.snoozePress = previous }
+        let asked = call()
+        XCTAssertFalse(asked.isError)
+        XCTAssertEqual((try JSONSerialization.jsonObject(with: Data(asked.text.utf8)) as? [String: Any])?["confirmationsLeft"] as? Int, 2)
+        XCTAssertEqual(presses, 0)
+        XCTAssertTrue(call(true).isError, "a step before five seconds is refused")
+        now.addTimeInterval(5)
+        let first = call(true)
+        XCTAssertFalse(first.isError)
+        XCTAssertEqual((try JSONSerialization.jsonObject(with: Data(first.text.utf8)) as? [String: Any])?["confirmationsLeft"] as? Int, 1)
+        XCTAssertEqual(presses, 0)
+        now.addTimeInterval(5)
+        XCTAssertFalse(call(true).isError)
+        XCTAssertEqual(presses, 1)
+    }
+
     /// Owner 2026-09-29: the snooze kind is an editor setting the tools set
     /// too; a budget snooze adds the snooze minutes and lapses at the reset.
     func testATimeLimitGroupsBudgetSnoozeFromTheTools() throws {

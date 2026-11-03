@@ -405,6 +405,12 @@ public final class BlockerWebStore: @unchecked Sendable {
         groupStore.loadGroups()
     }
 
+    /// The current linked view used to validate editor actions before they
+    /// reach the rule engine.
+    public func publicGroup(id: String) -> [String: Any]? {
+        groupStore.load().publicGroup(id: id)
+    }
+
     // MARK: Usage timers (the editor's own per-group spent-time, in ms)
     //
     // These mirror the Chrome extension's `usageTimersMs` / `usageResetAtMs`
