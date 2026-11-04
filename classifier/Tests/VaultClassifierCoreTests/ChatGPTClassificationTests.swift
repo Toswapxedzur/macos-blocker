@@ -445,12 +445,12 @@ final class ChatGPTClassificationTests: XCTestCase {
         let results = try await engine.classifyBatch(input)
         XCTAssertEqual(results.map { $0.tags.first?.name }, Array(repeating: "Games", count: 16) + Array(repeating: "Politics", count: 19))
         let peak = await calls.peak, finished = await calls.finished
-        XCTAssertEqual(peak, 2); XCTAssertEqual(finished, ["fast", "fast", "slow"])
+        XCTAssertEqual(peak, 3); XCTAssertEqual(finished, ["fast", "fast", "slow"])
         let status = await client.status(); XCTAssertEqual(status.requestsToday, 3)
         await client.shutdown()
     }
 
-    func testAccountConcurrencyBoundAppliesAcrossIndependentCallersAndShutdownDrainsBoth() async throws {
+    func testAccountConcurrencyBoundAppliesAcrossIndependentCallersAndShutdownDrainsAll() async throws {
         let root = try root(); defer { try? FileManager.default.removeItem(at: root) }
         try credentialFixture(root)
         let calls = ParallelCloudCalls()
@@ -464,14 +464,14 @@ final class ChatGPTClassificationTests: XCTestCase {
         let request = item()
         let tasks = (0..<5).map { _ in Task { try await engine.classify(request) } }
         let deadline = Date().addingTimeInterval(2)
-        while await calls.started < 2 && Date() < deadline { try await Task.sleep(nanoseconds: 10_000_000) }
+        while await calls.started < 5 && Date() < deadline { try await Task.sleep(nanoseconds: 10_000_000) }
         let start = Date(); await client.shutdown()
         for task in tasks {
             do { _ = try await task.value; XCTFail("Shutdown must cancel active and waiting callers") }
             catch { XCTAssertTrue(error is CancellationError) }
         }
         let peak = await calls.peak, started = await calls.started, active = await calls.active
-        XCTAssertEqual(peak, 2); XCTAssertEqual(started, 2); XCTAssertEqual(active, 0)
+        XCTAssertEqual(peak, 5); XCTAssertEqual(started, 5); XCTAssertEqual(active, 0)
         XCTAssertLessThan(Date().timeIntervalSince(start), 2)
     }
 

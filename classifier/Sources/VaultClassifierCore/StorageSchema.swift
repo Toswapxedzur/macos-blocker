@@ -29,9 +29,6 @@ public struct StorageProduct: Codable, Equatable, Sendable {
         return .init(product: product, appVersion: version)
     }
 
-    /// Alpha import is a bounded transformation, removed after the next major.
-    /// These are introduction majors, not schema numbers or beta marketing versions.
-    public var alphaImportMajor: Int { product == "windows" ? 0 : product == "mac" ? 2 : 3 }
 }
 
 public struct StorageMetadata: Codable, Equatable, Sendable {
@@ -57,8 +54,7 @@ public enum StorageSchemaError: Error, Equatable, LocalizedError {
     }
 }
 
-/// Registries identify formats by schema; expiry follows the writing product's
-/// app major. Compatible current schemas need no transformation at all.
+/// Registries identify formats by schema, independent of product version.
 public struct StorageSchemaPolicy: Sendable {
     public let format: String
     public let currentSchema: Int
@@ -71,17 +67,10 @@ public struct StorageSchemaPolicy: Sendable {
 
     public func validate(_ stored: StorageMetadata?) throws {
         guard writer.major >= 0 else { throw StorageSchemaError.unsupported("missing product version") }
-        guard let stored else {
-            guard writer.major <= writer.alphaImportMajor + 1 else { throw StorageSchemaError.unsupported("expired alpha import") }
-            return
-        }
+        guard let stored else { return }
         guard stored.format == format, (1...currentSchema).contains(stored.schemaVersion),
               !stored.product.isEmpty, StorageProduct(product: stored.product, appVersion: stored.writtenByAppVersion).major >= 0 else {
             throw StorageSchemaError.unsupported("\(stored.format) schema \(stored.schemaVersion)")
-        }
-        if stored.schemaVersion < currentSchema, stored.product == writer.product {
-            let origin = StorageProduct(product: stored.product, appVersion: stored.writtenByAppVersion).major
-            guard origin >= max(0, writer.major - 1) else { throw StorageSchemaError.unsupported("expired app-major \(origin) migration") }
         }
     }
 

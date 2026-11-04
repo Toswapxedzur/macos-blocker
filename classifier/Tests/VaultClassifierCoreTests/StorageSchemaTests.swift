@@ -3,17 +3,17 @@ import XCTest
 @testable import VaultClassifierCore
 
 final class StorageSchemaTests: XCTestCase {
-    func testAppMajorsBoundMigrationsIndependentlyOfSchemaNumbers() throws {
+    func testSchemaMigrationsDoNotExpireAtAppMajorBoundaries() throws {
         let v1 = StorageMetadata(format: "fixture", schemaVersion: 1, writer: .init(product: "mac", appVersion: "1.8.0"))
         let v2 = StorageSchemaPolicy(format: "fixture", currentSchema: 2, writer: .init(product: "mac", appVersion: "2.0.0"))
         XCTAssertNoThrow(try v2.validate(v1))
         let v3 = StorageSchemaPolicy(format: "fixture", currentSchema: 2, writer: .init(product: "mac", appVersion: "3.0.0"))
-        XCTAssertThrowsError(try v3.validate(v1))
+        XCTAssertNoThrow(try v3.validate(v1))
         let previous = StorageMetadata(format: "fixture", schemaVersion: 1, writer: .init(product: "mac", appVersion: "2.9.0"))
         XCTAssertNoThrow(try v3.validate(previous))
         let unchanged = StorageSchemaPolicy(format: "fixture", writer: .init(product: "mac", appVersion: "4.0.0"))
         XCTAssertNoThrow(try unchanged.validate(v1), "same format needs no transformation")
-        XCTAssertThrowsError(try unchanged.validate(nil), "bounded alpha intake has expired")
+        XCTAssertNoThrow(try unchanged.validate(nil), "legacy state remains eligible for best-effort import")
     }
 
     func testEnvelopePreservesPayloadAndRejectsWrongOrFutureFormats() throws {

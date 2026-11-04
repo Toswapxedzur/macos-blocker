@@ -2,7 +2,11 @@
 
 The owner approved this capability split on 2026-10-04. Existing tags and packaged downloads remain unchanged. All new records are **alpha, source-only**. A source record does not certify store submission, signing or native release acceptance.
 
-Current source version: **2.2.7**. See the group-level `CHANGELOG.md` for the cross-product chapters.
+Current private candidate: **4.0.1 (build 18), Beta 1**. Publication and installed-package acceptance remain pending. See the group-level `CHANGELOG.md` for the cross-product chapter.
+
+## 4.0.1 — 2026-11-04 — Beta 1 candidate
+
+Includes the accepted 4.0 classifier, rule AI, naming, locale, update, and bright icon changes. Storage migrations no longer expire by app major. The first public Beta 1 package, once accepted and published, begins the rolling 30-day direct-upgrade guarantee.
 
 ## 2.2.7 — 2026-10-07 — Browser and website Activity accounting
 

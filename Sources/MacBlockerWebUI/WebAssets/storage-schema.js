@@ -1,5 +1,5 @@
-/* Local storage format registry. Product majors expire transformations; schema
- * numbers describe data only. All consumers use the guarded chrome API below. */
+/* Local storage format registry. Schema numbers describe data independently of
+ * app versions. All consumers use the guarded chrome API below. */
 (function (g) {
   'use strict';
   const SCHEMA = 7, FORMAT = 'vault.web-store';
@@ -22,14 +22,9 @@
     const v = root.schemaVersion === undefined ? 0 : root.schemaVersion;
     if (!Number.isInteger(v) || v < 0 || v > SCHEMA) throw new Error('Unsupported storage schema ' + v + '. Saved data is preserved.');
     const m = root.storageMetadata;
-    const appMajor = major(writer.appVersion);
-    if (appMajor < 0) throw new Error('Storage product version is unavailable.');
+    if (major(writer.appVersion) < 0) throw new Error('Storage product version is unavailable.');
     if (m !== undefined) {
       if (!m || m.format !== FORMAT || m.schemaVersion !== v || !m.product || major(m.writtenByAppVersion) < 0) throw new Error('Unsupported or inconsistent storage metadata. Saved data is preserved.');
-      if (v < SCHEMA && m.product === writer.product && major(m.writtenByAppVersion) < Math.max(0, appMajor - 1)) throw new Error('This app-major storage migration has expired. Saved data is preserved.');
-    } else {
-      const alphaMajor = writer.product === 'mac' ? 2 : writer.product === 'windows' ? 0 : 3;
-      if (appMajor > alphaMajor + 1) throw new Error('Alpha storage import has expired. Saved data is preserved.');
     }
   }
   function metadata(writer = identity()) { return { format: FORMAT, schemaVersion: SCHEMA, product: writer.product, writtenByAppVersion: writer.appVersion }; }

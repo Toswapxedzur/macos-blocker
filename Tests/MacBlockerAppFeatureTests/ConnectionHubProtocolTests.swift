@@ -21,16 +21,16 @@ final class ConnectionHubProtocolTests: XCTestCase {
         ]
     }
 
-    func testAuthenticatedBrowserHelloIsAccepted() throws {
+    func testAuthenticatedBrowserWithoutIdentityRequiresUpgradeAtBetaOne() throws {
         XCTAssertEqual(
             try LocalHubAuthentication.makeProof(program: "chrome", challenge: challenge, secret: secret),
             "KdU7-EvPwn1g60PF6bYZsqVfl-AD19TbQmtaLmHbyQc"
         )
-        XCTAssertNil(ConnectionHub.helloRejectionReason(
+        XCTAssertEqual(ConnectionHub.helloRejectionReason(
             try authenticatedHello(program: "chrome"),
             challenge: challenge,
             secret: secret
-        ))
+        ), "browser-upgrade-required")
     }
 
     func testSafariAuthenticatesWithItsOwnProgramProof() throws {

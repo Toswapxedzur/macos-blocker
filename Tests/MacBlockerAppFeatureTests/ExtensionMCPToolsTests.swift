@@ -24,7 +24,7 @@ final class ExtensionMCPToolsTests: XCTestCase {
     func testAmbiguousBrowserErrorListsTheChoices() {
         let text = ExtensionMCPTools.explain("browser-ambiguous: chrome AAAA, chrome BBBB")
         XCTAssertEqual(text, "more than one browser is connected; pass 'browser' as one of: chrome AAAA, chrome BBBB.")
-        XCTAssertEqual(ExtensionMCPTools.explain("browser-unavailable"), "no browser with the Vault extension is connected to Mac Vault.")
+        XCTAssertEqual(ExtensionMCPTools.explain("browser-unavailable"), "no browser with the Vault extension is connected to Vault on Mac.")
     }
 
     func testToolsAreAdvertised() throws {
