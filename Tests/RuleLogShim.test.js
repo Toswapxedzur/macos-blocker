@@ -1,6 +1,6 @@
 const fs=require('node:fs'),vm=require('node:vm'),assert=require('node:assert/strict');
 const path=require('node:path');
-const script=fs.readFileSync(path.join(__dirname,'../Sources/MacBlockerWebUI/WebAssets/chrome-shim.js'),'utf8');
+const script=fs.readFileSync(process.env.RULE_LOG_SHIM_PATH || path.join(__dirname,'../Sources/MacBlockerWebUI/WebAssets/chrome-shim.js'),'utf8');
 const storage=new Map([['__cb_chrome_storage__',JSON.stringify({blockedGroups:[{id:'a'},{id:'b'}],ruleLog:[{group:'Old mixed log',message:'stale'}]})]]);
 const create=(programID="macapp")=>{
   const context=vm.createContext({console,URL,Date,Set,Math,Promise,setTimeout,clearTimeout,
@@ -38,5 +38,22 @@ const create=(programID="macapp")=>{
   assert.equal((await get()).entries.length,0);
   context.__cbApplyNativeStore({blockedGroups:[{id:'a'}]});
   assert.equal((await get('b')).entries.length,0,'deleted group drops its log');
+  const protectedBytes=JSON.stringify({version:99,groups:{a:[{message:'future'}]}});
+  storage.set('__cb_rule_logs_by_group__',protectedBytes);
+  context=create();
+  assert.equal((await get('a')).ok,false,'future log schema is refused');
+  assert.equal((await context.chrome.runtime.sendMessage({type:'clear-log-feed',groupId:'a'})).ok,false);
+  context.__cbApplyNativeRuleLog([log('a','do not overwrite future data')]);
+  assert.equal(storage.get('__cb_rule_logs_by_group__'),protectedBytes,'future bytes survive read, Clear and new log');
+  storage.set('__cb_rule_logs_by_group__','{broken');
+  context=create();
+  assert.equal((await get('a')).ok,false,'malformed saved logs are refused');
+  assert.equal(storage.get('__cb_rule_logs_by_group__'),'{broken','malformed bytes are preserved');
+  storage.set('__cb_rule_logs_by_group__',JSON.stringify({a:[{
+    id:'alpha-entry',ts:1,source:'v.log',level:'log',groupId:'a',eventType:'',message:'legacy'
+  }]}));
+  context=create();
+  assert.equal((await get('a')).entries[0].message,'legacy','pre-Beta unversioned logs import');
+  assert.equal(JSON.parse(storage.get('__cb_rule_logs_by_group__')).version,1,'import writes versioned document');
   console.log('PASS explicit error source/level/recreation, native log IDs, per-rule retention, Clear, reload, snapshots and retired buffer guard');
 })().catch(error=>{console.error(error);process.exitCode=1});

@@ -203,28 +203,65 @@
   // Rule output and explicit errors, keyed by immutable group ID. Config snapshots must
   // never overwrite this independent log store. The retired mixed buffer is ignored.
   var RULE_LOG_KEY = "__cb_rule_logs_by_group__";
+  var RULE_LOG_VERSION = 1;
   var ruleLogs = Object.create(null);
+  var ruleLogStorageError = null;
   var logFeedCounter = 0;
   var logFeedSession = Date.now() + "-" + Math.random().toString(36).slice(2);
   try {
-    var savedLogs = JSON.parse(window.localStorage.getItem(RULE_LOG_KEY) || "{}");
-    Object.keys(savedLogs || {}).forEach(function (groupId) {
-      if (!Array.isArray(savedLogs[groupId])) return;
-      ruleLogs[groupId] = savedLogs[groupId].filter(function (entry) {
-        return entry && (entry.source === "v.log" || entry.source === "page-error") && entry.groupId === groupId;
-      }).slice(-200);
-    });
-  } catch (_) {}
+    var rawLogs = window.localStorage.getItem(RULE_LOG_KEY);
+    if (rawLogs !== null) {
+      var savedDocument = JSON.parse(rawLogs);
+      if (!savedDocument || Array.isArray(savedDocument) || typeof savedDocument !== "object") throw Error("Invalid rule-log storage. Saved logs are preserved.");
+      var savedLogs;
+      if (Object.prototype.hasOwnProperty.call(savedDocument, "version")) {
+        if (savedDocument.version !== RULE_LOG_VERSION || !savedDocument.groups
+            || Array.isArray(savedDocument.groups) || typeof savedDocument.groups !== "object"
+            || Object.keys(savedDocument).some(function (key) { return key !== "version" && key !== "groups"; })) {
+          throw Error("Unsupported rule-log storage. Saved logs are preserved.");
+        }
+        savedLogs = savedDocument.groups;
+      } else {
+        savedLogs = savedDocument; // Best-effort import of the pre-Beta unversioned map.
+      }
+      Object.keys(savedLogs).forEach(function (groupId) {
+        var entries = savedLogs[groupId];
+        if (!groupId || !Array.isArray(entries) || entries.some(function (entry) {
+          return !entry || typeof entry !== "object" || Array.isArray(entry)
+            || (entry.source !== "v.log" && entry.source !== "page-error")
+            || entry.groupId !== groupId || (typeof entry.id !== "string" && !Number.isSafeInteger(entry.id))
+            || !Number.isFinite(entry.ts) || (entry.level !== "log" && entry.level !== "error")
+            || typeof entry.eventType !== "string" || typeof entry.message !== "string";
+        })) throw Error("Invalid rule-log storage. Saved logs are preserved.");
+        ruleLogs[groupId] = entries.slice(-200);
+      });
+    }
+  } catch (error) {
+    ruleLogs = Object.create(null);
+    ruleLogStorageError = String(error && error.message || error);
+  }
   delete store.ruleLog;
 
   function persistRuleLogs() {
-    try { window.localStorage.setItem(RULE_LOG_KEY, JSON.stringify(ruleLogs)); } catch (_) {}
+    if (ruleLogStorageError) return false;
+    try {
+      window.localStorage.setItem(RULE_LOG_KEY, JSON.stringify({ version: RULE_LOG_VERSION, groups: ruleLogs }));
+      return true;
+    } catch (error) {
+      ruleLogStorageError = String(error && error.message || error);
+      return false;
+    }
   }
 
   function pruneRuleLogs() {
+    if (ruleLogStorageError) return false;
     var ids = new Set((store.blockedGroups || []).map(function (group) { return group.id; }));
+    var previous = ruleLogs;
+    ruleLogs = Object.assign(Object.create(null), ruleLogs);
     Object.keys(ruleLogs).forEach(function (id) { if (!ids.has(id)) delete ruleLogs[id]; });
-    persistRuleLogs();
+    if (persistRuleLogs()) return true;
+    ruleLogs = previous;
+    return false;
   }
 
   function nativeLogToFeedEntry(e) {
@@ -423,11 +460,16 @@
           return reply;
         });
       case "get-log-feed":
-        pruneRuleLogs();
+        if (!pruneRuleLogs()) return Promise.resolve({ ok: false, error: ruleLogStorageError });
         return Promise.resolve({ ok: true, entries: (ruleLogs[message.groupId] || []).slice() });
       case "clear-log-feed":
+        if (ruleLogStorageError) return Promise.resolve({ ok: false, error: ruleLogStorageError });
+        var oldFeed = ruleLogs[message.groupId];
         delete ruleLogs[message.groupId];
-        persistRuleLogs();
+        if (!persistRuleLogs()) {
+          if (oldFeed) ruleLogs[message.groupId] = oldFeed;
+          return Promise.resolve({ ok: false, error: ruleLogStorageError });
+        }
         return nativeRequest("clear-rule-log", message, { ok: true });
       case "run-custom-group":
         // The rule loads in Mac Vault's own engine; its load result comes back.
