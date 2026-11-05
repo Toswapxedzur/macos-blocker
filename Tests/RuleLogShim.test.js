@@ -3,7 +3,7 @@ const path=require('node:path');
 const script=fs.readFileSync(process.env.RULE_LOG_SHIM_PATH || path.join(__dirname,'../Sources/MacBlockerWebUI/WebAssets/chrome-shim.js'),'utf8');
 const storage=new Map([['__cb_chrome_storage__',JSON.stringify({blockedGroups:[{id:'a'},{id:'b'}],ruleLog:[{group:'Old mixed log',message:'stale'}]})]]);
 const create=(programID="macapp")=>{
-  const context=vm.createContext({console,URL,Date,Set,Math,Promise,setTimeout,clearTimeout,
+  const context=vm.createContext({console,URL,Date,Set,Math,Promise,TextEncoder,setTimeout,clearTimeout,
     navigator:{language:'en'},localStorage:{getItem:key=>storage.get(key)||null,setItem:(key,value)=>storage.set(key,value)},
     location:{href:'http://localhost/popup.html',origin:'http://localhost'},addEventListener(){}});
   context.window=context;context.__CB_DESKTOP_PROGRAM_ID=programID;vm.runInContext(script,context);return context;
@@ -38,6 +38,17 @@ const create=(programID="macapp")=>{
   assert.equal((await get()).entries.length,0);
   context.__cbApplyNativeStore({blockedGroups:[{id:'a'}]});
   assert.equal((await get('b')).entries.length,0,'deleted group drops its log');
+  const oversized={version:1,groups:{a:[],b:[]}};
+  for(let i=0;i<30;i++){
+    const groupId=i%2?'b':'a';
+    oversized.groups[groupId].push({id:String(i),ts:i,source:'v.log',level:'log',groupId,eventType:'',message:'x'.repeat(100000)});
+  }
+  storage.set('__cb_rule_logs_by_group__',JSON.stringify(oversized));
+  context=create();
+  context.__cbApplyNativeStore({blockedGroups:[{id:'a'},{id:'b'}]});
+  assert(new TextEncoder().encode(storage.get('__cb_rule_logs_by_group__')).length<=2*1024*1024,'native total cap');
+  const retained=[...(await get('a')).entries,...(await get('b')).entries];
+  assert(retained.every(entry=>entry.ts>=10),'native cap evicts oldest timestamps across groups');
   const protectedBytes=JSON.stringify({version:99,groups:{a:[{message:'future'}]}});
   storage.set('__cb_rule_logs_by_group__',protectedBytes);
   context=create();
@@ -55,5 +66,5 @@ const create=(programID="macapp")=>{
   context=create();
   assert.equal((await get('a')).entries[0].message,'legacy','pre-Beta unversioned logs import');
   assert.equal(JSON.parse(storage.get('__cb_rule_logs_by_group__')).version,1,'import writes versioned document');
-  console.log('PASS explicit error source/level/recreation, native log IDs, per-rule retention, Clear, reload, snapshots and retired buffer guard');
+  console.log('PASS native logs: restart, 200/group, 2 MiB oldest-first, Clear/deletion, alpha import and future/malformed refusal');
 })().catch(error=>{console.error(error);process.exitCode=1});

@@ -204,6 +204,7 @@
   // never overwrite this independent log store. The retired mixed buffer is ignored.
   var RULE_LOG_KEY = "__cb_rule_logs_by_group__";
   var RULE_LOG_VERSION = 1;
+  var RULE_LOG_MAX_TOTAL_BYTES = 2 * 1024 * 1024;
   var ruleLogs = Object.create(null);
   var ruleLogStorageError = null;
   var logFeedCounter = 0;
@@ -242,9 +243,31 @@
   }
   delete store.ruleLog;
 
+  function trimRuleLogs() {
+    Object.keys(ruleLogs).forEach(function (groupId) {
+      ruleLogs[groupId] = ruleLogs[groupId].slice(-200);
+      if (!ruleLogs[groupId].length) delete ruleLogs[groupId];
+    });
+    function bytes() {
+      return new TextEncoder().encode(JSON.stringify({ version: RULE_LOG_VERSION, groups: ruleLogs })).length;
+    }
+    while (bytes() > RULE_LOG_MAX_TOTAL_BYTES) {
+      var oldestGroup = null, oldestIndex = -1, oldestTime = Infinity;
+      Object.keys(ruleLogs).forEach(function (groupId) {
+        ruleLogs[groupId].forEach(function (entry, index) {
+          if (entry.ts < oldestTime) { oldestGroup = groupId; oldestIndex = index; oldestTime = entry.ts; }
+        });
+      });
+      if (oldestGroup === null) break;
+      ruleLogs[oldestGroup].splice(oldestIndex, 1);
+      if (!ruleLogs[oldestGroup].length) delete ruleLogs[oldestGroup];
+    }
+  }
+
   function persistRuleLogs() {
     if (ruleLogStorageError) return false;
     try {
+      trimRuleLogs();
       window.localStorage.setItem(RULE_LOG_KEY, JSON.stringify({ version: RULE_LOG_VERSION, groups: ruleLogs }));
       return true;
     } catch (error) {
