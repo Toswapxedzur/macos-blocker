@@ -94,6 +94,53 @@ final class BrowserIdentityRuntimeTests: XCTestCase {
         return generation
     }
 
+    func testInitialLinkEnabledWhenEitherOriginalGroupWasEnabled() throws {
+        for macEnabled in [false, true] {
+            for browserEnabled in [false, true] {
+                for browserInitiates in [false, true] {
+                    let (hub, _, _) = hub()
+                    hub.setRoster(program: "macapp", groups: [["id": "m", "name": "Mac", "enabled": macEnabled]])
+                    hub.setRoster(program: "chrome", groups: [["id": "b", "name": "Browser", "enabled": browserEnabled]])
+                    XCTAssertNil(hub.linkGroups(program: browserInitiates ? "chrome" : "macapp",
+                                                groupId: browserInitiates ? "b" : "m",
+                                                targetProgram: browserInitiates ? "macapp" : "chrome",
+                                                targetGroupId: browserInitiates ? "m" : "b"))
+                    let first = browserInitiates ? "chrome" : "macapp"
+                    let firstID = browserInitiates ? "b" : "m"
+                    let firstEnabled = browserInitiates ? browserEnabled : macEnabled
+                    let second = browserInitiates ? "macapp" : "chrome"
+                    let secondID = browserInitiates ? "m" : "b"
+                    let secondEnabled = browserInitiates ? macEnabled : browserEnabled
+                    hub.applySync(program: first, groupId: firstID,
+                                  contribution: ["scalars": ["name": "First", "enabled": firstEnabled]], ts: 0)
+                    hub.applySync(program: second, groupId: secondID,
+                                  contribution: ["scalars": ["name": "Second", "enabled": secondEnabled]], ts: 0)
+                    XCTAssertEqual((try canonical(hub)["scalars"] as? [String: Any])?["enabled"] as? Bool,
+                                   macEnabled || browserEnabled)
+                    hub.applySync(program: first, groupId: firstID,
+                                  contribution: ["scalars": ["name": "Changed", "enabled": false]],
+                                  ts: (Date().timeIntervalSince1970 * 1000).rounded(.down))
+                    XCTAssertEqual((try canonical(hub)["scalars"] as? [String: Any])?["enabled"] as? Bool, false)
+                }
+            }
+        }
+    }
+
+    func testJoiningEnabledMemberTurnsOnDisabledSharedGroup() throws {
+        let (hub, _, _) = hub()
+        hub.setRoster(program: "macapp", groups: [["id": "m", "name": "Mac", "enabled": false]])
+        hub.setRoster(program: "chrome", groups: [["id": "b", "name": "Browser", "enabled": false]])
+        XCTAssertNil(hub.linkGroups(program: "macapp", groupId: "m", targetProgram: "chrome", targetGroupId: "b"))
+        hub.applySync(program: "macapp", groupId: "m", contribution: ["scalars": ["name": "Mac", "enabled": false]], ts: 0)
+        hub.applySync(program: "chrome", groupId: "b", contribution: ["scalars": ["name": "Browser", "enabled": false]], ts: 0)
+        XCTAssertEqual((try canonical(hub)["scalars"] as? [String: Any])?["enabled"] as? Bool, false)
+
+        hub.setRoster(program: "safari", groups: [["id": "s", "name": "Safari", "enabled": true]])
+        XCTAssertNil(hub.linkGroups(program: "safari", groupId: "s", targetProgram: "macapp", targetGroupId: "m"))
+        hub.applySync(program: "safari", groupId: "s", contribution: ["scalars": ["name": "Safari", "enabled": true]], ts: 0)
+        XCTAssertEqual((try canonical(hub)["scalars"] as? [String: Any])?["enabled"] as? Bool, true)
+    }
+
     func testLegacyPauseProjectsWireAndRuntimeWithoutChangingCanonicalState() throws {
         let (hub, frames, defaults) = hub(); try linked(hub)
         _ = try peer(hub)

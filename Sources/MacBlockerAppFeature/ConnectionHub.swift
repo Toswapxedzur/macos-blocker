@@ -491,6 +491,7 @@ final class ConnectionHub: ObservableObject {
         var timeState: [String: Any]? = nil
         var custom = false
         var enabled = false
+        var enabledForLink: Bool? = nil
         var ruleAI: [String: Any]? = nil
         var aiEpoch = UUID().uuidString
     }
@@ -513,6 +514,9 @@ final class ConnectionHub: ObservableObject {
         /// The members that have contributed their definition: a member's FIRST
         /// contribution unions its lines into the shared ones.
         var contributed: Set<String> = []
+        /// Original on/off states are combined before first-join definitions
+        /// arrive. A later explicit edit replaces this temporary seed.
+        var linkEnabledSeed: Bool? = nil
         /// A definition-only old client has not transferred its original budget.
         /// Keep this bounded join admission distinct from configuration replay.
         var originalUsagePending: Set<String> = []
@@ -579,6 +583,7 @@ final class ConnectionHub: ObservableObject {
             copy.members = members
             copy.memberGroupIds = memberGroupIds
             copy.contributed = contributed
+            copy.linkEnabledSeed = linkEnabledSeed
             copy.originalUsagePending = originalUsagePending
             copy.sharedTs = sharedTs
             copy.aiEpoch = aiEpoch
@@ -1569,7 +1574,7 @@ final class ConnectionHub: ObservableObject {
 
     private static func rosterInfos(_ groups: [[String: Any]]) -> [GroupInfo] {
         groups.map { GroupInfo(id: ($0["id"] as? String) ?? "", name: ($0["name"] as? String) ?? "",
-                               frozen: ($0["frozen"] as? Bool) ?? false, timeState: $0["timeState"] as? [String: Any], custom: $0["groupType"] as? String == "custom", enabled: $0["enabled"] as? Bool == true, ruleAI: $0["ruleAI"] as? [String: Any]) }
+                               frozen: ($0["frozen"] as? Bool) ?? false, timeState: $0["timeState"] as? [String: Any], custom: $0["groupType"] as? String == "custom", enabled: $0["enabled"] as? Bool == true, enabledForLink: $0["enabled"] as? Bool, ruleAI: $0["ruleAI"] as? [String: Any]) }
     }
 
     /// Caller holds the canonical file lock, if one exists, then the hub lock.
@@ -1925,6 +1930,15 @@ final class ConnectionHub: ObservableObject {
         let initiatingID = existing?.memberGroupIds[initiatingProgram] ?? groupId
         let joining: [(String, String, GroupInfo)] = [(program, groupId, own), (targetProgram, targetGroupId, other)]
             .filter { existing?.members.contains($0.0) != true }
+        let previousEnabled = existing?.sharedScalars["enabled"] as? Bool
+        let enabledStates = joining.map { $0.2.enabledForLink }
+        let linkEnabled: Bool? = if previousEnabled == true || enabledStates.contains(where: { $0 == true }) {
+            true
+        } else if enabledStates.allSatisfy({ $0 != nil }) && (existing == nil || previousEnabled != nil) {
+            false
+        } else {
+            nil
+        }
         let seeds = joining.map { ["member": $0.0 + "/" + $0.1,
                                   "state": self.prelinkRuleTimeLocked(program: $0.0, groupID: $0.1, seed: $0.2.timeState)] as [String: Any] }
         let previousTime: Any
@@ -1960,6 +1974,11 @@ final class ConnectionHub: ObservableObject {
             cluster.originalUsagePending.insert(member)
         }
         cluster.members.formUnion([program, targetProgram])
+        cluster.linkEnabledSeed = linkEnabled
+        if let linkEnabled, existing != nil, previousEnabled != linkEnabled {
+            cluster.sharedScalars["enabled"] = linkEnabled
+            cluster.sharedTs = max(cluster.sharedTs, (Date().timeIntervalSince1970 * 1000).rounded(.down)) + 1
+        }
         cluster.aiEpoch = UUID().uuidString
         cluster.memberGroupIds[program] = groupId
         cluster.memberGroupIds[targetProgram] = targetGroupId
@@ -2103,7 +2122,8 @@ final class ConnectionHub: ObservableObject {
 
             // Scalars: last writer wins, except the link initiator's settings
             // win the first merge.
-            if let scalars = scalarsPayload {
+            if var scalars = scalarsPayload {
+                if firstContribution, let linkEnabled = cluster.linkEnabledSeed { scalars["enabled"] = linkEnabled }
                 if priority {
                     cluster.sharedScalars = scalars
                     cluster.sharedTs = max(cluster.sharedTs, ts) + 1
@@ -2113,6 +2133,7 @@ final class ConnectionHub: ObservableObject {
                     cluster.sharedTs = ts
                 }
             }
+            if ts != 0 || cluster.members.isSubset(of: cluster.contributed) { cluster.linkEnabledSeed = nil }
             let aiFields = ["ruleAI", "enabled", "groupType"]
             if WebStoreDocument.canonicalJSON(scalarsBefore.filter { aiFields.contains($0.key) }) != WebStoreDocument.canonicalJSON(cluster.sharedScalars.filter { aiFields.contains($0.key) }) {
                 cluster.aiEpoch = UUID().uuidString
@@ -3098,6 +3119,7 @@ final class ConnectionHub: ObservableObject {
                 "members": Array(c.members),
                 "memberGroupIds": c.memberGroupIds,
                 "contributed": Array(c.contributed),
+                "linkEnabledSeed": c.linkEnabledSeed as Any? ?? NSNull(),
                 "originalUsagePending": Array(c.originalUsagePending),
                 "sharedScalars": c.sharedScalars,
                 "sharedScopes": c.sharedScopes,
@@ -3183,6 +3205,7 @@ final class ConnectionHub: ObservableObject {
             // (Registries before 2026-09-26 kept each whole contribution.)
             cluster.contributed = Set(obj["contributed"] as? [String]
                 ?? ((obj["contributions"] as? [String: Any]).map { Array($0.keys) } ?? []))
+            cluster.linkEnabledSeed = obj["linkEnabledSeed"] as? Bool
             if obj.keys.contains("originalUsagePending") {
                 guard let pending = obj["originalUsagePending"] as? [String], pending.count <= Self.browserPrograms.count,
                       Set(pending).count == pending.count,
