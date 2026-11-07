@@ -102,9 +102,18 @@ public final class NativeBrowserParentIdentity {
                                     seconds: before.pbi_start_tvsec, microseconds: before.pbi_start_tvusec, path: String(cString: path))
     }
 
-    private static func staticCode(_ url: URL, environment: VaultRuntimeEnvironment) -> SecStaticCode? {
+    private static func staticCode(_ url: URL, environment: VaultRuntimeEnvironment, architecture: cpu_type_t? = nil) -> SecStaticCode? {
         var code: SecStaticCode?
-        guard SecStaticCodeCreateWithPath(url as CFURL, [], &code) == errSecSuccess, let code else { return nil }
+        let status: OSStatus
+        if let architecture {
+            // A translated host can inspect an arm64 browser. Select the
+            // browser's running slice rather than this host's default slice.
+            let attributes = [kSecCodeAttributeArchitecture as String: NSNumber(value: architecture)] as CFDictionary
+            status = SecStaticCodeCreateWithPathAndAttributes(url as CFURL, [], attributes, &code)
+        } else {
+            status = SecStaticCodeCreateWithPath(url as CFURL, [], &code)
+        }
+        guard status == errSecSuccess, let code else { return nil }
         if SecStaticCodeCheckValidity(code, [], nil) == errSecSuccess { return code }
         guard environment == .development,
               SecStaticCodeCheckValidity(code, SecCSFlags(rawValue: kSecCSDoNotValidateResources), nil) == errSecSuccess else { return nil }
@@ -115,6 +124,13 @@ public final class NativeBrowserParentIdentity {
         var info: CFDictionary?
         guard SecCodeCopySigningInformation(code, SecCSFlags(rawValue: kSecCSSigningInformation), &info) == errSecSuccess else { return nil }
         return info as? [String: Any]
+    }
+
+    private static func processArchitecture(_ pid: pid_t) -> cpu_type_t? {
+        var info = proc_archinfo()
+        guard proc_pidinfo(pid, PROC_PIDARCHINFO, 0, &info, Int32(MemoryLayout<proc_archinfo>.size)) == MemoryLayout<proc_archinfo>.size,
+              info.p_cputype != 0 else { return nil }
+        return info.p_cputype
     }
 
     private static func readEvidence(environment: VaultRuntimeEnvironment) -> BrowserParentEvidence? {
@@ -128,7 +144,8 @@ public final class NativeBrowserParentIdentity {
         guard runningValid == errSecSuccess || (environment == .development && SecCodeCheckValidity(runningCode, SecCSFlags(rawValue: kSecCSDoNotValidateResources), nil) == errSecSuccess),
               SecCodeCopyStaticCode(runningCode, [], &runningStatic) == errSecSuccess, let runningStatic,
               let runningInfo = signingInformation(runningStatic),
-              let parentCode = staticCode(URL(fileURLWithPath: parent.path), environment: environment),
+              let parentArchitecture = processArchitecture(parent.pid),
+              let parentCode = staticCode(URL(fileURLWithPath: parent.path), environment: environment, architecture: parentArchitecture),
               let parentInfo = signingInformation(parentCode),
               let parentID = parentInfo[kSecCodeInfoIdentifier as String] as? String,
               let parentHash = parentInfo[kSecCodeInfoUnique as String] as? Data,
