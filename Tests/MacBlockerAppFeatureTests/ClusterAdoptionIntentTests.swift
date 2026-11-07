@@ -311,6 +311,37 @@ final class ClusterAdoptionIntentTests: XCTestCase {
         try expect(f, name: "Browser20", allowance: 30)
     }
 
+    func testMCPReenableWhileBrowserDisableHasNotReachedMacFile() throws {
+        let previousOverlay = GroupStore.sharedOverlay
+        let f = try fixture()
+        defer { GroupStore.sharedOverlay = previousOverlay; try? FileManager.default.removeItem(at: f.root) }
+        GroupStore.sharedOverlay = { f.hub.overlayShared(onto: $0) }
+        try f.hub.applyNativeSetGroup(id: "m1", patch: ["enabled": true])
+        let savedEnabled = { try (self.raw(f.store)["blockedGroups"] as? [[String: Any]])?.first {
+            ($0["id"] as? String) == "m1"
+        }?["enabled"] as? Bool }
+        XCTAssertEqual(try savedEnabled(), true)
+
+        browser(f.hub, name: "Browser20", allowance: 20,
+                ts: (Date().timeIntervalSince1970 * 1000).rounded(.down))
+        XCTAssertEqual(try group(f.hub, store: f.store)["enabled"] as? Bool, false)
+        XCTAssertEqual(try savedEnabled(), true, "browser edit is visible before the Mac file adopts it")
+
+        usleep(20_000) // explicit Mac intent must have a later timestamp than the browser edit
+        let server = MCPServer(tools: VaultMCPTools.groupTools(store: f.native, linkedSetGroup: {
+            try f.hub.applyNativeSetGroup(id: $0, patch: $1)
+        }))
+        let response = try XCTUnwrap(server.handle([
+            "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+            "params": ["name": "set_group", "arguments": ["id": "m1", "patch": ["enabled": true]]],
+        ]))
+        XCTAssertEqual((response["result"] as? [String: Any])?["isError"] as? Bool, false)
+        XCTAssertEqual(try group(f.hub, store: f.store)["enabled"] as? Bool, true)
+        XCTAssertEqual(try savedEnabled(), true)
+        f.hub.contributeLocalDefinitions(document: try raw(f.store), nowMs: Date().timeIntervalSince1970 * 1000)
+        XCTAssertEqual(try group(f.hub, store: f.store)["enabled"] as? Bool, true)
+    }
+
 
     func testReassigningStoreCannotReconcileTheNewStoreThroughTheOldCallback() throws {
         let previousOverlay = GroupStore.sharedOverlay

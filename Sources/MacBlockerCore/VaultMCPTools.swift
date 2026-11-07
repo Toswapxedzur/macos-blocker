@@ -7,7 +7,8 @@ import Foundation
 /// controls apps only (the scope line): these tools never edit a website or
 /// platform line. Results are JSON, like the extension tools'.
 public enum VaultMCPTools {
-    public static func groupTools(store: GroupStore = GroupStore(), clock: @escaping () -> Date = Date.init) -> [MCPTool] {
+    public static func groupTools(store: GroupStore = GroupStore(), clock: @escaping () -> Date = Date.init,
+                                  linkedSetGroup: ((String, [String: Any]) throws -> Void)? = nil) -> [MCPTool] {
         let confirmations = Confirmations()
         let group: ([String: Any], String?) -> MCPToolResult = { args, key in
             guard let id = string(args, "id"), let shown = store.load().publicGroup(id: id) else { return refuse("group-not-found") }
@@ -50,6 +51,11 @@ public enum VaultMCPTools {
             ) { args in
                 guard let id = string(args, "id") else { return refuse("group-not-found") }
                 guard let patch = args["patch"] as? [String: Any], !patch.isEmpty else { return .failure("Missing 'patch' object.") }
+                if let linkedSetGroup {
+                    do { try linkedSetGroup(id, patch) }
+                    catch { return refuse(code(error)) }
+                    return group(args, "group")
+                }
                 return apply(store) { try $0.setGroup(id: id, patch: patch) } ?? group(args, "group")
             },
 

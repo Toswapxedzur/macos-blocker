@@ -47,7 +47,9 @@ public final class VaultMCPHTTPServer: @unchecked Sendable {
         token: String? = nil,
         additionalTools: [MCPTool] = []
     ) -> VaultMCPHTTPServer {
-        VaultMCPHTTPServer(server: MCPServer(tools: VaultMCPTools.groupTools() + additionalTools), port: port, requiredToken: token)
+        VaultMCPHTTPServer(server: MCPServer(tools: VaultMCPTools.groupTools(linkedSetGroup: {
+            try ConnectionHub.shared.applyNativeSetGroup(id: $0, patch: $1)
+        }) + additionalTools), port: port, requiredToken: token)
     }
 
     // MARK: Lifecycle

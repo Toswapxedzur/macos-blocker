@@ -2591,6 +2591,26 @@ final class ConnectionHub: ObservableObject {
         return changed
     }
 
+    /// The MCP tool expresses a field edit against the latest shared group,
+    /// then enters the editor's file -> hub transaction. Editing the raw file
+    /// first can turn an explicit re-enable into a no-op while adoption lags.
+    func applyNativeSetGroup(id: String, patch: [String: Any]) throws {
+        guard let store = localWebStore else { throw GroupStoreError.invalidInput("native-editor-unavailable") }
+        let current = try store.withLockedDocument(notify: false) { raw, _ -> [String: Any] in
+            guard let raw else { throw GroupStoreError.invalidInput("local-storage-unavailable") }
+            return self.overlayShared(onto: raw)
+        }
+        var edited = WebStoreDocument(raw: current)
+        guard let before = edited.group(id: id) else { throw GroupStoreError.groupNotFound(id) }
+        try edited.setGroup(id: id, patch: patch)
+        guard let after = edited.group(id: id),
+              let change = try GroupActionsRuntime.shared.callThrowing(
+                "editorChange", [before, after, "desktop"], module: "CBGroupScopes") as? [String: Any] else {
+            throw GroupStoreError.invalidInput("invalid-editor-response")
+        }
+        _ = try store.applyEditorDefinitionRequest(["intent": "edit", "changes": [change]])
+    }
+
     /// Synchronous JavaScript admission and all native reconciliation run on
     /// copied hub state while the canonical file and hub locks are held. A
     /// refused request/save therefore cannot publish an intermediate snapshot.
