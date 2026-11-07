@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 const context=vm.createContext({window:{}});
 vm.runInContext(fs.readFileSync(new URL('../../Sources/VaultClassifierApp/WebAssets/notice-language.js',import.meta.url),'utf8'),context);
+assert.match(fs.readFileSync(new URL('../../Sources/VaultClassifierApp/VaultClassifierViewModel+Backup.swift',import.meta.url),'utf8'),/backupNotice = destination\.map \{ "Content tagging snapshot created in /);
 const catalog={
  'notice.field.1':'le nom',
  'notice.inputCheck':'Vérifiez {field}.',
@@ -20,10 +21,10 @@ assert.equal(localize('Use at most 2048 characters for the name.'),'le nom : 204
 assert.equal(localize('The provider protocol requires an endpoint.'),'Ce protocole exige une adresse.');
 assert.equal(localize('The provider protocol requires apiVersion.'),'Ce protocole exige apiVersion.');
 assert.equal(localize('The provider returned HTTP 429.'),'Le fournisseur a répondu HTTP 429.');
-assert.equal(localize('Classifier snapshot created in model-用户-01.'),'Sauvegarde créée dans model-用户-01.');
+assert.equal(localize('Content tagging snapshot created in model-用户-01.'),'Sauvegarde créée dans model-用户-01.');
 assert.equal(localize('Looking up “ユーザー”. It appears under Known terms when the lookup finishes.'),'Recherche de « ユーザー » en cours.');
 for(const raw of ['Provider-specific error: secret-code-123','Check the name and try again. extra text','Taxonomy has a parent cycle at 私のタグ.','',null]) {
  assert.equal(localize(raw),String(raw??''));
 }
 assert.equal(context.window.VaultNoticeLanguage('Check the name and try again.',key=>key),'Check the name and try again.');
-console.log('PASS known native notices, field grammar, literal IDs, exact templates, unknown diagnostics and missing catalog fallback (13 checks)');
+console.log('PASS native notice source, localization, field grammar, literal IDs, exact templates, unknown diagnostics and missing catalog fallback (14 checks)');
