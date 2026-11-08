@@ -4,6 +4,7 @@ import ServiceManagement
 import notify
 import MacBlockerCore
 import MacBlockerWebUI
+import VaultActivityCore
 import VaultClassifierApp
 
 /// Process-level lifecycle owner for the macOS app.
@@ -18,6 +19,8 @@ open class BlockerAppDelegate: NSObject, NSApplicationDelegate {
 
     /// Retains the running MCP server for the app session.
     private var mcpServer: VaultMCPHTTPServer?
+    private var mcpStartRetry: DispatchWorkItem?
+    private var isShuttingDown = false
     private var deferredQuit: DeferredApplicationQuit?
 
     /// Records app-usage time into the local Activity log (opt-in per category).
@@ -99,27 +102,41 @@ open class BlockerAppDelegate: NSObject, NSApplicationDelegate {
         MainActor.assumeIsolated { MacEnforcementBridge.shared.activityRecorder = activityRecorder }
         self.activityRecorder = activityRecorder
 
-        // MCP go-live. Start the loopback MCP server gated by a bearer token
-        // derived from the hub secret, tell the connector registry to write that
-        // token into each tool's config, and enable launch auto-connect so the
-        // registered tools point at a live, authenticated endpoint. Fail closed:
-        // if the token is unavailable we do not expose an unauthenticated server.
-        if let token = LocalHubAuthentication.mcpBearerToken() {
-            let mcpServer = VaultMCPHTTPServer.vault(token: token, additionalTools: ClassifierMCPTools.tools() + ExtensionMCPTools.tools() + LinkMCPTools.tools() + ActivityMCPTools.tools(store: activityStore))
-            mcpServer.start()
-            self.mcpServer = mcpServer
-            MCPConnectorRegistry.shared.authTokenProvider = { LocalHubAuthentication.mcpBearerToken() }
-            MCPConnectorRegistry.isLaunchAutoConnectEnabled = true
-        }
-
-        // Register the Vault MCP server into every installed desktop MCP client.
-        MCPConnectorRegistry.shared.applyDefaultConnections()
+        // A just-quit app can still be releasing its secret or local port.
+        // Retry instead of leaving this app session without an MCP endpoint.
+        // The endpoint is never opened until its bearer token is available.
+        startMCPWhenReady(activityStore: activityStore)
 
         // Relaunch at login so tag blocking (and the hub) resume after a reboot
         // without the user reopening the app — otherwise protection silently
         // stays off until they do. Production, bundled builds only; a user can
         // still turn it off in System Settings ▸ Login Items.
         registerLoginItem()
+    }
+
+    private func startMCPWhenReady(activityStore: ActivityStore) {
+        guard !isShuttingDown, mcpServer == nil else { return }
+        guard let token = LocalHubAuthentication.mcpBearerToken() else {
+            let retry = DispatchWorkItem { [weak self] in
+                self?.startMCPWhenReady(activityStore: activityStore)
+            }
+            mcpStartRetry?.cancel()
+            mcpStartRetry = retry
+            DispatchQueue.main.asyncAfter(deadline: .now() + 3, execute: retry)
+            return
+        }
+        mcpStartRetry?.cancel()
+        mcpStartRetry = nil
+        let server = VaultMCPHTTPServer.vault(
+            token: token,
+            additionalTools: ClassifierMCPTools.tools() + ExtensionMCPTools.tools()
+                + LinkMCPTools.tools() + ActivityMCPTools.tools(store: activityStore)
+        )
+        server.start()
+        mcpServer = server
+        MCPConnectorRegistry.shared.authTokenProvider = { LocalHubAuthentication.mcpBearerToken() }
+        MCPConnectorRegistry.isLaunchAutoConnectEnabled = true
+        MCPConnectorRegistry.shared.applyDefaultConnections()
     }
 
     /// Keep the process — and therefore the hub — running after the last editor
@@ -145,6 +162,9 @@ open class BlockerAppDelegate: NSObject, NSApplicationDelegate {
                 let accepted = alert.runModal() == .alertFirstButtonReturn
                 return accepted
             }, shutdown: { [self] in
+                isShuttingDown = true
+                mcpStartRetry?.cancel()
+                mcpStartRetry = nil
                 mcpServer?.stop()
                 MacEnforcementBridge.shared.stop()
                 activityRecorder?.stop()

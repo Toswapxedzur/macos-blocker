@@ -21,14 +21,13 @@ public final class VaultMCPHTTPServer: @unchecked Sendable {
 
     private let server: MCPServer
     private let port: UInt16
-    /// Optional bearer token gate. When set, requests must carry a matching
-    /// `Authorization: Bearer <token>`. Nil for now (the server isn't exposed
-    /// until the consent/auth layer lands); the check is ready for it.
+    /// Production always supplies a token; nil is used by request-level tests.
     private let requiredToken: String?
 
     private let queue = DispatchQueue(label: "macosBlocker.VaultMCPHTTPServer")
-    private let lock = NSLock()
     private var listener: NWListener?
+    private var retryWorkItem: DispatchWorkItem?
+    private var wantsToListen = false
 
     public init(
         server: MCPServer,
@@ -55,22 +54,50 @@ public final class VaultMCPHTTPServer: @unchecked Sendable {
     // MARK: Lifecycle
 
     public func start() {
-        lock.lock(); defer { lock.unlock() }
-        guard listener == nil, let nwPort = NWEndpoint.Port(rawValue: port) else { return }
-        do {
-            let listener = try NWListener(using: .tcp, on: nwPort)
-            self.listener = listener
-            listener.newConnectionHandler = { [weak self] connection in self?.accept(connection) }
-            listener.start(queue: queue)
-        } catch {
-            listener = nil
+        queue.async { [self] in
+            guard !wantsToListen else { return }
+            wantsToListen = true
+            startListener()
         }
     }
 
     public func stop() {
-        lock.lock(); defer { lock.unlock() }
-        listener?.cancel()
-        listener = nil
+        queue.sync {
+            wantsToListen = false
+            retryWorkItem?.cancel()
+            retryWorkItem = nil
+            listener?.cancel()
+            listener = nil
+        }
+    }
+
+    private func startListener() {
+        guard wantsToListen, listener == nil,
+              let nwPort = NWEndpoint.Port(rawValue: port) else { return }
+        do {
+            let listener = try NWListener(using: .tcp, on: nwPort)
+            self.listener = listener
+            listener.newConnectionHandler = { [weak self] connection in self?.accept(connection) }
+            listener.stateUpdateHandler = { [weak self, weak listener] state in
+                guard let self, self.listener === listener else { return }
+                if case .failed = state {
+                    self.listener?.cancel()
+                    self.listener = nil
+                    self.retryListenLater()
+                }
+            }
+            listener.start(queue: queue)
+        } catch {
+            retryListenLater()
+        }
+    }
+
+    private func retryListenLater() {
+        guard wantsToListen else { return }
+        retryWorkItem?.cancel()
+        let retry = DispatchWorkItem { [weak self] in self?.startListener() }
+        retryWorkItem = retry
+        queue.asyncAfter(deadline: .now() + 3, execute: retry)
     }
 
     // MARK: Connection handling
