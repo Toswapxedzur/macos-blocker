@@ -118,6 +118,72 @@ final class ClassificationFailureSettlementTests: XCTestCase {
         XCTAssertEqual(model.coordinator?.snapshot().workspaceCatalog.videoClassifications.count, 1)
     }
 
+    func testRetryArmsFailuresWithoutReplayingUnseenItems() async throws {
+        let model = try makeModel(), engine = SettlementLLM(.allFail)
+        model.coordinator?.setFixtureEngine(engine)
+        _ = await model.resolveClassificationChunk(platformID: "youtube", [failed, good])
+        XCTAssertEqual(model.failedCloudClassifications.count, 2)
+        await engine.setMode(.succeed)
+        let callsBefore = (await engine.batchSizes).count + (await engine.singleTitles).count
+
+        func pull(_ item: NativeVideoTagsBatchItem, newlyShown: Bool) throws -> NativeVideoTagsBatchResponseItem {
+            var requestItem = item
+            requestItem.newAppearance = newlyShown
+            let request = NativeVideoTagsBatchRequest(platformID: "youtube", items: [requestItem])
+            let reply = model.handleSharedHubRequest(.init(sourcePeerID: "test-browser", requestID: UUID().uuidString,
+                operation: .videoTagsBatch, bodyData: try JSONEncoder().encode(request)))
+            XCTAssertNil(reply.error)
+            let response = try JSONDecoder().decode(NativeVideoTagsBatchResponse.self,
+                from: JSONSerialization.data(withJSONObject: XCTUnwrap(reply.body)))
+            return try XCTUnwrap(response.items.first)
+        }
+
+        XCTAssertNotNil(try pull(failed, newlyShown: true).failureCode,
+            "Before Retry, a failed item stays failed even when it appears again.")
+        await model.resumeChatGPTClassificationsForVisibleEntries()
+        XCTAssertEqual(model.failedCloudClassifications.count, 2)
+        let callsAfterRetry = (await engine.batchSizes).count + (await engine.singleTitles).count
+        XCTAssertEqual(callsAfterRetry, callsBefore,
+            "Retry must not dispatch the saved failure queue.")
+        XCTAssertNotNil(try pull(failed, newlyShown: false).failureCode,
+            "An existing card remains failed after Retry.")
+        let idle = expectation(description: "Newly shown failed video classified")
+        model.classificationCoalescer.onIdle = { idle.fulfill() }
+        XCTAssertTrue(try pull(failed, newlyShown: true).pending)
+        await fulfillment(of: [idle], timeout: 3)
+        XCTAssertEqual(model.coordinator?.cachedVideoTags(platformID: "youtube", entryID: failed.entryID)?.tags.map(\.id), ["games"])
+        XCTAssertNil(model.failedCloudClassifications[VaultClassifierViewModel.inFlightKey("youtube", failed.entryID)])
+        XCTAssertNotNil(model.failedCloudClassifications[VaultClassifierViewModel.inFlightKey("youtube", good.entryID)],
+            "The other old failure remains stored and was not classified.")
+    }
+
+    func testUndispatchedFailureRetriesOnNewAppearanceWithoutRetryClick() async throws {
+        let model = try makeModel(), engine = SettlementLLM(.succeed)
+        model.coordinator?.setFixtureEngine(engine)
+        let key = VaultClassifierViewModel.inFlightKey("youtube", failed.entryID)
+        model.failedCloudClassifications[key] = .init(platform: "youtube", item: failed,
+            code: .serviceUnavailable, retryWithoutDispatch: true)
+        XCTAssertTrue(model.persistFailedClassifications())
+
+        func pull(_ newlyShown: Bool) throws -> NativeVideoTagsResponse {
+            let request = NativeVideoTagsRequest(platformID: "youtube", entryID: failed.entryID,
+                creatorID: failed.creatorID, title: failed.title, newAppearance: newlyShown)
+            let reply = model.handleSharedHubRequest(.init(sourcePeerID: "test-browser", requestID: UUID().uuidString,
+                operation: .videoTags, bodyData: try JSONEncoder().encode(request)))
+            XCTAssertNil(reply.error)
+            return try JSONDecoder().decode(NativeVideoTagsResponse.self,
+                from: JSONSerialization.data(withJSONObject: XCTUnwrap(reply.body)))
+        }
+
+        XCTAssertNotNil(try pull(false).failureCode)
+        let idle = expectation(description: "Undispatched failure retried")
+        model.classificationCoalescer.onIdle = { idle.fulfill() }
+        XCTAssertTrue(try pull(true).pending)
+        await fulfillment(of: [idle], timeout: 3)
+        XCTAssertNil(model.failedCloudClassifications[key])
+        XCTAssertEqual(model.coordinator?.cachedVideoTags(platformID: "youtube", entryID: failed.entryID)?.tags.map(\.id), ["games"])
+    }
+
     func testHumanCorrectionSurvivesFailedSiblingWithoutRunningItsModel() async throws {
         let model = try makeModel(), engine = SettlementLLM(.allFail)
         let coordinator = try XCTUnwrap(model.coordinator)

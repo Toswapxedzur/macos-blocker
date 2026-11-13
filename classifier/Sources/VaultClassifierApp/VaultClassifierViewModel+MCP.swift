@@ -56,7 +56,7 @@ public enum ClassifierWebActionCatalog {
         .init(name: "cancelChatGPTSignIn", keys: [], summary: "Cancel the pending ChatGPT sign-in without signing out the active account."),
         .init(name: "disconnectChatGPT", keys: [], summary: "Remove Vault's ChatGPT credentials and cancel active cloud requests; keep cached tags."),
         .init(name: "refreshChatGPTModels", keys: [], summary: "Fetch the connected account's currently available models."),
-        .init(name: "retryChatGPTClassifications", keys: [], summary: "Retry failed cloud items without enabling local fallback."),
+        .init(name: "retryChatGPTClassifications", keys: [], summary: "Resume ChatGPT tagging when failed videos next appear; do not replay saved failures in bulk."),
         .init(name: "saveChatGPTUsageLimit", keys: ["dailyRequestLimit"], summary: "Optional daily ChatGPT request cap on this device, UTC day; blank has no app cap. Failed dispatched requests count."),
         .init(name: "saveChatGPTRetryPolicy", keys: ["retryIntervalSeconds", "retryMaximumAttempts"], summary: "Set the retry interval and total attempts for ChatGPT subscription tagging."),
         .init(name: "saveClassificationProvider", keys: ["typeID", "providerModel", "reasoningEffort"], summary: "Choose one group connection/model: chatgpt:<model> for subscription or api:<profileID>:<model> for a saved OpenAI, Gemini or Grok key. Fetch its model list first. Set reasoningEffort to default, low, medium or high when supported. Search is always enabled and model-directed; no fallback."),

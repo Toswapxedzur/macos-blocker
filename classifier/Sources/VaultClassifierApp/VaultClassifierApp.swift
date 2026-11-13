@@ -13,6 +13,10 @@ struct FailedCloudClassification: Codable {
     var platform: String
     var item: NativeVideoTagsBatchItem
     var code: NativeVideoTagsFailureCode
+    /// Explicit Retry permits a later visible occurrence to try this entry
+    /// once; failures never replay just because Vault reconnects or restarts.
+    var retryWhenSeen: Bool? = nil
+    var retryWithoutDispatch: Bool? = nil
 }
 
 /// Keeps failed decisions distinct from a valid empty model answer after an

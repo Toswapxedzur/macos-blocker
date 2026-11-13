@@ -78,7 +78,7 @@ extension VaultClassifierViewModel {
         Task { [weak self] in
             do {
                 try await client.refreshModels()
-                await self?.retryFailedClassifications(chatGPTOnly: true)
+                await self?.resumeChatGPTClassificationsForVisibleEntries()
             }
             catch { self?.issue = error.localizedDescription }
             await self?.refreshChatGPTStatus()
@@ -129,12 +129,32 @@ extension VaultClassifierViewModel {
 
     func retryChatGPTClassifications() {
         Task { [weak self] in
-            await self?.retryFailedClassifications()
+            await self?.resumeChatGPTClassificationsForVisibleEntries()
         }
     }
 
-    /// Only a deliberate model-refresh (or the explicit Retry action) releases
-    /// failed entries. A background account/status refresh never invokes this.
+    /// Resume the subscription without dispatching the saved failure queue.
+    /// Only a fresh browser appearance of an eligible entry releases that
+    /// entry's failure; unseen entries remain failed in the durable store.
+    func resumeChatGPTClassificationsForVisibleEntries() async {
+        guard !isShuttingDown, let coordinator else { return }
+        let platforms = Set(coordinator.snapshot().workspaceCatalog.classifierTypes
+            .filter { $0.classificationProvider == .chatGPT }.flatMap(\.applicablePlatformIDs))
+        let previous = failedCloudClassifications
+        for (key, failure) in previous where platforms.contains(failure.platform) {
+            failedCloudClassifications[key]?.retryWhenSeen = true
+        }
+        if !persistFailedClassifications() {
+            failedCloudClassifications = previous
+            return
+        }
+        await chatGPTClient?.retryFailedRequests()
+        issue = nil
+        await refreshChatGPTStatus()
+    }
+
+    /// API-key connection recovery retains its explicit queue replay. ChatGPT
+    /// Retry and model refresh use the selective appearance path above.
     func retryFailedClassifications(chatGPTOnly: Bool = false, profileID: String? = nil) async {
         guard !isShuttingDown, let coordinator else { return }
         if profileID == nil { await chatGPTClient?.retryFailedRequests() }

@@ -148,7 +148,11 @@ final class ChatGPTClassificationTests: XCTestCase {
         let classified = try await engine.classify(item())
         XCTAssertEqual(classified.tags.first?.name, "Games")
         do { _ = try await engine.classify(item()); XCTFail("Daily cap must reject a second dispatch") }
-        catch { XCTAssertEqual(error as? CloudClassificationError, .usageLimit) }
+        catch {
+            let failure = error as? ChatGPTClassificationFailure
+            XCTAssertEqual(failure?.underlying as? CloudClassificationError, .usageLimit)
+            XCTAssertEqual(failure?.dispatched, false)
+        }
         XCTAssertEqual(calls.count, 1)
         let restarted = try ChatGPTAccountClient(directory: root, dailyRequestLimit: 1, http: http)
         let restartedStatus = await restarted.status()
@@ -284,7 +288,11 @@ final class ChatGPTClassificationTests: XCTestCase {
         XCTAssertFalse(status.planUsageEnabled)
         let engine = ChatGPTClassificationEngine(client: client, configuration: .init(accountID: status.accountID, model: "fixture"), modelVersion: "fixture")
         do { _ = try await engine.classify(item()); XCTFail("Identity login must not grant inference") }
-        catch { XCTAssertEqual(error as? CloudClassificationError, .signInRequired) }
+        catch {
+            let failure = error as? ChatGPTClassificationFailure
+            XCTAssertEqual(failure?.underlying as? CloudClassificationError, .signInRequired)
+            XCTAssertEqual(failure?.dispatched, false)
+        }
         XCTAssertEqual(calls.count, 0)
         await client.shutdown()
     }
@@ -489,7 +497,12 @@ final class ChatGPTClassificationTests: XCTestCase {
         var successes = 0, limited = 0
         for task in tasks {
             do { _ = try await task.value; successes += 1 }
-            catch { XCTAssertEqual(error as? CloudClassificationError, .usageLimit); limited += 1 }
+            catch {
+                let failure = error as? ChatGPTClassificationFailure
+                XCTAssertEqual(failure?.underlying as? CloudClassificationError, .usageLimit)
+                XCTAssertEqual(failure?.dispatched, false)
+                limited += 1
+            }
         }
         XCTAssertEqual(successes, 1); XCTAssertEqual(limited, 1); XCTAssertEqual(calls.count, 1)
         let status = await client.status(); XCTAssertEqual(status.requestsToday, 1)

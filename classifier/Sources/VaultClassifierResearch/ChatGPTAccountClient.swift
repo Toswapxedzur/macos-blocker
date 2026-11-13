@@ -20,6 +20,19 @@ public struct ChatGPTAccountStatus: Sendable {
     public var issue: String?
 }
 
+/// Carries only whether this classification reached the model transport.
+/// A failed HTTP response does not prove zero plan usage; only undispatched
+/// work may be retried automatically when its video appears again.
+public struct ChatGPTClassificationFailure: Error, LocalizedError, @unchecked Sendable {
+    public let underlying: any Error
+    public let dispatched: Bool
+    public init(underlying: any Error, dispatched: Bool) {
+        self.underlying = underlying
+        self.dispatched = dispatched
+    }
+    public var errorDescription: String? { underlying.localizedDescription }
+}
+
 private struct ChatGPTCredential: Codable, Sendable, CustomStringConvertible {
     var schemaVersion: Int
     var clientID: String; var subject: String; var email: String?
@@ -315,9 +328,13 @@ public actor ChatGPTAccountClient: CloudClassificationEngineResolving {
     }
 
     public func resolveCloudEngine(for type: ClassifierTypeAsset) async throws -> any ClassificationEngine {
-        try type.chatGPT.validate()
-        guard credential?.accountID == type.chatGPT.accountID else { throw CloudClassificationError.signInRequired }
-        return ChatGPTClassificationEngine(client: self, configuration: type.chatGPT, modelVersion: type.cloudModelVersion)
+        do {
+            try type.chatGPT.validate()
+            guard credential?.accountID == type.chatGPT.accountID else { throw CloudClassificationError.signInRequired }
+            return ChatGPTClassificationEngine(client: self, configuration: type.chatGPT, modelVersion: type.cloudModelVersion)
+        } catch {
+            throw ChatGPTClassificationFailure(underlying: error, dispatched: false)
+        }
     }
 
     public func generateForRule(configuration: ChatGPTClassificationSettings, input: RuleAIInput) async throws -> RuleAIReply {
@@ -325,9 +342,16 @@ public actor ChatGPTAccountClient: CloudClassificationEngineResolving {
         return try RuleAIReply(text: result.0, citations: result.1)
     }
     func classify(configuration: ChatGPTClassificationSettings, request: ChatGPTPlanProtocol.Request) async throws -> String {
-        try await infer(configuration: configuration, request: request).0
+        var dispatched = false
+        do {
+            return try await infer(configuration: configuration, request: request,
+                onDispatch: { dispatched = true }).0
+        } catch {
+            if error is CancellationError || dispatched { throw error }
+            throw ChatGPTClassificationFailure(underlying: error, dispatched: false)
+        }
     }
-    private func infer(configuration: ChatGPTClassificationSettings, request: ChatGPTPlanProtocol.Request, maximumTextBytes: Int = 262144, holdFailures: Bool = true) async throws -> (String, [RuleAICitation]) {
+    private func infer(configuration: ChatGPTClassificationSettings, request: ChatGPTPlanProtocol.Request, maximumTextBytes: Int = 262144, holdFailures: Bool = true, onDispatch: (() -> Void)? = nil) async throws -> (String, [RuleAICitation]) {
         try await acquireClassification(); defer { classificationsInFlight -= 1; onChange() }
         guard credential?.accountID == configuration.accountID else { throw CloudClassificationError.signInRequired }
         guard !holdFailures || !failureHold else { throw ChatGPTPlanError.failedResponse }
@@ -357,6 +381,7 @@ public actor ChatGPTAccountClient: CloudClassificationEngineResolving {
             usage.requests += 1
             try store.write(JSONEncoder().encode(usage), name: "usage.json") // Every dispatched attempt counts.
             let id = UUID()
+            onDispatch?()
             let work = Task { try await http.inference(request, token: token, maximumTextBytes: maximumTextBytes, withoutDeadline: true) }
             activeRequests[id] = work
             do {

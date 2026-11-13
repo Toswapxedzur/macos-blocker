@@ -59,7 +59,21 @@ extension VaultClassifierViewModel {
         "\(platformID)\u{1F}\(entryID)"
     }
 
+    func heldFailure(platformID: String, item: NativeVideoTagsBatchItem) -> FailedCloudClassification? {
+        let key = Self.inFlightKey(platformID, item.entryID)
+        guard let failure = failedCloudClassifications[key] else { return nil }
+        guard item.newAppearance == true,
+              failure.retryWhenSeen == true || failure.retryWithoutDispatch == true else { return failure }
+        failedCloudClassifications.removeValue(forKey: key)
+        if persistFailedClassifications() { return nil }
+        failedCloudClassifications[key] = failure
+        return failure
+    }
+
     static func taggingFailureCode(_ error: Error) -> NativeVideoTagsFailureCode {
+        if let failure = error as? ChatGPTClassificationFailure {
+            return taggingFailureCode(failure.underlying)
+        }
         if let failure = error as? CloudClassificationError {
             switch failure {
             case .usageLimit: return .limitReached
@@ -96,7 +110,16 @@ extension VaultClassifierViewModel {
     func queueVideoClassification(platformID: String, items: [NativeVideoTagsBatchItem]) {
         guard !isShuttingDown else { return }
         if coordinator?.snapshot().workspaceCatalog.classifierTypes.contains(where: { $0.applicablePlatformIDs.contains(platformID) }) == true {
-            for item in items { latestCloudClassificationInputs[Self.inFlightKey(platformID, item.entryID)] = item }
+            for item in items {
+                let key = Self.inFlightKey(platformID, item.entryID)
+                if var previous = latestCloudClassificationInputs[key] {
+                    var incoming = item
+                    previous.newAppearance = nil
+                    incoming.newAppearance = nil
+                    if previous == incoming { continue }
+                }
+                latestCloudClassificationInputs[key] = item
+            }
         }
         let fresh = items.filter {
             inFlightVideoClassifications.insert(Self.inFlightKey(platformID, $0.entryID)).inserted
@@ -172,7 +195,9 @@ extension VaultClassifierViewModel {
                         entryID: item.entryID, creatorID: item.creatorID, entryType: item.entryType)) {
                     projections[item.entryID] = saved
                 } else {
-                    failedCloudClassifications[Self.inFlightKey(platformID, item.entryID)] = .init(platform: platformID, item: item, code: code)
+                    failedCloudClassifications[Self.inFlightKey(platformID, item.entryID)] = .init(
+                        platform: platformID, item: item, code: code,
+                        retryWithoutDispatch: (error as? ChatGPTClassificationFailure)?.dispatched == false)
                 }
             }
             persistFailedClassifications()
@@ -309,7 +334,11 @@ extension VaultClassifierViewModel {
                         entryID: videoTags.entryID, tags: saved.map { Self.nativeVideoTags(from: $0) } ?? [],
                         predicted: saved?.predicted ?? false, pending: false, skipped: saved == nil))
                 }
-                if let failure = failedCloudClassifications[Self.inFlightKey(videoTags.platformID, videoTags.entryID)] {
+                let requestedItem = NativeVideoTagsBatchItem(
+                    entryID: videoTags.entryID, creatorID: videoTags.creatorID,
+                    title: videoTags.title, summary: videoTags.summary, text: videoTags.text,
+                    entryType: videoTags.entryType, newAppearance: videoTags.newAppearance)
+                if let failure = heldFailure(platformID: videoTags.platformID, item: requestedItem) {
                     return try sharedHubReply(NativeVideoTagsResponse(platformID: videoTags.platformID,
                         entryID: videoTags.entryID, tags: [], failureCode: failure.code))
                 }
@@ -331,9 +360,7 @@ extension VaultClassifierViewModel {
                 // Not classified yet: queue background classification and report
                 // pending. The completed result is pushed to the browsers over the
                 // hub, so the pill resolves without polling.
-                queueVideoClassification(platformID: videoTags.platformID, items: [NativeVideoTagsBatchItem(
-                    entryID: videoTags.entryID, creatorID: videoTags.creatorID,
-                    title: videoTags.title, summary: videoTags.summary, text: videoTags.text, entryType: videoTags.entryType)])
+                queueVideoClassification(platformID: videoTags.platformID, items: [requestedItem])
                 return try sharedHubReply(NativeVideoTagsResponse(
                     platformID: videoTags.platformID, entryID: videoTags.entryID, tags: [], predicted: false, pending: true))
             case .videoTagsBatch:
@@ -366,7 +393,7 @@ extension VaultClassifierViewModel {
                         responses.append(NativeVideoTagsBatchResponseItem(entryID: item.entryID,
                             tags: saved.map { Self.nativeVideoTags(from: $0) } ?? [], predicted: saved?.predicted ?? false,
                             pending: false, skipped: saved == nil))
-                    } else if let failure = failedCloudClassifications[Self.inFlightKey(batch.platformID, item.entryID)] {
+                    } else if let failure = heldFailure(platformID: batch.platformID, item: item) {
                         responses.append(NativeVideoTagsBatchResponseItem(entryID: item.entryID,
                             tags: [], failureCode: failure.code))
                     } else if let cached = coordinator.cachedVideoTags(platformID: batch.platformID, entryID: item.entryID,

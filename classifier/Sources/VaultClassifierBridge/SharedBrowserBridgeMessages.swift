@@ -82,23 +82,25 @@ public struct NativeVideoTagsRequest: Codable, Equatable, Sendable {
     public var creatorID: String
     public var title: String
     public var entryType: String?
+    public var newAppearance: Bool?
     public var summary: String?
     public var text: String?
 
     public static let maximumTitleLength = 500
     public static let maximumEvidenceLength = 4_000
 
-    public init(platformID: String, entryID: String, creatorID: String, title: String, summary: String? = nil, text: String? = nil, entryType: String? = nil) {
+    public init(platformID: String, entryID: String, creatorID: String, title: String, summary: String? = nil, text: String? = nil, entryType: String? = nil, newAppearance: Bool? = nil) {
         self.platformID = platformID
         self.entryID = entryID
         self.creatorID = creatorID
         self.title = title
         self.entryType = entryType
+        self.newAppearance = newAppearance
         self.summary = summary
         self.text = text
     }
 
-    private enum CodingKeys: String, CodingKey { case platformID, entryID, creatorID, title, summary, text, entryType }
+    private enum CodingKeys: String, CodingKey { case platformID, entryID, creatorID, title, summary, text, entryType, newAppearance }
 
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
@@ -107,6 +109,7 @@ public struct NativeVideoTagsRequest: Codable, Equatable, Sendable {
         creatorID = try container.decode(String.self, forKey: .creatorID)
         title = try container.decode(String.self, forKey: .title)
         entryType = try container.decodeIfPresent(String.self, forKey: .entryType)
+        newAppearance = try container.decodeIfPresent(Bool.self, forKey: .newAppearance)
         summary = try container.decodeIfPresent(String.self, forKey: .summary)
         text = try container.decodeIfPresent(String.self, forKey: .text)
     }
@@ -219,19 +222,21 @@ public struct NativeVideoTagsBatchItem: Codable, Equatable, Sendable {
     public var creatorID: String
     public var title: String
     public var entryType: String?
+    public var newAppearance: Bool?
     public var summary: String?
     public var text: String?
 
-    public init(entryID: String, creatorID: String, title: String, summary: String? = nil, text: String? = nil, entryType: String? = nil) {
+    public init(entryID: String, creatorID: String, title: String, summary: String? = nil, text: String? = nil, entryType: String? = nil, newAppearance: Bool? = nil) {
         self.entryID = entryID
         self.creatorID = creatorID
         self.title = title
         self.entryType = entryType
+        self.newAppearance = newAppearance
         self.summary = summary
         self.text = text
     }
 
-    private enum CodingKeys: String, CodingKey { case entryID, creatorID, title, summary, text, entryType }
+    private enum CodingKeys: String, CodingKey { case entryID, creatorID, title, summary, text, entryType, newAppearance }
 
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
@@ -239,6 +244,7 @@ public struct NativeVideoTagsBatchItem: Codable, Equatable, Sendable {
         creatorID = try container.decode(String.self, forKey: .creatorID)
         title = try container.decode(String.self, forKey: .title)
         entryType = try container.decodeIfPresent(String.self, forKey: .entryType)
+        newAppearance = try container.decodeIfPresent(Bool.self, forKey: .newAppearance)
         summary = try container.decodeIfPresent(String.self, forKey: .summary)
         text = try container.decodeIfPresent(String.self, forKey: .text)
     }
