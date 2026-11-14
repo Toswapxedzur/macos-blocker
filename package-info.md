@@ -1,5 +1,7 @@
 # macosBlocker — Mac Vault (native macOS app)
 
+- **4.0.2 candidate (2026-11-14):** Classifier Retry keeps saved ChatGPT failures held until a later browser appearance. A failure proven to precede model dispatch can retry on reappearance without a click. Mini2 builds and focused Classifier tests pass; signing, notarization and installed compatibility acceptance are separate release steps.
+
 > 🤖 **AI protocol:** Read `../package-info.md` (group), the group `AGENTS.md`, and `../misc/project-memory/PROJECT-MEMORY.md` before working here. Update this file when the folder changes. Never delete without owner consent; keep secrets out of git.
 
 - **Icon palette:** `Assets/Branding/mac-vault.svg` and its rendered master are
